@@ -7,6 +7,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+static const char *PM_MLP1_GAMECONTROLLERCONFIG =
+    "1900fe3c039900001399000002010000,Loong Gamepad,"
+    "a:b1,b:b0,x:b2,y:b3,back:b8,guide:b10,start:b9,"
+    "leftstick:b11,leftshoulder:b4,rightshoulder:b5,"
+    "dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,"
+    "leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,"
+    "crc:3cfe,platform:Linux";
+
 int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
 {
     if (err && err_size > 0) {
@@ -106,6 +114,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "ASPECT_Y", "3" },
         { "ANALOG_STICKS", "2" },
         { "ANALOGSTICKS", "2" },
+        { "SDL_GAMECONTROLLERCONFIG", PM_MLP1_GAMECONTROLLERCONFIG },
         { "PYSDL2_DLL_PATH", pydll_path },
         { NULL, NULL },
     };
