@@ -94,3 +94,111 @@ void pm_lock_summary(const pm_portmaster_lock *lock, char *out, size_t out_size)
              lock->release_url);
 }
 
+int pm_ui_runtime_lock_load(const char *path, pm_ui_runtime_lock *out, char *err, size_t err_size)
+{
+    if (err && err_size > 0) {
+        err[0] = '\0';
+    }
+    if (!out) {
+        return -1;
+    }
+    memset(out, 0, sizeof(*out));
+
+    char read_err[256];
+    char *text = pm_read_text_file(path, 256 * 1024, read_err, sizeof(read_err));
+    if (!text) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "%s", read_err);
+        }
+        return -1;
+    }
+
+    cJSON *root = cJSON_Parse(text);
+    free(text);
+    if (!root) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "invalid JSON in %s", path);
+        }
+        return -1;
+    }
+
+    int ok = -1;
+    cJSON *artifacts = cJSON_GetObjectItemCaseSensitive(root, "artifacts");
+    if (json_string(root, "product", out->product, sizeof(out->product)) != 0 ||
+        !cJSON_IsArray(artifacts)) {
+        goto done;
+    }
+
+    cJSON *artifact = NULL;
+    cJSON_ArrayForEach(artifact, artifacts) {
+        if (!cJSON_IsObject(artifact)) {
+            continue;
+        }
+        const char *kind = json_string(artifact, "kind", out->kind, sizeof(out->kind)) == 0 ?
+            out->kind : "";
+        if (strcmp(kind, "cpython-runtime") != 0) {
+            continue;
+        }
+
+        cJSON *size = cJSON_GetObjectItemCaseSensitive(artifact, "size");
+        cJSON *installed_size = cJSON_GetObjectItemCaseSensitive(artifact, "installed_size");
+        cJSON *installed_file_count = cJSON_GetObjectItemCaseSensitive(artifact, "installed_file_count");
+        cJSON *manifest = cJSON_GetObjectItemCaseSensitive(artifact, "manifest");
+        if (json_string(artifact, "version", out->version, sizeof(out->version)) != 0 ||
+            json_string(artifact, "filename", out->filename, sizeof(out->filename)) != 0 ||
+            json_string(artifact, "url", out->url, sizeof(out->url)) != 0 ||
+            json_string(artifact, "sha256", out->sha256, sizeof(out->sha256)) != 0 ||
+            !cJSON_IsNumber(size) || size->valuedouble <= 0.0 ||
+            !cJSON_IsNumber(installed_size) || installed_size->valuedouble <= 0.0 ||
+            !cJSON_IsNumber(installed_file_count) || installed_file_count->valuedouble <= 0.0 ||
+            !cJSON_IsObject(manifest)) {
+            goto done;
+        }
+
+        cJSON *manifest_size = cJSON_GetObjectItemCaseSensitive(manifest, "size");
+        if (json_string(manifest, "filename", out->manifest_filename, sizeof(out->manifest_filename)) != 0 ||
+            json_string(manifest, "url", out->manifest_url, sizeof(out->manifest_url)) != 0 ||
+            json_string(manifest, "sha256", out->manifest_sha256, sizeof(out->manifest_sha256)) != 0 ||
+            !cJSON_IsNumber(manifest_size) || manifest_size->valuedouble <= 0.0) {
+            goto done;
+        }
+
+        out->size = (uint64_t)size->valuedouble;
+        out->installed_size = (uint64_t)installed_size->valuedouble;
+        out->installed_file_count = installed_file_count->valueint;
+        out->manifest_size = (uint64_t)manifest_size->valuedouble;
+        ok = 0;
+        break;
+    }
+
+done:
+    cJSON_Delete(root);
+    if (ok != 0) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "missing required UI runtime lock fields in %s", path);
+        }
+        return -1;
+    }
+    return 0;
+}
+
+void pm_ui_runtime_lock_summary(const pm_ui_runtime_lock *lock, char *out, size_t out_size)
+{
+    if (!out || out_size == 0) {
+        return;
+    }
+    if (!lock) {
+        snprintf(out, out_size, "%s", "No UI runtime lock loaded.");
+        return;
+    }
+    snprintf(out, out_size,
+             "Kind: %s\nVersion: %s\nAsset: %s\nSize: %llu bytes\nInstalled: %d files, %llu bytes\nSHA-256: %.16s...\n\n%s",
+             lock->kind,
+             lock->version,
+             lock->filename,
+             (unsigned long long)lock->size,
+             lock->installed_file_count,
+             (unsigned long long)lock->installed_size,
+             lock->sha256,
+             lock->url);
+}

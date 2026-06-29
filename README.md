@@ -52,8 +52,9 @@ $USERDATA_PATH/portmaster/.leaf
 ```
 
 The `runtime` directory is for the Python/SDL runtime needed by upstream
-PortMaster's Python UI on stock MLP1 firmware. It is installed from a generated
-or externally staged archive; the repo does not vendor that binary payload.
+PortMaster's Python UI on stock MLP1 firmware. It is installed from the
+lock-pinned generated release asset or from an externally staged archive; the
+repo does not vendor that binary payload.
 
 On launch it sources:
 
@@ -69,6 +70,7 @@ Useful smoke commands from a staged pak:
 ./launch.sh --doctor-text
 ./launch.sh --install-portmaster
 ./launch.sh --repatch-portmaster
+./launch.sh --install-ui-runtime
 ./launch.sh --install-runtime-archive /path/to/portmaster-runtime.7z
 ./launch.sh --launch-portmaster
 ```

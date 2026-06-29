@@ -91,6 +91,16 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (argc > 1 && strcmp(argv[1], "--install-ui-runtime") == 0) {
+        char err[512];
+        if (pm_install_ui_runtime(&ctx, err, sizeof(err)) != 0) {
+            fprintf(stderr, "runtime install failed: %s\n", err);
+            return 1;
+        }
+        puts("PortMaster UI runtime installed");
+        return 0;
+    }
+
     if (argc > 1 && strcmp(argv[1], "--launch-portmaster") == 0) {
         char err[512];
         if (pm_launch_portmaster(&ctx, err, sizeof(err)) != 0) {

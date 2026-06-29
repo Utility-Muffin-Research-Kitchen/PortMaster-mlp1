@@ -25,9 +25,10 @@ The current patch set is recorded in `.leaf/manifest.json` after install or
 repair. Launch also runs repair before handoff.
 
 Runtime note: upstream PortMaster currently requires `python3`; stock MLP1 does
-not provide it. `--install-runtime-archive <archive>` installs a
-`portmaster.7z`-style runtime archive into user data for launch smoke testing
-and future generated release artifacts.
+not provide it. `--install-ui-runtime` downloads the lock-pinned generated
+runtime release asset and installs it into user data. `--install-runtime-archive
+<archive>` remains available for smoke testing a locally staged
+`portmaster.7z`-style archive.
 
 Spruce runtime inventory:
 

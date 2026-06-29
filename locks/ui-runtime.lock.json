@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "product": "portmaster-mlp1-ui-runtime",
-  "status": "planned",
+  "status": "published",
   "target": {
     "platform": "mlp1",
     "arch": "aarch64",
     "python": "3.10.x",
-    "artifact_name": "portmaster-mlp1-ui-runtime-python310-aarch64-<version>.tar.zst",
+    "artifact_name": "portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip",
     "install_dir": "$USERDATA_PATH/portmaster/runtime"
   },
   "spruce_reference": {
@@ -105,5 +105,22 @@
       "strategy": "do not reproduce here; continue installing from hash-pinned PortsMaster/PortMaster-GUI releases"
     }
   ],
-  "artifacts": []
+  "artifacts": [
+    {
+      "kind": "cpython-runtime",
+      "version": "3.10.16",
+      "filename": "portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip",
+      "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.1/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip",
+      "size": 16436761,
+      "installed_size": 46415788,
+      "installed_file_count": 767,
+      "sha256": "4bdc35623a454b42b70a3fa782f6599fc3f26ae8c375632f2ae0aa0a9301dd3c",
+      "manifest": {
+        "filename": "portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json",
+        "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.1/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json",
+        "size": 2363,
+        "sha256": "0dbbc76694dfb53ecdb89e1f03ae5b5090016bff14154c4decfba0d949b309df"
+      }
+    }
+  ]
 }

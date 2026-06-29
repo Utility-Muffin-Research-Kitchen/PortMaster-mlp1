@@ -13,6 +13,7 @@
 typedef enum {
     PM_ACTION_STATUS = 0,
     PM_ACTION_INSTALL,
+    PM_ACTION_INSTALL_UI_RUNTIME,
     PM_ACTION_LAUNCH,
     PM_ACTION_REPATCH,
     PM_ACTION_RUNTIMES,
@@ -41,6 +42,44 @@ static void show_status(pm_context *ctx)
     pm_doctor_report report;
     pm_doctor_run(ctx, &report);
     show_message(report.text);
+}
+
+typedef struct {
+    pm_context *ctx;
+    char err[512];
+} pm_runtime_job;
+
+static int runtime_worker(void *userdata)
+{
+    pm_runtime_job *job = (pm_runtime_job *)userdata;
+    job->err[0] = '\0';
+    return pm_install_ui_runtime(job->ctx, job->err, sizeof(job->err));
+}
+
+static void show_install_ui_runtime(pm_context *ctx)
+{
+    if (!ctx->runtime_lock_loaded) {
+        char summary[8192];
+        snprintf(summary, sizeof(summary), "UI runtime lock is missing.\n\n%s", ctx->runtime_lock_path);
+        show_message(summary);
+        return;
+    }
+
+    pm_runtime_job job = { .ctx = ctx };
+    cat_process_opts opts = {
+        .message = "Installing PortMaster UI runtime\n\nDownloading, verifying, extracting, and replacing the managed Python/SDL runtime.",
+        .show_progress = false,
+        .interrupt_button = CAT_BTN_NONE,
+    };
+    int rc = cat_process_message(&opts, runtime_worker, &job);
+    if (rc == 0) {
+        show_message("PortMaster UI runtime installed.\n\nDoctor should now report a managed Python runtime.");
+    } else {
+        char msg[1024];
+        snprintf(msg, sizeof(msg), "UI runtime install failed.\n\n%s",
+                 job.err[0] ? job.err : "Unknown error");
+        show_message(msg);
+    }
 }
 
 typedef struct {
@@ -179,9 +218,14 @@ static void show_logs(pm_context *ctx)
 
 static pm_action menu(pm_context *ctx)
 {
+    char runtime_python[PM_PATH_MAX];
+    bool has_runtime = pm_join3(runtime_python, sizeof(runtime_python),
+                                ctx->runtime_dir, "bin", "python3") == 0 &&
+                       pm_file_exists(runtime_python);
     cat_list_item items[] = {
         { .label = "Doctor / Status", .trailing_text = ctx->lock_loaded ? "locked" : "lock missing" },
         { .label = "Install PortMaster", .trailing_text = "Phase 1" },
+        { .label = "Install UI Runtime", .trailing_text = has_runtime ? "installed" : "required" },
         { .label = "Launch PortMaster", .trailing_text = pm_dir_exists(ctx->portmaster_dir) ? "ready" : "not installed" },
         { .label = "Repair / Repatch", .trailing_text = pm_dir_exists(ctx->portmaster_dir) ? "ready" : "not installed" },
         { .label = "Popular Runtimes", .trailing_text = "planned" },
@@ -192,6 +236,7 @@ static pm_action menu(pm_context *ctx)
     static const pm_action map[] = {
         PM_ACTION_STATUS,
         PM_ACTION_INSTALL,
+        PM_ACTION_INSTALL_UI_RUNTIME,
         PM_ACTION_LAUNCH,
         PM_ACTION_REPATCH,
         PM_ACTION_RUNTIMES,
@@ -228,6 +273,9 @@ void pm_ui_run(pm_context *ctx)
                 break;
             case PM_ACTION_INSTALL:
                 show_install(ctx);
+                break;
+            case PM_ACTION_INSTALL_UI_RUNTIME:
+                show_install_ui_runtime(ctx);
                 break;
             case PM_ACTION_LAUNCH:
                 show_launch(ctx);

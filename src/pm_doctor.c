@@ -24,6 +24,15 @@ void pm_doctor_run(const pm_context *ctx, pm_doctor_report *report)
         append_line(report, "ERR", "Stable PortMaster lock", ctx->lock_path);
     }
 
+    if (ctx->runtime_lock_loaded) {
+        char summary[1024];
+        pm_ui_runtime_lock_summary(&ctx->runtime_lock, summary, sizeof(summary));
+        append_line(report, "OK", "PortMaster UI runtime lock", summary);
+    } else {
+        report->issues++;
+        append_line(report, "ERR", "PortMaster UI runtime lock", ctx->runtime_lock_path);
+    }
+
     append_line(report, pm_dir_exists(ctx->data_dir) ? "OK" : "WARN",
                 "Manager data", ctx->data_dir);
     append_line(report, pm_dir_exists(ctx->portmaster_dir) ? "OK" : "WARN",
@@ -45,6 +54,6 @@ void pm_doctor_run(const pm_context *ctx, pm_doctor_report *report)
 
     if (!pm_dir_exists(ctx->portmaster_dir)) {
         append_line(report, "INFO", "Next step",
-                    "Phase 1 will wire Install PortMaster to the verified downloader.");
+                    "Install PortMaster, then install the managed UI runtime.");
     }
 }

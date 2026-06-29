@@ -105,12 +105,21 @@ int pm_context_init(pm_context *ctx, const char *argv0, char *err, size_t err_si
     pm_join(ctx->ports_dir, sizeof(ctx->ports_dir), ctx->roms_path, "PORTS");
     pm_join(ctx->port_images_dir, sizeof(ctx->port_images_dir), ctx->images_path, "PORTS");
     pm_join3(ctx->lock_path, sizeof(ctx->lock_path), ctx->pak_dir, "locks", "portmaster-gui-stable.lock.json");
+    pm_join3(ctx->runtime_lock_path, sizeof(ctx->runtime_lock_path), ctx->pak_dir, "locks", "ui-runtime.lock.json");
     pm_join(ctx->manifest_path, sizeof(ctx->manifest_path), ctx->leaf_dir, "manifest.json");
 
     char lock_err[256];
     ctx->lock_loaded = pm_lock_load(ctx->lock_path, &ctx->lock, lock_err, sizeof(lock_err)) == 0;
     if (!ctx->lock_loaded && err && err_size > 0) {
         snprintf(err, err_size, "lock warning: %s", lock_err);
+    }
+    char runtime_lock_err[256];
+    ctx->runtime_lock_loaded = pm_ui_runtime_lock_load(ctx->runtime_lock_path,
+                                                       &ctx->runtime_lock,
+                                                       runtime_lock_err,
+                                                       sizeof(runtime_lock_err)) == 0;
+    if (ctx->lock_loaded && !ctx->runtime_lock_loaded && err && err_size > 0) {
+        snprintf(err, err_size, "runtime lock warning: %s", runtime_lock_err);
     }
     return 0;
 }

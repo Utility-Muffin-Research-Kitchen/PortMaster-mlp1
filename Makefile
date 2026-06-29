@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 APP_ID := portmaster-mlp1
 PAK_NAME := PortMaster
-VERSION := 0.1.0
+VERSION := 0.1.1
 BUILD ?= build
 PLATFORM ?= mac
 WORKSPACE_ROOT ?= $(abspath ..)
@@ -75,7 +75,7 @@ run-native: native
 	"$(APP_BIN)"
 
 mlp1:
-	@./scripts/build-mlp1.sh
+	@VERSION="$(VERSION)" ./scripts/build-mlp1.sh
 
 package: native
 	@$(MAKE) BUILD="$(BUILD)" PLATFORM="$(PLATFORM)" BIN="$(APP_BIN)" package-build

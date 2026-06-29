@@ -356,6 +356,52 @@ int pm_install_runtime_archive(pm_context *ctx, const char *archive_path, char *
     return 0;
 }
 
+int pm_install_ui_runtime(pm_context *ctx, char *err, size_t err_size)
+{
+    if (err && err_size > 0) {
+        err[0] = '\0';
+    }
+    if (!ctx || !ctx->runtime_lock_loaded) {
+        snprintf(err, err_size, "UI runtime lock is not loaded");
+        return -1;
+    }
+
+    char seven_zip[PM_PATH_MAX];
+    if (pm_join(seven_zip, sizeof(seven_zip), ctx->portmaster_dir, "7zzs.aarch64") != 0 ||
+        !pm_file_exists(seven_zip)) {
+        snprintf(err, err_size, "Install PortMaster first; 7zzs.aarch64 is required to extract the runtime");
+        return -1;
+    }
+
+    if (pm_context_ensure_manager_dirs(ctx, err, err_size) != 0) {
+        return -1;
+    }
+
+    char archive_path[PM_PATH_MAX];
+    if (pm_join(archive_path, sizeof(archive_path), ctx->downloads_dir,
+                ctx->runtime_lock.filename) != 0) {
+        snprintf(err, err_size, "runtime download path too long");
+        return -1;
+    }
+
+    pm_download_spec spec = {
+        .url = ctx->runtime_lock.url,
+        .dest_path = archive_path,
+        .expected_size = ctx->runtime_lock.size,
+        .expected_sha256 = ctx->runtime_lock.sha256,
+        .allow_http = false,
+    };
+    if (pm_download_file(&spec, err, err_size) != 0) {
+        return -1;
+    }
+
+    if (pm_install_runtime_archive(ctx, archive_path, err, err_size) != 0) {
+        return -1;
+    }
+    unlink(archive_path);
+    return 0;
+}
+
 int pm_install_portmaster(pm_context *ctx, char *err, size_t err_size)
 {
     if (err && err_size > 0) {
