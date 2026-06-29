@@ -153,3 +153,22 @@ Output:
 build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip
 build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json
 ```
+
+## Spruce Binary Closure
+
+Spruce's PortMaster package is tracked as an inventory plus an explicit closure
+report:
+
+```sh
+scripts/inventory-spruce-portmaster.sh
+make spruce-bin-closure
+```
+
+The closure report lives at:
+
+```text
+docs/generated/spruce-portmaster-bin-closure.tsv
+```
+
+The generator fails if any Spruce-provided row is unresolved. Dynamic 32-bit
+PortMaster game-port compatibility is tracked separately from this report.

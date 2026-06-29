@@ -39,13 +39,20 @@ Spruce runtime inventory:
 
 ```sh
 scripts/inventory-spruce-portmaster.sh
+make spruce-bin-closure
 ```
 
-The generated list lives at:
+The generated inventory and closure report live at:
 
 ```text
 docs/generated/spruce-portmaster-binary-inventory.tsv
+docs/generated/spruce-portmaster-bin-closure.tsv
 ```
+
+The closure generator fails on any unresolved Spruce row. A closed row either
+maps to the locked upstream PortMaster payload, the generated CPython runtime,
+the locked optional Pillow wheel, or an intentional exclusion for dev/demo
+artifacts.
 
 The UI runtime lock stub is separate from PortMaster game runtimes:
 

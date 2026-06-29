@@ -13,3 +13,8 @@ Compatibility tiers:
 
 The manager must not claim Tier 2 until it is proven on hardware.
 
+The Spruce binary closure report covers the binaries Spruce ships with its
+PortMaster app and runtime. It includes upstream static armhf helper binaries
+from the locked `PortMaster.zip`, but it does not close the dynamic 32-bit
+PortMaster game-port gap. That requires the separate Leaf armhf userspace pack
+and per-port smoke testing.

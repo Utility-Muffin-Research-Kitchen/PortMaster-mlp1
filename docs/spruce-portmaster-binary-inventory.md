@@ -6,10 +6,17 @@ Generated inventory:
 docs/generated/spruce-portmaster-binary-inventory.tsv
 ```
 
+Generated closure report:
+
+```text
+docs/generated/spruce-portmaster-bin-closure.tsv
+```
+
 Regenerate with:
 
 ```sh
 scripts/inventory-spruce-portmaster.sh
+make spruce-bin-closure
 ```
 
 Source artifacts inspected:
@@ -79,6 +86,46 @@ By file kind:
 1 elf-object
 ```
 
+## Closure Report
+
+The closure report turns the Spruce inventory into a source and delivery
+decision for every row. The generator intentionally fails if any row resolves to
+`unknown`, so the report is the current gate for saying the Spruce binary gap is
+closed.
+
+This is a supply-chain and packaging closure report, not a byte-for-byte Spruce
+clone. A row is closed when Leaf either ships it from a recorded source,
+installs it from the locked upstream PortMaster payload, records it as an
+optional locked dependency, or intentionally excludes it as development/demo
+material that PortMaster does not need at runtime.
+
+Current closure status counts:
+
+```text
+33 covered-upstream-portmaster
+32 covered-runtime-pysdl2-dll-disabled
+23 covered-optional-pypi-wheel
+16 covered-duplicate-runtime-pysdl2-dll-disabled
+9 excluded-dev-tool
+8 covered-runtime-cpython-source
+8 excluded-tk-demo
+5 excluded-dev-only
+3 covered-runtime-fat32-copy
+```
+
+Default install decision:
+
+```text
+92 yes
+45 no
+```
+
+The `no` rows are the optional Pillow wheel contents, CPython development
+wrappers, Tk demos, and CPython build/test artifacts. The SDL rows are installed
+in the runtime artifact for provenance/parity, but launch intentionally uses the
+stock MLP1 SDL libraries from `/usr/lib` because the bundled `pysdl2-dll` SDL
+stack segfaulted on hardware.
+
 ## Production Buckets
 
 ### UI Python Runtime
@@ -89,11 +136,11 @@ These are the Spruce-provided files outside `PortMaster/` that make upstream
 Production approach:
 
 - Build or fetch a provenance-clean CPython runtime for aarch64 Linux.
-- Prefer CPython source builds using the MLP1 toolchain once reproducible.
-- Short-term acceptable path: exact-version binary artifact with upstream
-  source, license, URL, size, and SHA-256 pinned in `locks/runtimes.lock.json`.
+- Prefer CPython source builds using the MLP1 toolchain. The current production
+  runtime follows this path and is pinned by `locks/ui-runtime.lock.json`.
+- Use the Spruce-derived reference runtime only for comparison smoke testing.
 - Install Python packages into one canonical site-packages path; avoid Spruce's
-  duplicate SDL library copies unless smoke testing proves they are required.
+  duplicate top-level SDL library copies.
 
 Important rows from the generated inventory:
 
@@ -145,8 +192,10 @@ Production approach:
 
 - First try sourcing `pysdl2-dll==2.32.0` from PyPI for
   `manylinux_2_28_aarch64`, pinned by URL and SHA-256.
-- Install it into the managed Python runtime and set `PYSDL2_DLL_PATH` to its
-  real `sdl2dll/dll` directory.
+- Install it into the managed Python runtime for provenance/parity, but do not
+  expose it to the UI launch path on MLP1.
+- Keep using stock `/usr/lib` SDL for launch unless a rebuilt SDL stack is
+  proven on hardware.
 - If PyPI wheels become insufficient, build SDL2 and companion libs in the MLP1
   toolchain and publish them as part of the UI runtime artifact.
 
@@ -241,41 +290,32 @@ PortMaster/runtimes/love_11.5/love.aarch64
 The first Leaf UI runtime release asset should target only the launch blocker:
 
 ```text
-portmaster-mlp1-ui-runtime-python310-aarch64-<version>.tar.zst
+portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip
 ```
 
-Suggested contents:
+Current required contents:
 
 ```text
-runtime/
+portmaster/
   bin/python3
   bin/python3.10
+  lib/liblzma.so
   lib/libpython3.10.so.1.0
   lib/python3.10/
   lib/python3.10/site-packages/
+  lib/sdl2dll/dll/
 ```
 
-Then add exactly one SDL DLL location, either:
-
-```text
-runtime/lib/python3.10/site-packages/sdl2dll/dll/
-```
-
-or:
-
-```text
-runtime/lib/sdl2dll/dll/
-```
-
-The manager launch code should match whichever path the produced artifact uses.
+The produced artifact keeps one canonical `lib/sdl2dll/dll/` copy of the PySDL2
+native stack, but the manager launch code does not set `PYSDL2_DLL_PATH` on
+MLP1.
 
 ## Next Build Questions
 
-- Can the MLP1 Buildroot toolchain build CPython 3.10/3.11 with usable `_ssl`,
-  `_sqlite3`, `_ctypes`, `zlib`, `hashlib`, and `readline` support?
-- Can we use PyPI `pysdl2-dll==2.32.0` as a pinned binary dependency, or do we
-  want to build SDL2 and companion libs ourselves from source immediately?
-- Does upstream PortMaster need Pillow on Leaf, or is Spruce's Pillow wheel only
-  for Spruce image-cache maintenance?
-- Can we trim development-only entries such as `idle`, `2to3`, `pip`, `tk`
-  demos, and `python.o` from the required runtime without breaking PortMaster?
+- Prove a set of representative aarch64 PortMaster ports against the generated
+  runtime and stock MLP1 SDL.
+- Decide whether Pillow should remain optional or become an on-demand install
+  for a specific upstream PortMaster workflow.
+- Build or source the separate armhf userspace pack for dynamic 32-bit
+  PortMaster ports. The Spruce binary closure covers upstream static armhf
+  helpers, not the full dynamic armhf game-port layer.
