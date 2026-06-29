@@ -57,7 +57,7 @@ ifeq ($(shell uname -s),Darwin)
 LDLIBS_COMMON += -lobjc
 endif
 
-.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython clean
+.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython clean
 
 all: native
 
@@ -115,6 +115,12 @@ dist-pakrat: package-mlp1
 	@cd "$(MLP1_BUILD)/package" && zip -qr "../$(PAK_NAME).mlp1.pak.zip" "$(PAK_NAME).pak"
 	@shasum -a 256 "$(PAKRAT_ZIP)"
 	@echo "=== Pak Rat archive: $(PAKRAT_ZIP) ==="
+
+local-pakrat-feed: dist-pakrat
+	@tools/make-local-pakrat-feed.sh --skip-build
+
+pakrat-local-smoke:
+	@tools/pakrat-local-smoke.sh
 
 fetch-ui-runtime-sources:
 	@sh scripts/fetch-ui-runtime-sources.sh

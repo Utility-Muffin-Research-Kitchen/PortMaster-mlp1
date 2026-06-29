@@ -33,6 +33,27 @@ The Pak Rat-ready archive is assembled at:
 build/mlp1/PortMaster.mlp1.pak.zip
 ```
 
+## Local Pak Rat Test
+
+PortMaster should be exercised through a local Pak Rat feed before it is added
+to the production Leaf store catalog:
+
+```sh
+make local-pakrat-feed
+make pakrat-local-smoke
+```
+
+`make local-pakrat-feed` writes a local-only catalog and artifacts under:
+
+```text
+build/local-pakrat-feed
+```
+
+`make pakrat-local-smoke` serves that feed on a temporary localhost port, asks
+Jawaka's Pak Rat helper to install `org.umrk.portmaster` into a temp SD root,
+and verifies the installed pak. When the generated UI runtime artifact exists,
+the staged test package's runtime lock is rewritten to the local feed too.
+
 ## Runtime Layout
 
 The manager uses Leaf's runtime env contract:
