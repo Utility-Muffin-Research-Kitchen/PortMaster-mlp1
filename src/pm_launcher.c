@@ -58,6 +58,74 @@ static void pm_refresh_armhf_port_wrappers(pm_context *ctx)
     }
 }
 
+static bool pm_resolve_jawaka_platformctl(pm_context *ctx, char *out, size_t out_size)
+{
+    const char *explicit_ctl = getenv("JAWAKA_PLATFORMCTL");
+    if (explicit_ctl && explicit_ctl[0] && pm_copy(out, out_size, explicit_ctl) == 0) {
+        return true;
+    }
+
+    const char *bin_dir = getenv("UMRK_BIN_PATH");
+    if (bin_dir && bin_dir[0] && pm_join(out, out_size, bin_dir, "jawaka-platformctl") == 0 &&
+        pm_file_exists(out)) {
+        return true;
+    }
+
+    const char *launcher_dir = getenv("UMRK_LAUNCHER_PATH");
+    if (launcher_dir && launcher_dir[0] &&
+        pm_join3(out, out_size, launcher_dir, "bin", "jawaka-platformctl") == 0 &&
+        pm_file_exists(out)) {
+        return true;
+    }
+
+    if (ctx && ctx->sdcard_path[0] && ctx->platform[0]) {
+        char platform_root[PM_PATH_MAX];
+        if (pm_format(platform_root, sizeof(platform_root),
+                      "%s/.system/leaf/platforms/%s/launcher/bin",
+                      ctx->sdcard_path, ctx->platform) == 0 &&
+            pm_join(out, out_size, platform_root, "jawaka-platformctl") == 0 &&
+            pm_file_exists(out)) {
+            return true;
+        }
+    }
+
+    return pm_copy(out, out_size, "jawaka-platformctl") == 0;
+}
+
+static void pm_request_jawaka_library_rescan(pm_context *ctx)
+{
+    char ctl[PM_PATH_MAX];
+    if (!pm_resolve_jawaka_platformctl(ctx, ctl, sizeof(ctl))) {
+        return;
+    }
+
+    char socket[PM_PATH_MAX];
+    const char *socket_env = getenv("JAWAKA_SOCKET_PATH");
+    if (socket_env && socket_env[0]) {
+        if (pm_copy(socket, sizeof(socket), socket_env) != 0) {
+            return;
+        }
+    } else {
+        const char *runtime_dir = pm_env("UMRK_RUNTIME_PATH", "/tmp/jawaka-runtime");
+        if (pm_join(socket, sizeof(socket), runtime_dir, "jawakad.sock") != 0) {
+            return;
+        }
+    }
+
+    char *argv[] = {
+        ctl,
+        "--socket",
+        socket,
+        "request",
+        "{\"type\":\"scan-library\"}",
+        NULL,
+    };
+    char scan_err[256];
+    if (pm_run_argv(argv, scan_err, sizeof(scan_err)) != 0) {
+        fprintf(stderr, "Jawaka library rescan warning: %s\n", scan_err);
+    }
+}
+
 int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
 {
     if (err && err_size > 0) {
@@ -153,5 +221,8 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     };
 
     char *argv[] = { "bash", "./PortMaster.sh", NULL };
-    return pm_run_argv_env_in_dir(ctx->portmaster_dir, argv, env, err, err_size);
+    int rc = pm_run_argv_env_in_dir(ctx->portmaster_dir, argv, env, err, err_size);
+    pm_refresh_armhf_port_wrappers(ctx);
+    pm_request_jawaka_library_rescan(ctx);
+    return rc;
 }

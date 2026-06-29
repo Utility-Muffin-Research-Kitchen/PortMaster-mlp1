@@ -179,7 +179,7 @@ $USERDATA_PATH/portmaster/compat/armhf
 It includes `bin/leaf-armhf-run`, which runs dynamic armhf programs through the
 packaged loader and library path without writing to the stock rootfs.
 
-On PortMaster launch, the manager also runs:
+On PortMaster launch, and again after the upstream GUI exits, the manager runs:
 
 ```text
 scripts/scan-and-fix-port-elfs.sh
@@ -198,6 +198,11 @@ Dynamic armhf executables that require `/lib/ld-linux-armhf.so.3` are moved to
 `.leaf-armhf/` beside the original file and replaced with a shell wrapper that
 executes them through `bin/leaf-armhf-run`. Armhf shared objects, such as
 libretro cores, are reported but not rewritten.
+
+After the post-exit scan, the manager sends Jawaka a non-fatal
+`scan-library` IPC request through `jawaka-platformctl` so newly installed
+PortMaster `.sh` launchers appear in the Ports list without restarting the
+launcher stack.
 
 ## Spruce Binary Closure
 

@@ -52,7 +52,8 @@ not yet prove a full dynamic armhf game port. Tier 2 GLES remains unclaimed.
 
 ## Port normalization
 
-The manager refreshes armhf support every time it launches upstream PortMaster:
+The manager refreshes armhf support before upstream PortMaster launches and
+again after upstream PortMaster exits:
 
 - repatch upstream PortMaster
 - write `PortMaster/leaf-armhf-env.sh`
@@ -78,3 +79,8 @@ Reports are written to:
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.json
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.tsv
 ```
+
+After the post-exit scan, the manager asks Jawaka to run `scan-library` through
+`jawaka-platformctl`. The request is best-effort so PortMaster remains usable
+when Jawaka is not running, but normal Leaf launches refresh the Ports list
+after installing or removing ports.
