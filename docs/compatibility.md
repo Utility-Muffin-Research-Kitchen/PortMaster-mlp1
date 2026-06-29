@@ -8,10 +8,10 @@ Compatibility tiers:
 
 - Tier 0: static armhf helper binaries.
 - Tier 1: dynamic armhf SDL/software-rendered ports using the Leaf armhf pack.
-- Tier 2: dynamic armhf GLES ports after a legal 32-bit graphics stack is
-  sourced and smoked.
+- Tier 2: dynamic armhf GLES ports using the bundled 32-bit Rockchip Mali stack.
 
-The manager must not claim Tier 2 until it is proven on hardware.
+Tier 2 is claimed only for the pinned Rockchip Mali g24p0 stack after an MLP1
+Lineoff smoke test. More GLES ports still need per-port smoke testing.
 
 The Spruce binary closure report covers the binaries Spruce ships with its
 PortMaster app and runtime. It includes upstream static armhf helper binaries
@@ -21,13 +21,13 @@ and per-port smoke testing.
 
 ## Initial armhf pack
 
-`make build-armhf-compat` builds the first compatibility pack from Debian
-Bookworm armhf packages. The generated zip is a release-asset candidate, not a
-git-vendored payload:
+`make build-armhf-compat` builds the compatibility pack from Debian Bookworm
+armhf packages plus a pinned Rockchip Mali armhf userspace blob. The generated
+zip is a release-asset candidate, not a git-vendored payload:
 
 ```text
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-20260629.zip
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-20260629.json
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.zip
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.json
 ```
 
 The pack installs under `$USERDATA_PATH/portmaster/compat/armhf` and includes:
@@ -35,10 +35,18 @@ The pack installs under `$USERDATA_PATH/portmaster/compat/armhf` and includes:
 - `lib/ld-linux-armhf.so.3`
 - glibc, libgcc, libstdc++, SDL2, SDL2_image, SDL2_mixer, SDL2_ttf, SDL2_gfx
 - common audio/image/font/Wayland/X11 support libraries needed by SDL helpers
+- Rockchip Mali Bifrost G52 `g24p0-00eac0` 32-bit Wayland/GBM userspace from
+  `tsukumijima/libmali-rockchip`
+- `licenses/mali/libmali-rockchip-debian-copyright`, which includes the Arm
+  Mali userspace driver EULA and redistribution notice requirements
 - `bin/leaf-armhf-run`, a non-root loader wrapper
 - `bin/leaf-armhf-smoke`, a tiny dynamic armhf smoke binary
 
-Device smoke on MLP1 on 2026-06-29:
+The Mali blob is pinned by commit, path, size, and SHA-256 in the generated
+manifest. The blob is not built from source and remains under Arm's closed Mali
+userspace driver EULA.
+
+Device smoke on MLP1 on 2026-06-29 and 2026-06-30:
 
 - `leaf-armhf-smoke` ran through `bin/leaf-armhf-run`.
 - upstream `xdelta3.armhf -V` ran through `bin/leaf-armhf-run`.
@@ -46,9 +54,11 @@ Device smoke on MLP1 on 2026-06-29:
   libraries with `ld-linux-armhf.so.3 --list`.
 - `scripts/scan-and-fix-port-elfs.sh` wrapped a temporary dynamic armhf smoke
   executable and the wrapper ran successfully through `leaf-armhf-run`.
+- Lineoff/gmloader created a hardware OpenGL ES 3.2 context on MLP1 with ARM
+  vendor string and the `g24p0-00eac0` driver string.
 
-This proves the dynamic loader path and a useful SDL helper closure, but it does
-not yet prove a full dynamic armhf game port. Tier 2 GLES remains unclaimed.
+This proves the dynamic loader path, the SDL helper closure, and one real
+dynamic armhf GLES game-port path. It does not prove every PortMaster GLES port.
 
 ## Port normalization
 

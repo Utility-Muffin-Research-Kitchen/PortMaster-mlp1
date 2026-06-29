@@ -156,8 +156,9 @@ build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.
 
 ## Armhf Compatibility Pack
 
-The initial armhf compatibility pack is generated from Debian armhf packages in
-Docker, with package/file provenance written to the generated manifest:
+The armhf compatibility pack is generated from Debian armhf packages in Docker,
+plus a pinned Rockchip Mali 32-bit userspace blob for GLES ports. Package/file
+provenance and Mali license metadata are written to the generated manifest:
 
 ```sh
 make build-armhf-compat
@@ -166,8 +167,8 @@ make build-armhf-compat
 Output:
 
 ```text
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-20260629.zip
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-20260629.json
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.zip
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.json
 ```
 
 The zip installs under:
@@ -178,6 +179,12 @@ $USERDATA_PATH/portmaster/compat/armhf
 
 It includes `bin/leaf-armhf-run`, which runs dynamic armhf programs through the
 packaged loader and library path without writing to the stock rootfs.
+
+The Mali blob is `libmali-bifrost-g52-g24p0-wayland-gbm.so` from
+`tsukumijima/libmali-rockchip`, pinned by commit and SHA-256 in
+`scripts/build-armhf-compat-pack.sh`. The generated pack includes the upstream
+Debian copyright file under `licenses/mali/`; that file contains the Arm Mali
+userspace driver EULA and redistribution notice requirements.
 
 On PortMaster launch, and again after the upstream GUI exits, the manager runs:
 

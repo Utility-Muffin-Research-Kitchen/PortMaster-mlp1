@@ -3,8 +3,18 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${PM_ARMHF_BUILD_IMAGE:-debian:bookworm-slim}"
-VERSION="${PM_ARMHF_COMPAT_VERSION:-bookworm-20260629}"
+VERSION="${PM_ARMHF_COMPAT_VERSION:-bookworm-mali-g24p0-20260630}"
 container=0
+
+MALI_REPO="https://github.com/tsukumijima/libmali-rockchip"
+MALI_RAW_BASE="https://raw.githubusercontent.com/tsukumijima/libmali-rockchip"
+MALI_COMMIT="${PM_ARMHF_MALI_COMMIT:-bd33ee262f47fd936b831afccaa0759b3ecc2482}"
+MALI_VARIANT="bifrost-g52-g24p0-wayland-gbm"
+MALI_BLOB_PATH="lib/arm-linux-gnueabihf/libmali-$MALI_VARIANT.so"
+MALI_BLOB_SHA256="67d7d1d275eb437b6d4470529230c8bc6289bdf0a288fdc3ab5ee2bd648a95f6"
+MALI_BLOB_SIZE="38116912"
+MALI_COPYRIGHT_PATH="debian/copyright"
+MALI_COPYRIGHT_SHA256="a254205ab051a9a6cf952bf73d9f40715eb3bd2963d82ac462762e4dda1e8c77"
 
 if [[ "${1:-}" == "--container" ]]; then
   container=1
@@ -17,6 +27,7 @@ PACKAGES=(
   libc6:armhf
   libgcc-s1:armhf
   libstdc++6:armhf
+  libbz2-1.0:armhf
   zlib1g:armhf
   libsdl2-2.0-0:armhf
   libsdl2-image-2.0-0:armhf
@@ -68,6 +79,7 @@ if [[ "$container" == "0" ]]; then
     -w /work \
     -e PM_ARMHF_OUT_DIR="$OUT_REL" \
     -e PM_ARMHF_COMPAT_VERSION="$VERSION" \
+    -e PM_ARMHF_MALI_COMMIT="$MALI_COMMIT" \
     "$IMAGE" \
     bash scripts/build-armhf-compat-pack.sh --container
 fi
@@ -84,6 +96,7 @@ ROOTFS="$WORK_DIR/root"
 DEB_DIR="$WORK_DIR/debs"
 SOURCES_REPORT="$WORK_DIR/sources.json"
 FILE_REPORT="$WORK_DIR/files.json"
+MALI_REPORT="$WORK_DIR/mali.json"
 ARTIFACT="$OUT_DIR/portmaster-mlp1-armhf-compat-$VERSION.zip"
 MANIFEST="$OUT_DIR/portmaster-mlp1-armhf-compat-$VERSION.json"
 EMBEDDED_MANIFEST="$ROOTFS/.leaf-armhf-compat-manifest.json"
@@ -102,6 +115,7 @@ apt-get install -y --no-install-recommends \
   gcc-arm-linux-gnueabihf \
   libc6-dev-armhf-cross \
   python3 \
+  curl \
   zip
 
 printf '%s\n' "${PACKAGES[@]}" >"$WORK_DIR/package-plan.txt"
@@ -199,6 +213,133 @@ rm -rf "$ROOTFS/usr/share/doc" \
        "$ROOTFS/usr/share/bug" \
        "$ROOTFS/usr/share/apport"
 
+echo "=== Installing Rockchip Mali armhf GLES stack ==="
+MALI_WORK="$WORK_DIR/mali"
+MALI_LIB_DIR="$ROOTFS/usr/lib/arm-linux-gnueabihf"
+MALI_VENDOR_DIR="$MALI_LIB_DIR/mali"
+mkdir -p "$MALI_WORK" "$MALI_VENDOR_DIR" "$MALI_LIB_DIR/pkgconfig" \
+         "$ROOTFS/licenses/mali" \
+         "$ROOTFS/etc/OpenCL/vendors" "$ROOTFS/etc/ld.so.conf.d" \
+         "$ROOTFS/etc/profile.d"
+
+curl -fsSL "$MALI_RAW_BASE/$MALI_COMMIT/$MALI_BLOB_PATH" \
+  -o "$MALI_WORK/libmali.so.1.9.0"
+curl -fsSL "$MALI_RAW_BASE/$MALI_COMMIT/$MALI_COPYRIGHT_PATH" \
+  -o "$ROOTFS/licenses/mali/libmali-rockchip-debian-copyright"
+
+mali_blob_sha="$(sha256sum "$MALI_WORK/libmali.so.1.9.0" | awk '{print $1}')"
+mali_copyright_sha="$(sha256sum "$ROOTFS/licenses/mali/libmali-rockchip-debian-copyright" | awk '{print $1}')"
+mali_blob_size="$(wc -c <"$MALI_WORK/libmali.so.1.9.0" | tr -d ' ')"
+if [[ "$mali_blob_sha" != "$MALI_BLOB_SHA256" ]]; then
+  echo "Mali blob sha256 mismatch: $mali_blob_sha != $MALI_BLOB_SHA256" >&2
+  exit 1
+fi
+if [[ "$mali_copyright_sha" != "$MALI_COPYRIGHT_SHA256" ]]; then
+  echo "Mali copyright sha256 mismatch: $mali_copyright_sha != $MALI_COPYRIGHT_SHA256" >&2
+  exit 1
+fi
+if [[ "$mali_blob_size" != "$MALI_BLOB_SIZE" ]]; then
+  echo "Mali blob size mismatch: $mali_blob_size != $MALI_BLOB_SIZE" >&2
+  exit 1
+fi
+
+cp -f "$MALI_WORK/libmali.so.1.9.0" "$MALI_LIB_DIR/libmali.so.1"
+ln -sf libmali.so.1 "$MALI_LIB_DIR/libmali.so"
+
+cat >"$MALI_WORK/dummy.c" <<'C'
+void leaf_mali_wrapper_anchor(void) {}
+C
+
+for spec in EGL:1 GLESv1_CM:1 GLESv2:2 gbm:1 wayland-egl:1 MaliOpenCL:1; do
+  name="${spec%%:*}"
+  soname_version="${spec##*:}"
+  arm-linux-gnueabihf-gcc -shared -fPIC \
+    -Wl,-soname,"lib${name}.so.${soname_version}" \
+    -Wl,--no-as-needed -L"$MALI_LIB_DIR" -lmali -Wl,--as-needed \
+    -o "$MALI_VENDOR_DIR/lib${name}.so.${soname_version}" \
+    "$MALI_WORK/dummy.c"
+  cp -f "$MALI_VENDOR_DIR/lib${name}.so.${soname_version}" \
+        "$MALI_VENDOR_DIR/lib${name}.so"
+done
+
+printf '%s\n' 'libMaliOpenCL.so.1' >"$ROOTFS/etc/OpenCL/vendors/mali.icd"
+printf '%s\n' '/usr/lib/arm-linux-gnueabihf/mali' >"$ROOTFS/etc/ld.so.conf.d/00-arm-mali.conf"
+printf '%s\n' 'export MALI_SCHED_RT_THREAD_PRIORITY=95' >"$ROOTFS/etc/profile.d/mali-priority.sh"
+cat >"$MALI_LIB_DIR/pkgconfig/mali.pc" <<'PC'
+prefix=/usr
+libdir=${prefix}/lib/arm-linux-gnueabihf
+
+Name: mali
+Description: Mali GPU User-Space Binary Driver
+Version: 1.9.0
+Requires: libdrm wayland-client wayland-server
+Libs: -L${libdir} -lmali
+PC
+
+chmod 755 "$MALI_LIB_DIR"/libmali*.so* "$MALI_VENDOR_DIR"/*.so*
+rm -f "$MALI_LIB_DIR/libmali.so"
+chmod 644 "$ROOTFS/licenses/mali/libmali-rockchip-debian-copyright" \
+          "$ROOTFS/etc/OpenCL/vendors/mali.icd" \
+          "$ROOTFS/etc/ld.so.conf.d/00-arm-mali.conf" \
+          "$MALI_LIB_DIR/pkgconfig/mali.pc"
+
+python3 - "$MALI_REPORT" "$MALI_REPO" "$MALI_COMMIT" "$MALI_VARIANT" \
+  "$MALI_BLOB_PATH" "$MALI_BLOB_SHA256" "$MALI_BLOB_SIZE" \
+  "$MALI_COPYRIGHT_PATH" "$MALI_COPYRIGHT_SHA256" <<'PY'
+import json
+import sys
+
+(
+    report_path,
+    repo,
+    commit,
+    variant,
+    blob_path,
+    blob_sha,
+    blob_size,
+    copyright_path,
+    copyright_sha,
+) = sys.argv[1:10]
+
+report = {
+    "repo": repo,
+    "commit": commit,
+    "variant": variant,
+    "architecture": "armhf",
+    "license": {
+        "kind": "ARM Mali userspace driver EULA",
+        "upstream_path": copyright_path,
+        "installed_path": "licenses/mali/libmali-rockchip-debian-copyright",
+        "sha256": copyright_sha,
+        "notes": [
+            "Binary blobs are closed-source ARM Mali userspace driver components.",
+            "Redistribution must retain notices and include this license text.",
+        ],
+    },
+    "blob": {
+        "upstream_path": blob_path,
+        "installed_paths": [
+            "usr/lib/arm-linux-gnueabihf/libmali.so.1",
+        ],
+        "size": int(blob_size),
+        "sha256": blob_sha,
+        "driver_release": "g24p0-00eac0",
+    },
+    "wrappers": [
+        "usr/lib/arm-linux-gnueabihf/mali/libEGL.so.1",
+        "usr/lib/arm-linux-gnueabihf/mali/libGLESv1_CM.so.1",
+        "usr/lib/arm-linux-gnueabihf/mali/libGLESv2.so.2",
+        "usr/lib/arm-linux-gnueabihf/mali/libgbm.so.1",
+        "usr/lib/arm-linux-gnueabihf/mali/libwayland-egl.so.1",
+        "usr/lib/arm-linux-gnueabihf/mali/libMaliOpenCL.so.1",
+    ],
+}
+
+with open(report_path, "w", encoding="utf-8") as fp:
+    json.dump(report, fp, indent=2, sort_keys=True)
+    fp.write("\n")
+PY
+
 cat >"$WORK_DIR/leaf-armhf-smoke.c" <<'C'
 #include <stdio.h>
 #include <sys/utsname.h>
@@ -233,10 +374,12 @@ if [ ! -x "$LOADER" ]; then
     exit 69
 fi
 
-LIB_PATH="$ROOT/lib/arm-linux-gnueabihf:$ROOT/usr/lib/arm-linux-gnueabihf:$ROOT/usr/lib/arm-linux-gnueabihf/pulseaudio:$ROOT/lib:$ROOT/usr/lib"
+LIB_PATH="$ROOT/usr/lib/arm-linux-gnueabihf/mali:$ROOT/lib/arm-linux-gnueabihf:$ROOT/usr/lib/arm-linux-gnueabihf:$ROOT/usr/lib/arm-linux-gnueabihf/pulseaudio:$ROOT/lib:$ROOT/usr/lib"
 if [ -n "${LD_LIBRARY_PATH:-}" ]; then
     LIB_PATH="$LIB_PATH:$LD_LIBRARY_PATH"
 fi
+export LIBGL_DRIVERS_PATH="${LIBGL_DRIVERS_PATH:-$ROOT/usr/lib/arm-linux-gnueabihf/dri}"
+export __EGL_VENDOR_LIBRARY_DIRS="${__EGL_VENDOR_LIBRARY_DIRS:-$ROOT/usr/share/glvnd/egl_vendor.d}"
 
 exec "$LOADER" --library-path "$LIB_PATH" "$@"
 SH
@@ -301,22 +444,25 @@ report.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="u
 PY
 
 echo "=== Writing embedded manifest ==="
-python3 - "$VERSION" "$SOURCES_REPORT" "$FILE_REPORT" "$EMBEDDED_MANIFEST" <<'PY'
+python3 - "$VERSION" "$SOURCES_REPORT" "$FILE_REPORT" "$MALI_REPORT" "$EMBEDDED_MANIFEST" <<'PY'
 import datetime as dt
 import json
 import sys
 
-version, sources_path, files_path, manifest_path = sys.argv[1:5]
+version, sources_path, files_path, mali_path, manifest_path = sys.argv[1:6]
 with open(sources_path, "r", encoding="utf-8") as fp:
     sources = json.load(fp)
 with open(files_path, "r", encoding="utf-8") as fp:
     files = json.load(fp)
+with open(mali_path, "r", encoding="utf-8") as fp:
+    mali = json.load(fp)
 
 manifest = {
     "version": version,
     "built_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
     "minimum_manager_version": "0.1.1",
     "sources": sources,
+    "mali": mali,
     "files": files,
     "sha256": {
         "artifact": None,
@@ -325,7 +471,7 @@ manifest = {
         "tier0_static_helpers": False,
         "tier1_dynamic_loader": False,
         "tier1_sdl_runtime_packaged": True,
-        "tier2_gles": False,
+        "tier2_gles": True,
     },
 }
 

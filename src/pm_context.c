@@ -17,6 +17,8 @@ static int dir_from_argv0(char *out, size_t out_size, const char *argv0)
     if (!argv0 || !argv0[0]) {
         return getcwd(out, out_size) ? 0 : -1;
     }
+
+    char candidate[PM_PATH_MAX];
     if (argv0[0] != '/') {
         if (!getcwd(cwd, sizeof(cwd))) {
             return -1;
@@ -30,14 +32,34 @@ static int dir_from_argv0(char *out, size_t out_size, const char *argv0)
         if (pm_copy(tmp, sizeof(tmp), argv0) != 0) {
             return -1;
         }
-        return pm_copy(out, out_size, dirname(tmp));
+        if (pm_copy(candidate, sizeof(candidate), dirname(tmp)) != 0) {
+            return -1;
+        }
+    } else {
+        char tmp[PM_PATH_MAX];
+        if (pm_copy(tmp, sizeof(tmp), argv0) != 0) {
+            return -1;
+        }
+        if (pm_copy(candidate, sizeof(candidate), dirname(tmp)) != 0) {
+            return -1;
+        }
     }
 
-    char tmp[PM_PATH_MAX];
-    if (pm_copy(tmp, sizeof(tmp), argv0) != 0) {
-        return -1;
+    const char *last = strrchr(candidate, '/');
+    last = last ? last + 1 : candidate;
+    if (strcmp(last, "bin") == 0) {
+        char tmp[PM_PATH_MAX];
+        char parent[PM_PATH_MAX];
+        char lock_path[PM_PATH_MAX];
+        if (pm_copy(tmp, sizeof(tmp), candidate) == 0 &&
+            pm_copy(parent, sizeof(parent), dirname(tmp)) == 0 &&
+            pm_join3(lock_path, sizeof(lock_path), parent, "locks", "portmaster-gui-stable.lock.json") == 0 &&
+            pm_file_exists(lock_path)) {
+            return pm_copy(out, out_size, parent);
+        }
     }
-    return pm_copy(out, out_size, dirname(tmp));
+
+    return pm_copy(out, out_size, candidate);
 }
 
 int pm_context_init(pm_context *ctx, const char *argv0, char *err, size_t err_size)

@@ -61,7 +61,9 @@ export DEVICE_HAS_AARCH64="\${DEVICE_HAS_AARCH64:-Y}"
 export LEAF_PM_ARMHF_ROOT="\${LEAF_PM_ARMHF_ROOT:-$compat_root}"
 export LEAF_PM_ARMHF_LOADER="\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3"
 export LEAF_PM_ARMHF_RUN="\$LEAF_PM_ARMHF_ROOT/bin/leaf-armhf-run"
-export LEAF_PM_ARMHF_LIB_PATH="\$LEAF_PM_ARMHF_ROOT/lib/arm-linux-gnueabihf:\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf:\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/pulseaudio:\$LEAF_PM_ARMHF_ROOT/lib:\$LEAF_PM_ARMHF_ROOT/usr/lib"
+export LEAF_PM_ARMHF_LIB_PATH="\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/mali:\$LEAF_PM_ARMHF_ROOT/lib/arm-linux-gnueabihf:\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf:\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/pulseaudio:\$LEAF_PM_ARMHF_ROOT/lib:\$LEAF_PM_ARMHF_ROOT/usr/lib"
+export LIBGL_DRIVERS_PATH="\${LIBGL_DRIVERS_PATH:-\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/dri}"
+export __EGL_VENDOR_LIBRARY_DIRS="\${__EGL_VENDOR_LIBRARY_DIRS:-\$LEAF_PM_ARMHF_ROOT/usr/share/glvnd/egl_vendor.d}"
 
 leaf_pm_armhf_run() {
   "\$LEAF_PM_ARMHF_RUN" "\$@"

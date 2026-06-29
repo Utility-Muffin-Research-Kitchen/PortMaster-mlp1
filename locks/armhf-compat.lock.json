@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "status": "initial-builder",
+  "status": "mali-g24p0-builder",
   "install_dir": "$USERDATA_PATH/portmaster/compat/armhf",
   "builder": {
     "script": "scripts/build-armhf-compat-pack.sh",
     "make_target": "build-armhf-compat",
     "base_image": "debian:bookworm-slim",
-    "version": "bookworm-20260629"
+    "version": "bookworm-mali-g24p0-20260630"
   },
   "tiers": {
     "tier0": "static armhf helpers",
@@ -15,22 +15,35 @@
   },
   "artifacts": [
     {
-      "name": "portmaster-mlp1-armhf-compat-bookworm-20260629.zip",
-      "manifest": "portmaster-mlp1-armhf-compat-bookworm-20260629.json",
-      "size": 39820332,
-      "sha256": "b118da5eb1be37edc817cda93cdb122b9afc9f15cd607027ac68a02182deee49",
-      "package_count": 103,
+      "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.zip",
+      "manifest": "portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.json",
+      "size": 61172192,
+      "sha256": "834dc01f17b4a0faa04448c8e85b170dd49130b228824fc6be080b1cbe3d6194",
+      "package_count": 104,
       "package_architectures": {
         "all": 7,
-        "armhf": 96
+        "armhf": 97
+      },
+      "mali": {
+        "repo": "https://github.com/tsukumijima/libmali-rockchip",
+        "commit": "bd33ee262f47fd936b831afccaa0759b3ecc2482",
+        "variant": "bifrost-g52-g24p0-wayland-gbm",
+        "architecture": "armhf",
+        "driver_release": "g24p0-00eac0",
+        "blob_path": "lib/arm-linux-gnueabihf/libmali-bifrost-g52-g24p0-wayland-gbm.so",
+        "blob_size": 38116912,
+        "blob_sha256": "67d7d1d275eb437b6d4470529230c8bc6289bdf0a288fdc3ab5ee2bd648a95f6",
+        "license_path": "debian/copyright",
+        "license_sha256": "a254205ab051a9a6cf952bf73d9f40715eb3bd2963d82ac462762e4dda1e8c77",
+        "installed_license": "licenses/mali/libmali-rockchip-debian-copyright"
       },
       "device_smoke": {
-        "date": "2026-06-29",
+        "date": "2026-06-30",
         "device": "MLP1",
         "dynamic_loader_smoke": "leaf-armhf-smoke ok",
         "upstream_dynamic_helper": "xdelta3.armhf -V ok",
         "sdl_helper_dependency_check": "gptokeyb.armhf and sdl_resolution.armhf resolve with ld-linux --list",
-        "tier2_gles": "not claimed"
+        "tier2_gles": "Lineoff/gmloader launched through Leaf PortMaster launcher and reported OpenGL ES 3.2, vendor ARM, driver g24p0-00eac0"
       }
     }
   ]
