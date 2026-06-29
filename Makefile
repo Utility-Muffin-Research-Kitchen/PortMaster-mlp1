@@ -57,7 +57,7 @@ ifeq ($(shell uname -s),Darwin)
 LDLIBS_COMMON += -lobjc
 endif
 
-.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython spruce-bin-closure clean
+.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat spruce-bin-closure clean
 
 all: native
 
@@ -130,6 +130,9 @@ build-ui-runtime-reference:
 
 build-ui-runtime-cpython:
 	@bash scripts/build-ui-runtime-cpython.sh
+
+build-armhf-compat:
+	@bash scripts/build-armhf-compat-pack.sh
 
 spruce-bin-closure:
 	@python3 scripts/generate-spruce-bin-closure.py

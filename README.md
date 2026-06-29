@@ -154,6 +154,31 @@ build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.
 build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json
 ```
 
+## Armhf Compatibility Pack
+
+The initial armhf compatibility pack is generated from Debian armhf packages in
+Docker, with package/file provenance written to the generated manifest:
+
+```sh
+make build-armhf-compat
+```
+
+Output:
+
+```text
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-20260629.zip
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-20260629.json
+```
+
+The zip installs under:
+
+```text
+$USERDATA_PATH/portmaster/compat/armhf
+```
+
+It includes `bin/leaf-armhf-run`, which runs dynamic armhf programs through the
+packaged loader and library path without writing to the stock rootfs.
+
 ## Spruce Binary Closure
 
 Spruce's PortMaster package is tracked as an inventory plus an explicit closure

@@ -1,12 +1,37 @@
 {
   "schema": 1,
-  "status": "planned",
+  "status": "initial-builder",
   "install_dir": "$USERDATA_PATH/portmaster/compat/armhf",
+  "builder": {
+    "script": "scripts/build-armhf-compat-pack.sh",
+    "make_target": "build-armhf-compat",
+    "base_image": "debian:bookworm-slim",
+    "version": "bookworm-20260629"
+  },
   "tiers": {
     "tier0": "static armhf helpers",
     "tier1": "dynamic armhf SDL/software-rendered ports",
     "tier2": "dynamic armhf GLES ports after legal 32-bit graphics stack is sourced"
   },
-  "artifacts": []
+  "artifacts": [
+    {
+      "name": "portmaster-mlp1-armhf-compat-bookworm-20260629.zip",
+      "manifest": "portmaster-mlp1-armhf-compat-bookworm-20260629.json",
+      "size": 39820332,
+      "sha256": "b118da5eb1be37edc817cda93cdb122b9afc9f15cd607027ac68a02182deee49",
+      "package_count": 103,
+      "package_architectures": {
+        "all": 7,
+        "armhf": 96
+      },
+      "device_smoke": {
+        "date": "2026-06-29",
+        "device": "MLP1",
+        "dynamic_loader_smoke": "leaf-armhf-smoke ok",
+        "upstream_dynamic_helper": "xdelta3.armhf -V ok",
+        "sdl_helper_dependency_check": "gptokeyb.armhf and sdl_resolution.armhf resolve with ld-linux --list",
+        "tier2_gles": "not claimed"
+      }
+    }
+  ]
 }
-
