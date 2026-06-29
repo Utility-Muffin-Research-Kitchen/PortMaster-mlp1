@@ -226,6 +226,19 @@ static int apply_patch_records(const char *tree, const pm_patch_record *records,
                 continue;
             }
             free(content);
+        } else if (strcmp(records[i].name, "0006-leaf-armhf-gui-capability.patch") == 0) {
+            char target[PM_PATH_MAX];
+            if (pm_join3(target, sizeof(target), tree, "pylibs/harbourmaster", "hardware.py") != 0) {
+                snprintf(err, err_size, "hardware.py path too long");
+                return -1;
+            }
+            char marker_err[128];
+            char *content = pm_read_text_file(target, 512 * 1024, marker_err, sizeof(marker_err));
+            if (content && strstr(content, "LEAF_PM_ARMHF_ROOT")) {
+                free(content);
+                continue;
+            }
+            free(content);
         }
 
         char patch_path[PM_PATH_MAX];

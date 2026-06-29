@@ -1,0 +1,22 @@
+--- pylibs/harbourmaster/hardware.py
++++ pylibs/harbourmaster/hardware.py
+@@ -180,7 +180,7 @@
+     # MANGMI
+     "mangmiairx": {"resolution": (1920, 1080), "analogsticks": 2, "cpu": "sd662", "capabilities": ["power"], "ram": 4096},
+ 
+-    "leaf-mlp1": {"resolution": (960, 720), "analogsticks": 2, "cpu": "rk3566", "capabilities": ["power"], "ram": 1024},
++    "leaf-mlp1": {"resolution": (960, 720), "analogsticks": 2, "cpu": "rk3566", "capabilities": ["power", "aarch64"], "primary_arch": "aarch64", "ram": 1024},
+     # Computer/Testing
+     "pc":        {"resolution": (640, 480), "analogsticks": 2, "cpu": "unknown", "capabilities": ["opengl", "power"]},
+ 
+@@ -246,6 +246,10 @@
+ 
+ 
+ def cpu_info_v2(info):
++    leaf_armhf_root = os.environ.get("LEAF_PM_ARMHF_ROOT", "")
++    if leaf_armhf_root and Path(leaf_armhf_root, "lib/ld-linux-armhf.so.3").exists() and "armhf" not in info["capabilities"]:
++        info["capabilities"].append("armhf")
++
+     if Path('/lib/ld-linux-armhf.so.3').exists():
+         info["capabilities"].append("armhf")
+         info['primary_arch'] = "armhf"

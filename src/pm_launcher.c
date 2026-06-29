@@ -15,6 +15,21 @@ static const char *PM_MLP1_GAMECONTROLLERCONFIG =
     "leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,"
     "crc:3cfe,platform:Linux";
 
+static bool pm_armhf_compat_available(pm_context *ctx, char *root, size_t root_size)
+{
+    if (!ctx ||
+        pm_join3(root, root_size, ctx->data_dir, "compat", "armhf") != 0) {
+        return false;
+    }
+
+    char loader[PM_PATH_MAX];
+    char runner[PM_PATH_MAX];
+    return pm_join3(loader, sizeof(loader), root, "lib", "ld-linux-armhf.so.3") == 0 &&
+           pm_join3(runner, sizeof(runner), root, "bin", "leaf-armhf-run") == 0 &&
+           pm_file_exists(loader) &&
+           pm_file_exists(runner);
+}
+
 static void pm_refresh_armhf_port_wrappers(pm_context *ctx)
 {
     char script[PM_PATH_MAX];
@@ -100,6 +115,9 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         pm_copy(python_path, sizeof(python_path), "");
     }
 
+    char armhf_root[PM_PATH_MAX];
+    bool has_armhf = pm_armhf_compat_available(ctx, armhf_root, sizeof(armhf_root));
+
     pm_env_override env[] = {
         { "HOME", ctx->data_dir },
         { "PATH", path_env },
@@ -118,10 +136,11 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "DEVICE_CPU", "RK3566" },
         { "DEVICE_ARCH", "aarch64" },
         { "DEVICE_RAM", "1" },
-        { "DEVICE_HAS_ARMHF", "N" },
+        { "DEVICE_HAS_ARMHF", has_armhf ? "Y" : "N" },
         { "DEVICE_HAS_AARCH64", "Y" },
         { "DEVICE_HAS_X86", "N" },
         { "DEVICE_HAS_X86_64", "N" },
+        { "LEAF_PM_ARMHF_ROOT", has_armhf ? armhf_root : "" },
         { "DISPLAY_WIDTH", "960" },
         { "DISPLAY_HEIGHT", "720" },
         { "DISPLAY_ORIENTATION", "0" },

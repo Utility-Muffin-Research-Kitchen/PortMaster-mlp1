@@ -66,6 +66,12 @@ The hook exports `DEVICE_HAS_ARMHF=Y` plus `LEAF_PM_ARMHF_RUN`,
 `LEAF_PM_ARMHF_LOADER`, and `LEAF_PM_ARMHF_LIB_PATH`. `DEVICE_ARCH` remains
 `aarch64`, so ports that provide native assets still prefer them.
 
+The upstream PortMaster GUI filters available ports through HarbourMaster's
+Python device `capabilities`, not only the shell `DEVICE_HAS_ARMHF` flag. Leaf
+therefore advertises `armhf` to HarbourMaster only when
+`$USERDATA_PATH/portmaster/compat/armhf/lib/ld-linux-armhf.so.3` exists, while
+keeping `primary_arch` as `aarch64`.
+
 Reports are written to:
 
 ```text
