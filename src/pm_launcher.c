@@ -15,6 +15,34 @@ static const char *PM_MLP1_GAMECONTROLLERCONFIG =
     "leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,"
     "crc:3cfe,platform:Linux";
 
+static void pm_refresh_armhf_port_wrappers(pm_context *ctx)
+{
+    char script[PM_PATH_MAX];
+    if (!ctx ||
+        pm_join3(script, sizeof(script), ctx->pak_dir,
+                 "scripts", "scan-and-fix-port-elfs.sh") != 0 ||
+        !pm_file_exists(script)) {
+        return;
+    }
+
+    pm_env_override env[] = {
+        { "PLATFORM", ctx->platform },
+        { "SDCARD_PATH", ctx->sdcard_path },
+        { "USERDATA_PATH", ctx->userdata_path },
+        { "ROMS_PATH", ctx->roms_path },
+        { "IMAGES_PATH", ctx->images_path },
+        { "PORTMASTER_MLP1_DATA_DIR", ctx->data_dir },
+        { "PORTMASTER_CONTROLFOLDER", ctx->portmaster_dir },
+        { NULL, NULL },
+    };
+    char *argv[] = { "bash", script, ctx->ports_dir, NULL };
+    char scan_err[512];
+    if (pm_run_argv_env_in_dir(ctx->pak_dir, argv, env,
+                               scan_err, sizeof(scan_err)) != 0) {
+        fprintf(stderr, "PortMaster armhf scan warning: %s\n", scan_err);
+    }
+}
+
 int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
 {
     if (err && err_size > 0) {
@@ -42,6 +70,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     if (pm_repatch_portmaster(ctx, err, err_size) != 0) {
         return -1;
     }
+    pm_refresh_armhf_port_wrappers(ctx);
 
     char runtime_python[PM_PATH_MAX];
     bool has_runtime = pm_join3(runtime_python, sizeof(runtime_python), ctx->runtime_dir,

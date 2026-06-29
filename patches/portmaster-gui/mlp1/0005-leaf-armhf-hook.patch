@@ -1,0 +1,15 @@
+--- control.txt
++++ control.txt
+@@ -170,7 +170,12 @@
+ 
+ source $controlfolder/device_info.txt
+ source $controlfolder/funcs.txt
+ 
++# Leaf armhf compatibility hook
++if [ -f "$controlfolder/leaf-armhf-env.sh" ]; then
++  source "$controlfolder/leaf-armhf-env.sh"
++fi
++
+ if [ ! -z "$ESUDO" ]; then
+   $ESUDO chmod 666 /dev/tty0
+   $ESUDO chmod 666 /dev/tty1

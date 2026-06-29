@@ -179,6 +179,26 @@ $USERDATA_PATH/portmaster/compat/armhf
 It includes `bin/leaf-armhf-run`, which runs dynamic armhf programs through the
 packaged loader and library path without writing to the stock rootfs.
 
+On PortMaster launch, the manager also runs:
+
+```text
+scripts/scan-and-fix-port-elfs.sh
+```
+
+That scanner writes `$USERDATA_PATH/portmaster/PortMaster/leaf-armhf-env.sh`,
+ensures upstream `control.txt` sources it, and records installed armhf port
+ELFs in:
+
+```text
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.json
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.tsv
+```
+
+Dynamic armhf executables that require `/lib/ld-linux-armhf.so.3` are moved to
+`.leaf-armhf/` beside the original file and replaced with a shell wrapper that
+executes them through `bin/leaf-armhf-run`. Armhf shared objects, such as
+libretro cores, are reported but not rewritten.
+
 ## Spruce Binary Closure
 
 Spruce's PortMaster package is tracked as an inventory plus an explicit closure

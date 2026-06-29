@@ -44,6 +44,31 @@ Device smoke on MLP1 on 2026-06-29:
 - upstream `xdelta3.armhf -V` ran through `bin/leaf-armhf-run`.
 - upstream `gptokeyb.armhf` and `sdl_resolution.armhf` resolved all dynamic
   libraries with `ld-linux-armhf.so.3 --list`.
+- `scripts/scan-and-fix-port-elfs.sh` wrapped a temporary dynamic armhf smoke
+  executable and the wrapper ran successfully through `leaf-armhf-run`.
 
 This proves the dynamic loader path and a useful SDL helper closure, but it does
 not yet prove a full dynamic armhf game port. Tier 2 GLES remains unclaimed.
+
+## Port normalization
+
+The manager refreshes armhf support every time it launches upstream PortMaster:
+
+- repatch upstream PortMaster
+- write `PortMaster/leaf-armhf-env.sh`
+- source that hook from upstream `control.txt`
+- scan `$ROMS_PATH/PORTS` for 32-bit ARM ELFs using ELF headers, not `file` or
+  `readelf`, because those tools are not present on stock MLP1 firmware
+- wrap dynamic armhf executables that name `/lib/ld-linux-armhf.so.3`
+- leave armhf shared objects untouched and report them
+
+The hook exports `DEVICE_HAS_ARMHF=Y` plus `LEAF_PM_ARMHF_RUN`,
+`LEAF_PM_ARMHF_LOADER`, and `LEAF_PM_ARMHF_LIB_PATH`. `DEVICE_ARCH` remains
+`aarch64`, so ports that provide native assets still prefer them.
+
+Reports are written to:
+
+```text
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.json
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.tsv
+```

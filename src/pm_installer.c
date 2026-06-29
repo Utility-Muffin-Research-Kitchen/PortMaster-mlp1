@@ -213,6 +213,19 @@ static int apply_patch_records(const char *tree, const pm_patch_record *records,
                 continue;
             }
             free(content);
+        } else if (strcmp(records[i].name, "0005-leaf-armhf-hook.patch") == 0) {
+            char target[PM_PATH_MAX];
+            if (pm_join(target, sizeof(target), tree, "control.txt") != 0) {
+                snprintf(err, err_size, "control.txt path too long");
+                return -1;
+            }
+            char marker_err[128];
+            char *content = pm_read_text_file(target, 256 * 1024, marker_err, sizeof(marker_err));
+            if (content && strstr(content, "leaf-armhf-env.sh")) {
+                free(content);
+                continue;
+            }
+            free(content);
         }
 
         char patch_path[PM_PATH_MAX];
@@ -285,9 +298,9 @@ static int write_manifest(const pm_context *ctx, const pm_patch_record *patches,
             "  \"runtimes\": {},\n"
             "  \"compat\": {},\n"
             "  \"ports_scan\": {\n"
-            "    \"armhf_elfs_seen\": 0,\n"
-            "    \"armhf_elfs_fixed\": 0,\n"
-            "    \"errors\": []\n"
+            "    \"schema\": 1,\n"
+            "    \"report\": \".leaf/armhf-scan.json\",\n"
+            "    \"refreshed_by\": \"scripts/scan-and-fix-port-elfs.sh\"\n"
             "  }\n"
             "}\n") > 0;
     }
