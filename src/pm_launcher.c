@@ -54,27 +54,14 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     const char *base_path = pm_env("PATH", "/usr/bin:/usr/sbin:/bin");
     const char *base_ld = pm_env("LD_LIBRARY_PATH", "");
     char path_env[PM_PATH_MAX * 2];
-    char ld_env[PM_PATH_MAX * 4];
+    char ld_env[PM_PATH_MAX * 2];
     char python_path[PM_PATH_MAX * 2];
-    char pydll_path[PM_PATH_MAX];
     if (has_runtime) {
-        char site_pydll_path[PM_PATH_MAX];
-        char legacy_pydll_path[PM_PATH_MAX];
-        if (pm_format(site_pydll_path, sizeof(site_pydll_path),
-                      "%s/lib/python3.10/site-packages/sdl2dll/dll", ctx->runtime_dir) != 0 ||
-            pm_format(legacy_pydll_path, sizeof(legacy_pydll_path),
-                      "%s/lib/sdl2dll/dll", ctx->runtime_dir) != 0) {
-            snprintf(err, err_size, "runtime SDL DLL path too long");
-            return -1;
-        }
-        const char *primary_pydll_path = pm_dir_exists(site_pydll_path) ? site_pydll_path : legacy_pydll_path;
         if (pm_format(path_env, sizeof(path_env), "%s/bin:%s", ctx->runtime_dir, base_path) != 0 ||
-            pm_format(ld_env, sizeof(ld_env), "%s/lib:%s:%s:%s",
-                      ctx->runtime_dir, site_pydll_path, legacy_pydll_path, base_ld) != 0 ||
+            pm_format(ld_env, sizeof(ld_env), "%s/lib:%s", ctx->runtime_dir, base_ld) != 0 ||
             pm_format(python_path, sizeof(python_path),
                       "%s/lib/python3.10:%s/lib/python3.10/site-packages:%s/lib",
-                      ctx->runtime_dir, ctx->runtime_dir, ctx->runtime_dir) != 0 ||
-            pm_copy(pydll_path, sizeof(pydll_path), primary_pydll_path) != 0) {
+                      ctx->runtime_dir, ctx->runtime_dir, ctx->runtime_dir) != 0) {
             snprintf(err, err_size, "runtime environment path too long");
             return -1;
         }
@@ -82,7 +69,6 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         pm_copy(path_env, sizeof(path_env), base_path);
         pm_copy(ld_env, sizeof(ld_env), base_ld);
         pm_copy(python_path, sizeof(python_path), "");
-        pm_copy(pydll_path, sizeof(pydll_path), "/usr/lib");
     }
 
     pm_env_override env[] = {
@@ -115,7 +101,6 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "ANALOG_STICKS", "2" },
         { "ANALOGSTICKS", "2" },
         { "SDL_GAMECONTROLLERCONFIG", PM_MLP1_GAMECONTROLLERCONFIG },
-        { "PYSDL2_DLL_PATH", pydll_path },
         { NULL, NULL },
     };
 

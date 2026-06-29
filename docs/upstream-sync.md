@@ -22,13 +22,18 @@ scripts/apply-portmaster-patches.sh --dry-run <extracted-portmaster-tree>
 ```
 
 The current patch set is recorded in `.leaf/manifest.json` after install or
-repair. Launch also runs repair before handoff.
+repair. Launch also runs repair before handoff. If upstream ships a fresh
+`pylibs.zip`, the manager extracts it, removes the zip/md5 marker, and reapplies
+the Leaf `hardware.py` patch before launch so user updates do not silently undo
+MLP1 compatibility.
 
 Runtime note: upstream PortMaster currently requires `python3`; stock MLP1 does
 not provide it. `--install-ui-runtime` downloads the lock-pinned generated
 runtime release asset and installs it into user data. `--install-runtime-archive
 <archive>` remains available for smoke testing a locally staged
-`portmaster.7z`-style archive.
+`portmaster.7z`-style archive. The runtime supplies CPython and liblzma; the UI
+uses stock MLP1 SDL from `/usr/lib` by default because the bundled `pysdl2-dll`
+SDL libraries segfaulted during device smoke testing.
 
 Spruce runtime inventory:
 

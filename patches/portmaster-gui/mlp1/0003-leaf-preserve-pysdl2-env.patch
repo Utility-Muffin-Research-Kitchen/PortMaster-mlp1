@@ -1,0 +1,13 @@
+--- PortMaster.sh
++++ PortMaster.sh
+@@ -169,7 +169,9 @@
+ # export PORTMASTER_CMDS="--debug"
+ # export HM_PERFTEST="Y"
+ 
+-export PYSDL2_DLL_PATH="/usr/lib"
++if [ -z "${PYSDL2_DLL_PATH:-}" ]; then
++  export PYSDL2_DLL_PATH="/usr/lib"
++fi
+ $ESUDO rm -f "${controlfolder}/.pugwash-reboot"
+ while true; do
+   $ESUDO ./pugwash $PORTMASTER_CMDS

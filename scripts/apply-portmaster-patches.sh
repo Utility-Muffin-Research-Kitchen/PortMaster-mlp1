@@ -12,6 +12,12 @@ fi
 
 test -d "$TREE" || { echo "missing tree: $TREE" >&2; exit 1; }
 
+if [ -f "$TREE/pylibs.zip" ]; then
+  echo "prepare: extracting pylibs.zip"
+  rm -rf "$TREE/pylibs"
+  unzip -q -o "$TREE/pylibs.zip" -d "$TREE"
+fi
+
 shopt -s nullglob
 patches=("$ROOT"/patches/portmaster-gui/mlp1/*.patch)
 if [ "${#patches[@]}" -eq 0 ]; then
@@ -30,6 +36,19 @@ for patch in "${patches[@]}"; do
       ;;
     0002-leaf-device-info-env.patch)
       if grep -q 'PORTMASTER_LEAF_DEVICE_INFO' "$TREE/device_info.txt"; then
+        echo "already applied"
+        continue
+      fi
+      ;;
+    0003-leaf-preserve-pysdl2-env.patch)
+      if grep -q 'PYSDL2_DLL_PATH:-' "$TREE/PortMaster.sh"; then
+        echo "already applied"
+        continue
+      fi
+      ;;
+    0004-leaf-harbourmaster-device.patch)
+      if [ -f "$TREE/pylibs/harbourmaster/hardware.py" ] &&
+        grep -q 'leaf-mlp1' "$TREE/pylibs/harbourmaster/hardware.py"; then
         echo "already applied"
         continue
       fi

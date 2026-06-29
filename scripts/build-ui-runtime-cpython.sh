@@ -60,8 +60,11 @@ container_main() {
   local sources_dir="${SOURCES_DIR_IN_CONTAINER:?missing SOURCES_DIR_IN_CONTAINER}"
   local cpython_filename="${CPYTHON_FILENAME:?missing CPYTHON_FILENAME}"
   local expected_sha="${CPYTHON_SHA256:?missing CPYTHON_SHA256}"
+  local xz_filename="${XZ_FILENAME:?missing XZ_FILENAME}"
+  local xz_expected_sha="${XZ_SHA256:?missing XZ_SHA256}"
   local jobs="${BUILD_JOBS:-$(default_jobs)}"
   local archive="$sources_dir/$cpython_filename"
+  local xz_archive="$sources_dir/$xz_filename"
 
   if [ ! -f "$archive" ]; then
     echo "missing CPython source archive in container: $archive" >&2
@@ -75,9 +78,20 @@ container_main() {
     echo "actual   $actual_sha" >&2
     exit 1
   fi
+  if [ ! -f "$xz_archive" ]; then
+    echo "missing XZ source archive in container: $xz_archive" >&2
+    exit 1
+  fi
+  actual_sha="$(sha256_of "$xz_archive")"
+  if [ "$actual_sha" != "$xz_expected_sha" ]; then
+    echo "XZ source hash mismatch in container" >&2
+    echo "expected $xz_expected_sha" >&2
+    echo "actual   $actual_sha" >&2
+    exit 1
+  fi
 
-  rm -rf "$out_dir/work" "$out_dir/root"
-  mkdir -p "$out_dir/work" "$out_dir/root"
+  rm -rf "$out_dir/deps" "$out_dir/work" "$out_dir/root"
+  mkdir -p "$out_dir/deps/work" "$out_dir/deps/root" "$out_dir/work" "$out_dir/root"
   tar -xf "$archive" -C "$out_dir/work"
 
   local src
@@ -99,11 +113,40 @@ container_main() {
   export AR="${AR:-aarch64-buildroot-linux-gnu-ar}"
   export RANLIB="${RANLIB:-aarch64-buildroot-linux-gnu-ranlib}"
   export READELF="${READELF:-aarch64-buildroot-linux-gnu-readelf}"
-  export CPPFLAGS="-I$sysroot/usr/include ${CPPFLAGS:-}"
-  export LDFLAGS="-L$sysroot/usr/lib -Wl,-rpath-link,$sysroot/usr/lib ${LDFLAGS:-}"
   export PKG_CONFIG_SYSROOT_DIR="$sysroot"
   export PKG_CONFIG_PATH="$sysroot/usr/lib/pkgconfig:$sysroot/usr/share/pkgconfig"
   export PKG_CONFIG_ALLOW_CROSS=1
+
+  tar -xf "$xz_archive" -C "$out_dir/deps/work"
+  local xz_src
+  xz_src="$(find "$out_dir/deps/work" -maxdepth 1 -type d -name 'xz-*' | head -n 1)"
+  if [ -z "$xz_src" ] || [ ! -f "$xz_src/configure" ]; then
+    echo "XZ archive did not extract to xz-*/configure" >&2
+    exit 1
+  fi
+
+  local deps_prefix="$out_dir/deps/root/portmaster"
+  (
+    cd "$xz_src"
+    CFLAGS="-fPIC ${CFLAGS:-}" ./configure \
+      --host=aarch64-buildroot-linux-gnu \
+      --prefix=/portmaster \
+      --enable-shared \
+      --disable-static \
+      --disable-xz \
+      --disable-xzdec \
+      --disable-lzmadec \
+      --disable-lzmainfo \
+      --disable-scripts \
+      --disable-doc \
+      --disable-nls
+    make -j "$jobs"
+    make install DESTDIR="$out_dir/deps/root"
+  ) 2>&1 | tee "$out_dir/liblzma-build.log"
+
+  export CPPFLAGS="-I$deps_prefix/include -I$sysroot/usr/include ${CPPFLAGS:-}"
+  export LDFLAGS="-L$deps_prefix/lib -L$sysroot/usr/lib -Wl,-rpath-link,$deps_prefix/lib -Wl,-rpath-link,$sysroot/usr/lib ${LDFLAGS:-}"
+  export PKG_CONFIG_PATH="$deps_prefix/lib/pkgconfig:$PKG_CONFIG_PATH"
 
   (
     cd "$build"
@@ -118,14 +161,16 @@ container_main() {
 
     make -j "$jobs" all _PYTHON_HOST_PLATFORM=linux-aarch64
 
-    export LD_LIBRARY_PATH="$build"
+    export LD_LIBRARY_PATH="$build:$deps_prefix/lib"
     export PYTHONPATH="$build/build/lib.linux-aarch64-3.10"
     export PYTHONDONTWRITEBYTECODE=1
     ./python.exe - <<'PY'
+import _lzma
 import _posixsubprocess
 import ctypes
 import hashlib
 import json
+import lzma
 import sqlite3
 import ssl
 import subprocess
@@ -188,6 +233,10 @@ PY
         "$runtime/bin/python3.10-config"
   rm -rf "$runtime/include" "$runtime/lib/pkgconfig" "$runtime/lib/python3.10/config-"*
   rm -f "$runtime/lib/libpython3.10.a"
+  for lib in "$deps_prefix"/lib/liblzma.so*; do
+    [ -e "$lib" ] || continue
+    cp -pL "$lib" "$runtime/lib/$(basename "$lib")"
+  done
   find "$runtime/lib/python3.10/lib-dynload" -maxdepth 1 -type f \
     \( -name '_test*.so' -o -name '_xx*.so' -o -name 'xx*.so' \) -delete
 
@@ -201,7 +250,7 @@ PY
     done
   fi
 
-  for module in _ssl _sqlite3 _ctypes _posixsubprocess zlib; do
+  for module in _ssl _sqlite3 _ctypes _lzma _posixsubprocess zlib; do
     if ! ls "$runtime/lib/python3.10/lib-dynload/$module"*.so >/dev/null 2>&1; then
       echo "required CPython extension missing after install: $module" >&2
       exit 1
@@ -213,10 +262,12 @@ PY
   export PYTHONPATH="$runtime/lib/python3.10:$runtime/lib/python3.10/site-packages:$runtime/lib"
   export PYTHONDONTWRITEBYTECODE=1
   "$runtime/bin/python3" - <<'PY'
+import _lzma
 import _posixsubprocess
 import ctypes
 import hashlib
 import json
+import lzma
 import sqlite3
 import ssl
 import subprocess
@@ -301,6 +352,53 @@ else
   echo "OK $cpython_filename"
 fi
 
+xz_plan="$OUT_DIR/.xz-source.tsv"
+"$PYTHON" - "$LOCK" >"$xz_plan" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fp:
+    lock = json.load(fp)
+
+for item in lock.get("source_inputs", []):
+    if item.get("bucket") == "xz" and item.get("type") == "source-tarball":
+        print("\t".join([
+            item["version"],
+            item["filename"],
+            str(item["size"]),
+            item["sha256"],
+            item["url"],
+            item.get("license", ""),
+        ]))
+        break
+else:
+    raise SystemExit("ui-runtime lock has no xz source-tarball input")
+PY
+
+IFS=$'\t' read -r xz_version xz_filename xz_size xz_sha xz_url xz_license <"$xz_plan"
+xz_archive="$SOURCES_DIR/$xz_filename"
+if [ -f "$xz_archive" ] &&
+   [ "$(size_of "$xz_archive")" = "$xz_size" ] &&
+   [ "$(sha256_of "$xz_archive")" = "$xz_sha" ]; then
+  echo "OK $xz_filename"
+else
+  tmp="$SOURCES_DIR/.download-xz"
+  rm -f "$tmp"
+  curl -fL --retry 3 --output "$tmp" "$xz_url"
+  actual_size="$(size_of "$tmp")"
+  actual_sha="$(sha256_of "$tmp")"
+  if [ "$actual_size" != "$xz_size" ]; then
+    echo "size mismatch for $xz_filename: expected $xz_size got $actual_size" >&2
+    exit 1
+  fi
+  if [ "$actual_sha" != "$xz_sha" ]; then
+    echo "sha256 mismatch for $xz_filename: expected $xz_sha got $actual_sha" >&2
+    exit 1
+  fi
+  mv -f "$tmp" "$xz_archive"
+  echo "OK $xz_filename"
+fi
+
 workspace_root="$(cd "$ROOT/.." && pwd)"
 case "$OUT_DIR" in
   "$workspace_root"/*) out_dir_container="/workspace/${OUT_DIR#"$workspace_root"/}" ;;
@@ -317,6 +415,8 @@ docker run --rm \
   -e SOURCES_DIR_IN_CONTAINER="$sources_dir_container" \
   -e CPYTHON_FILENAME="$cpython_filename" \
   -e CPYTHON_SHA256="$cpython_sha" \
+  -e XZ_FILENAME="$xz_filename" \
+  -e XZ_SHA256="$xz_sha" \
   -e BUILD_JOBS="$jobs" \
   -v "$workspace_root":/workspace \
   -w /workspace/PortMaster-mlp1 \
@@ -424,6 +524,23 @@ for item in lock.get("source_inputs", []):
         break
 
 for item in lock.get("source_inputs", []):
+    if item.get("bucket") == "xz" and item.get("type") == "source-tarball":
+        path = os.path.join(sources_dir, item["filename"])
+        sources.append({
+            "bucket": item["bucket"],
+            "type": item["type"],
+            "project": item.get("project", "XZ Utils / liblzma"),
+            "version": item["version"],
+            "filename": item["filename"],
+            "size": os.path.getsize(path),
+            "sha256": sha256(path),
+            "license": item.get("license", ""),
+            "url": item.get("url", ""),
+            "production": True,
+        })
+        break
+
+for item in lock.get("source_inputs", []):
     if item.get("type") != "pypi-wheel":
         continue
     if item["bucket"] == "pillow" and not include_pillow:
@@ -466,6 +583,25 @@ manifest = {
         ],
         "make_platform": "linux-aarch64",
         "runtime_pruned": True,
+        "dependency_builds": [
+            {
+                "project": "XZ Utils / liblzma",
+                "configure": [
+                    "--host=aarch64-buildroot-linux-gnu",
+                    "--prefix=/portmaster",
+                    "--enable-shared",
+                    "--disable-static",
+                    "--disable-xz",
+                    "--disable-xzdec",
+                    "--disable-lzmadec",
+                    "--disable-lzmainfo",
+                    "--disable-scripts",
+                    "--disable-doc",
+                    "--disable-nls",
+                ],
+                "runtime_files": ["lib/liblzma.so*"],
+            }
+        ],
     },
     "sources": sources,
 }

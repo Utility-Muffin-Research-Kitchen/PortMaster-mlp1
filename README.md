@@ -72,10 +72,12 @@ $USERDATA_PATH/portmaster/runtime
 $USERDATA_PATH/portmaster/.leaf
 ```
 
-The `runtime` directory is for the Python/SDL runtime needed by upstream
+The `runtime` directory is for the Python runtime needed by upstream
 PortMaster's Python UI on stock MLP1 firmware. It is installed from the
 lock-pinned generated release asset or from an externally staged archive; the
-repo does not vendor that binary payload.
+repo does not vendor that binary payload. The UI currently uses stock MLP1 SDL
+libraries from `/usr/lib` because the bundled `pysdl2-dll` SDL stack segfaulted
+during device smoke testing.
 
 On launch it sources:
 
@@ -99,15 +101,28 @@ Useful smoke commands from a staged pak:
 ## UI Runtime Work
 
 The PortMaster UI runtime is separate from PortMaster game runtimes. The repo can
-now fetch locked PyPI inputs for the SDL/Pillow side of that runtime:
+fetch locked PyPI inputs used while building or experimenting with the runtime:
 
 ```sh
 make fetch-ui-runtime-sources
 INCLUDE_OPTIONAL=1 make fetch-ui-runtime-sources
 ```
 
-For MLP1 smoke testing, a reference runtime zip can be built from the known
-working Spruce CPython runtime plus the locked PyPI SDL wheel:
+The production CPython runtime is built from locked source inputs:
+
+```sh
+make build-ui-runtime-cpython
+```
+
+Output:
+
+```text
+build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip
+build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json
+```
+
+For comparison smoke testing, a reference runtime zip can be built from the
+known working Spruce CPython runtime plus locked PyPI wheels:
 
 ```sh
 make build-ui-runtime-reference

@@ -40,7 +40,7 @@
       "default_include": true,
       "build": {
         "toolchain_image": "ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain",
-        "observed_local_digest": "sha256:2a79d7171a5256faf839bb1989e4d8a249a80220e51d29d6c2d493844ab49094",
+        "observed_local_digest": "sha256:45d3659d45be03815bdd72cd0a88f757bb264936d3eba28f60904588fcf8fe8b",
         "configure": [
           "--prefix=/portmaster",
           "--enable-shared",
@@ -51,6 +51,34 @@
           "--without-ensurepip"
         ],
         "make_platform": "linux-aarch64"
+      }
+    },
+    {
+      "bucket": "xz",
+      "type": "source-tarball",
+      "project": "XZ Utils / liblzma",
+      "version": "5.8.2",
+      "filename": "xz-5.8.2.tar.xz",
+      "size": 1511132,
+      "sha256": "890966ec3f5d5cc151077879e157c0593500a522f413ac50ba26d22a9a145214",
+      "license": "liblzma: 0BSD; source package includes mixed free licenses for uninstalled tools/docs",
+      "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.2/xz-5.8.2.tar.xz",
+      "default_include": true,
+      "build": {
+        "toolchain_image": "ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain",
+        "configure": [
+          "--host=aarch64-buildroot-linux-gnu",
+          "--prefix=/portmaster",
+          "--enable-shared",
+          "--disable-static",
+          "--disable-xz",
+          "--disable-xzdec",
+          "--disable-lzmadec",
+          "--disable-lzmainfo",
+          "--disable-scripts",
+          "--disable-doc",
+          "--disable-nls"
+        ]
       }
     },
     {
@@ -93,6 +121,10 @@
       "strategy": "build from CPython source with the MLP1 toolchain, or use an exact-version provenance-clean binary artifact while the build is brought up"
     },
     {
+      "bucket": "xz",
+      "strategy": "build liblzma from XZ Utils source inside the MLP1 toolchain container so CPython produces the _lzma extension"
+    },
+    {
       "bucket": "pysdl2-dll",
       "strategy": "first try exact PyPI wheel sourcing for pysdl2-dll==2.32.0 on manylinux_2_28_aarch64; build SDL stack from source if wheel sourcing is insufficient"
     },
@@ -111,15 +143,15 @@
       "version": "3.10.16",
       "filename": "portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip",
       "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.1/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip",
-      "size": 16436761,
-      "installed_size": 46415788,
-      "installed_file_count": 767,
-      "sha256": "4bdc35623a454b42b70a3fa782f6599fc3f26ae8c375632f2ae0aa0a9301dd3c",
+      "size": 16711964,
+      "installed_size": 47285806,
+      "installed_file_count": 771,
+      "sha256": "f8c1ae5cd6f4d46e7295692b15675cf98c274357a6d44271e95eaab91df1444b",
       "manifest": {
         "filename": "portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json",
         "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.1/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json",
-        "size": 2363,
-        "sha256": "0dbbc76694dfb53ecdb89e1f03ae5b5090016bff14154c4decfba0d949b309df"
+        "size": 3401,
+        "sha256": "599fb1b12061592651f561fd6c207b432d5108ed28922fcd9d95505c9fdc2e5c"
       }
     }
   ]

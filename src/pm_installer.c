@@ -102,9 +102,64 @@ static int load_patch_records(const pm_context *ctx, pm_patch_record *records,
     return 0;
 }
 
+static int prepare_pylibs_for_patches(const char *tree, char *err, size_t err_size)
+{
+    char hardware_path[PM_PATH_MAX];
+    char pylibs_path[PM_PATH_MAX];
+    char zip_path[PM_PATH_MAX];
+    char md5_path[PM_PATH_MAX];
+    if (pm_join3(hardware_path, sizeof(hardware_path), tree,
+                 "pylibs/harbourmaster", "hardware.py") != 0 ||
+        pm_join(pylibs_path, sizeof(pylibs_path), tree, "pylibs") != 0 ||
+        pm_join(zip_path, sizeof(zip_path), tree, "pylibs.zip") != 0 ||
+        pm_join(md5_path, sizeof(md5_path), tree, "pylibs.zip.md5") != 0) {
+        snprintf(err, err_size, "pylibs path too long");
+        return -1;
+    }
+
+    if (!pm_file_exists(zip_path)) {
+        return 0;
+    }
+
+    if (pm_dir_exists(pylibs_path) && pm_rm_rf(pylibs_path, err, err_size) != 0) {
+        char rm_err[512];
+        pm_copy(rm_err, sizeof(rm_err), err ? err : "");
+        snprintf(err, err_size, "replace pylibs from pylibs.zip failed: %s",
+                 rm_err[0] ? rm_err : "unknown error");
+        return -1;
+    }
+
+    char *argv[] = { "unzip", "-q", "-o", zip_path, "-d", (char *)tree, NULL };
+    if (pm_run_argv(argv, err, err_size) != 0) {
+        char run_err[512];
+        pm_copy(run_err, sizeof(run_err), err ? err : "");
+        snprintf(err, err_size, "extract pylibs.zip failed: %s",
+                 run_err[0] ? run_err : "unknown error");
+        return -1;
+    }
+
+    if (!pm_file_exists(hardware_path)) {
+        snprintf(err, err_size, "pylibs.zip did not contain harbourmaster/hardware.py");
+        return -1;
+    }
+    if (unlink(zip_path) != 0 && errno != ENOENT) {
+        snprintf(err, err_size, "cannot remove extracted pylibs.zip: %s", strerror(errno));
+        return -1;
+    }
+    if (unlink(md5_path) != 0 && errno != ENOENT) {
+        snprintf(err, err_size, "cannot remove stale pylibs.zip.md5: %s", strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
 static int apply_patch_records(const char *tree, const pm_patch_record *records,
                                size_t count, char *err, size_t err_size)
 {
+    if (prepare_pylibs_for_patches(tree, err, err_size) != 0) {
+        return -1;
+    }
+
     for (size_t i = 0; i < count; i++) {
         if (strcmp(records[i].name, "0001-leaf-controlfolder-env.patch") == 0) {
             char target[PM_PATH_MAX];
@@ -128,6 +183,32 @@ static int apply_patch_records(const char *tree, const pm_patch_record *records,
             char marker_err[128];
             char *content = pm_read_text_file(target, 256 * 1024, marker_err, sizeof(marker_err));
             if (content && strstr(content, "PORTMASTER_LEAF_DEVICE_INFO")) {
+                free(content);
+                continue;
+            }
+            free(content);
+        } else if (strcmp(records[i].name, "0003-leaf-preserve-pysdl2-env.patch") == 0) {
+            char target[PM_PATH_MAX];
+            if (pm_join(target, sizeof(target), tree, "PortMaster.sh") != 0) {
+                snprintf(err, err_size, "PortMaster.sh path too long");
+                return -1;
+            }
+            char marker_err[128];
+            char *content = pm_read_text_file(target, 256 * 1024, marker_err, sizeof(marker_err));
+            if (content && strstr(content, "PYSDL2_DLL_PATH:-")) {
+                free(content);
+                continue;
+            }
+            free(content);
+        } else if (strcmp(records[i].name, "0004-leaf-harbourmaster-device.patch") == 0) {
+            char target[PM_PATH_MAX];
+            if (pm_join3(target, sizeof(target), tree, "pylibs/harbourmaster", "hardware.py") != 0) {
+                snprintf(err, err_size, "hardware.py path too long");
+                return -1;
+            }
+            char marker_err[128];
+            char *content = pm_read_text_file(target, 512 * 1024, marker_err, sizeof(marker_err));
+            if (content && strstr(content, "leaf-mlp1")) {
                 free(content);
                 continue;
             }

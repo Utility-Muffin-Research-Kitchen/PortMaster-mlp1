@@ -1,0 +1,32 @@
+--- pylibs/harbourmaster/hardware.py
++++ pylibs/harbourmaster/hardware.py
+@@ -90,6 +90,7 @@
+ 
+     # MANGMI
+     "MANGMI Air X": {"device": "mangmiairx", "manufacturer": "MANGMI", "cfw": ["ROCKNIX"]},
++    "Miniloong Pocket 1": {"device": "leaf-mlp1", "manufacturer": "MANGMI", "cfw": ["Leaf"]},
+ 
+     # Generic
+     "XU10 Retro Handheld": {"device": "xu10", "manufacturer": "MagicX", "cfw": ["ArkOS", "AmberELEC", "ROCKNIX"]},
+@@ -179,6 +180,7 @@
+     # MANGMI
+     "mangmiairx": {"resolution": (1920, 1080), "analogsticks": 2, "cpu": "sd662", "capabilities": ["power"], "ram": 4096},
+ 
++    "leaf-mlp1": {"resolution": (960, 720), "analogsticks": 2, "cpu": "rk3566", "capabilities": ["power"], "ram": 1024},
+     # Computer/Testing
+     "pc":        {"resolution": (640, 480), "analogsticks": 2, "cpu": "unknown", "capabilities": ["opengl", "power"]},
+ 
+@@ -420,6 +422,13 @@
+             'device': 'default',
+             }
+ 
++    if os.environ.get('PORTMASTER_LEAF_DEVICE_INFO'):
++        return {
++            'name': os.environ.get('CFW_NAME', 'Leaf'),
++            'version': os.environ.get('CFW_VERSION', 'Unknown'),
++            'device': 'leaf-mlp1',
++            }
++
+     info = {}
+ 
+     # Works on RetroDECK if flatplack deployed to $HOME folder.
