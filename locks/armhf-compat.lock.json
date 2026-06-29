@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "status": "planned",
+  "install_dir": "$USERDATA_PATH/portmaster/compat/armhf",
+  "tiers": {
+    "tier0": "static armhf helpers",
+    "tier1": "dynamic armhf SDL/software-rendered ports",
+    "tier2": "dynamic armhf GLES ports after legal 32-bit graphics stack is sourced"
+  },
+  "artifacts": []
+}
+

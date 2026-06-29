@@ -1,0 +1,117 @@
+# PortMaster-mlp1
+
+Leaf first-party optional app for managing PortMaster on the Miniloong Pocket 1.
+
+This repo builds a small manager `.pak`. Users should install it through Pak Rat;
+it is not intended to be part of the base Leaf SD release.
+
+Current scope:
+
+- MLP1 only.
+- Stable upstream PortMaster only.
+- Small online manager package.
+- Upstream PortMaster, runtime bundles, and armhf compatibility packs are
+  downloaded or published as generated release assets, not committed to git.
+
+## Build
+
+```sh
+make native
+make package-platform PLATFORM=mlp1
+make dist-pakrat
+```
+
+The MLP1 package is assembled at:
+
+```text
+build/mlp1/package/PortMaster.pak
+```
+
+The Pak Rat-ready archive is assembled at:
+
+```text
+build/mlp1/PortMaster.mlp1.pak.zip
+```
+
+## Runtime Layout
+
+The manager uses Leaf's runtime env contract:
+
+```text
+$USERDATA_PATH/portmaster
+$ROMS_PATH/PORTS
+$IMAGES_PATH/PORTS
+```
+
+Managed PortMaster state lives under:
+
+```text
+$USERDATA_PATH/portmaster/PortMaster
+$USERDATA_PATH/portmaster/runtime
+$USERDATA_PATH/portmaster/.leaf
+```
+
+The `runtime` directory is for the Python/SDL runtime needed by upstream
+PortMaster's Python UI on stock MLP1 firmware. It is installed from a generated
+or externally staged archive; the repo does not vendor that binary payload.
+
+On launch it sources:
+
+```text
+$SDCARD_PATH/.system/leaf/platforms/$PLATFORM/launcher/env.sh
+```
+
+when present.
+
+Useful smoke commands from a staged pak:
+
+```sh
+./launch.sh --doctor-text
+./launch.sh --install-portmaster
+./launch.sh --repatch-portmaster
+./launch.sh --install-runtime-archive /path/to/portmaster-runtime.7z
+./launch.sh --launch-portmaster
+```
+
+## UI Runtime Work
+
+The PortMaster UI runtime is separate from PortMaster game runtimes. The repo can
+now fetch locked PyPI inputs for the SDL/Pillow side of that runtime:
+
+```sh
+make fetch-ui-runtime-sources
+INCLUDE_OPTIONAL=1 make fetch-ui-runtime-sources
+```
+
+For MLP1 smoke testing, a reference runtime zip can be built from the known
+working Spruce CPython runtime plus the locked PyPI SDL wheel:
+
+```sh
+make build-ui-runtime-reference
+```
+
+Output:
+
+```text
+build/ui-runtime/reference/portmaster-mlp1-ui-runtime-python310-aarch64-reference.zip
+build/ui-runtime/reference/portmaster-mlp1-ui-runtime-python310-aarch64-reference.json
+```
+
+That reference artifact is not a production Leaf supply-chain artifact. It is a
+bridge for device testing while the CPython source/toolchain build is brought
+up.
+
+The intended production runtime is built from the locked CPython source tarball
+inside the MLP1 toolchain container, then overlaid with the locked PyPI SDL
+wheel:
+
+```sh
+make build-ui-runtime-cpython
+```
+
+Output:
+
+```text
+build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip
+build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json
+```

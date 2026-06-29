@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "required": [
+    "version",
+    "built_at",
+    "sources",
+    "files",
+    "sha256",
+    "tiers_verified"
+  ]
+}
+

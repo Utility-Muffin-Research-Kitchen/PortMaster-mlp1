@@ -1,0 +1,15 @@
+{
+  "product": "portmaster-gui",
+  "channel": "stable",
+  "repo": "PortsMaster/PortMaster-GUI",
+  "tag": "2026.06.23-0015",
+  "published_at": "2026-06-23T00:18:16Z",
+  "asset": "PortMaster.zip",
+  "url": "https://github.com/PortsMaster/PortMaster-GUI/releases/download/2026.06.23-0015/PortMaster.zip",
+  "release_url": "https://github.com/PortsMaster/PortMaster-GUI/releases/tag/2026.06.23-0015",
+  "size": 24121702,
+  "md5": "41d137e6bb123c755806939831bcce2f",
+  "sha256": "772f2d56fc1abfbf79a3404ca78f240776c81c5a5b92786a0a748ae554339b7b",
+  "checked_at": "2026-06-29"
+}
+

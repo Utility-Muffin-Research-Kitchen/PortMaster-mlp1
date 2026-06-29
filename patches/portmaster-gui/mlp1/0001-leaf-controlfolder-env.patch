@@ -1,0 +1,13 @@
+--- control.txt
++++ control.txt
+@@ -29,7 +29,9 @@
+   source /etc/os-release
+ fi
+ 
+-if [ -d "/PortMaster/" ]; then
++if [ -n "${PORTMASTER_CONTROLFOLDER:-}" ] && [ -d "$PORTMASTER_CONTROLFOLDER" ]; then
++  export controlfolder="$PORTMASTER_CONTROLFOLDER"
++elif [ -d "/PortMaster/" ]; then
+   export controlfolder="/PortMaster"
+ elif [ -d "/opt/system/Tools/PortMaster/" ]; then
+   export controlfolder="/opt/system/Tools/PortMaster"

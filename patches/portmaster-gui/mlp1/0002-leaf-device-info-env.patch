@@ -1,0 +1,31 @@
+--- device_info.txt
++++ device_info.txt
+@@ -28,6 +28,28 @@
+ # usage `source <path_to>/device_info.txt`
+ 
++if [ -n "${PORTMASTER_LEAF_DEVICE_INFO:-}" ]; then
++    export CFW_NAME="${CFW_NAME:-Leaf}"
++    export CFW_VERSION="${CFW_VERSION:-Unknown}"
++    export DEVICE_INFO_VERSION="${DEVICE_INFO_VERSION:-leaf-mlp1}"
++    export DEVICE_NAME="${DEVICE_NAME:-Miniloong Pocket 1}"
++    export DEVICE_CPU="${DEVICE_CPU:-RK3566}"
++    export DEVICE_ARCH="${DEVICE_ARCH:-aarch64}"
++    export DEVICE_RAM="${DEVICE_RAM:-1}"
++    export DEVICE_HAS_ARMHF="${DEVICE_HAS_ARMHF:-N}"
++    export DEVICE_HAS_AARCH64="${DEVICE_HAS_AARCH64:-Y}"
++    export DEVICE_HAS_X86="${DEVICE_HAS_X86:-N}"
++    export DEVICE_HAS_X86_64="${DEVICE_HAS_X86_64:-N}"
++    export DISPLAY_WIDTH="${DISPLAY_WIDTH:-960}"
++    export DISPLAY_HEIGHT="${DISPLAY_HEIGHT:-720}"
++    export DISPLAY_ORIENTATION="${DISPLAY_ORIENTATION:-0}"
++    export ASPECT_X="${ASPECT_X:-4}"
++    export ASPECT_Y="${ASPECT_Y:-3}"
++    export ANALOG_STICKS="${ANALOG_STICKS:-2}"
++    export ANALOGSTICKS="${ANALOGSTICKS:-2}"
++    return 0
++fi
++
+ # So we can check the version
+ if [ ! -z "$DEVICE_INFO_VERSION" ]; then
+     return
+ fi

@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "product": "portmaster-mlp1-ui-runtime",
+  "status": "planned",
+  "target": {
+    "platform": "mlp1",
+    "arch": "aarch64",
+    "python": "3.10.x",
+    "artifact_name": "portmaster-mlp1-ui-runtime-python310-aarch64-<version>.tar.zst",
+    "install_dir": "$USERDATA_PATH/portmaster/runtime"
+  },
+  "spruce_reference": {
+    "note": "Reference only; not a Leaf supply-chain source until provenance and licenses are explicit.",
+    "portmaster_7z_sha256": "036257ee7891bac07aa70017d0646f10fed5e9f27deed97913fe99ccbe481d98",
+    "pillow_wheel_sha256": "562d11134c97a62fe3af29581f083033179f7ff435f78392565a1ad2d1c2c45c",
+    "inventory_path": "docs/generated/spruce-portmaster-binary-inventory.tsv",
+    "inventory_sha256": "8fc0eca1b1fe0012463f81a04564a16ad5bdd9f30e644acc77d76bc4daa7bfeb"
+  },
+  "source_policy": {
+    "docker_images": "allowed only as pinned build/extraction environments; copied files still need source package or upstream project, license, version, image digest, URL when available, size, and SHA-256",
+    "preferred_order": [
+      "build from source in the MLP1 toolchain container",
+      "use pinned upstream release artifacts or PyPI wheels with license, size, and SHA-256",
+      "extract from pinned distro/container packages only when package metadata and license are recorded",
+      "use opaque vendored blobs only as reference material unless legal provenance is resolved"
+    ],
+    "porty_mcportface_reference": "/Volumes/Storage/GitHub/nextui-PortyMcPortface-my355-pak"
+  },
+  "source_inputs": [
+    {
+      "bucket": "cpython",
+      "type": "source-tarball",
+      "project": "CPython",
+      "version": "3.10.16",
+      "filename": "Python-3.10.16.tar.xz",
+      "size": 19610392,
+      "sha256": "bfb249609990220491a1b92850a07135ed0831e41738cf681d63cf01b2a8fbd1",
+      "license": "PSF-2.0",
+      "url": "https://www.python.org/ftp/python/3.10.16/Python-3.10.16.tar.xz",
+      "default_include": true,
+      "build": {
+        "toolchain_image": "ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain",
+        "observed_local_digest": "sha256:2a79d7171a5256faf839bb1989e4d8a249a80220e51d29d6c2d493844ab49094",
+        "configure": [
+          "--prefix=/portmaster",
+          "--enable-shared",
+          "--with-openssl=$SYSROOT/usr",
+          "--with-openssl-rpath=auto",
+          "--with-system-expat",
+          "--with-system-ffi",
+          "--without-ensurepip"
+        ],
+        "make_platform": "linux-aarch64"
+      }
+    },
+    {
+      "bucket": "pysdl2-dll",
+      "type": "pypi-wheel",
+      "project": "pysdl2-dll",
+      "version": "2.32.0",
+      "filename": "pysdl2_dll-2.32.0-py2.py3-none-manylinux_2_28_aarch64.whl",
+      "platform": "manylinux_2_28_aarch64",
+      "python_version": "310",
+      "implementation": "cp",
+      "abi": "cp310",
+      "size": 4437888,
+      "sha256": "c9a5c97b0647f9ddf9ad52f5f95b90d1dbf362ab52fcad0ff091e3f32663b257",
+      "license": "MPL-2.0 with bundled SDL/dependency license files",
+      "url": "pypi:pysdl2-dll==2.32.0",
+      "default_include": true
+    },
+    {
+      "bucket": "pillow",
+      "type": "pypi-wheel",
+      "project": "Pillow",
+      "version": "11.2.1",
+      "filename": "pillow-11.2.1-cp310-cp310-manylinux_2_28_aarch64.whl",
+      "platform": "manylinux_2_28_aarch64",
+      "python_version": "310",
+      "implementation": "cp",
+      "abi": "cp310",
+      "size": 4508937,
+      "sha256": "562d11134c97a62fe3af29581f083033179f7ff435f78392565a1ad2d1c2c45c",
+      "license": "MIT-CMU",
+      "url": "pypi:Pillow==11.2.1",
+      "default_include": false,
+      "note": "Optional until Leaf smoke tests prove upstream PortMaster needs Pillow. This hash matches the Spruce offline wheel."
+    }
+  ],
+  "production_plan": [
+    {
+      "bucket": "cpython",
+      "strategy": "build from CPython source with the MLP1 toolchain, or use an exact-version provenance-clean binary artifact while the build is brought up"
+    },
+    {
+      "bucket": "pysdl2-dll",
+      "strategy": "first try exact PyPI wheel sourcing for pysdl2-dll==2.32.0 on manylinux_2_28_aarch64; build SDL stack from source if wheel sourcing is insufficient"
+    },
+    {
+      "bucket": "pillow",
+      "strategy": "do not include in the required UI runtime unless Leaf smoke tests prove upstream PortMaster needs it"
+    },
+    {
+      "bucket": "upstream-portmaster",
+      "strategy": "do not reproduce here; continue installing from hash-pinned PortsMaster/PortMaster-GUI releases"
+    }
+  ],
+  "artifacts": []
+}

@@ -1,0 +1,6 @@
+build/
+dist/
+ports/mlp1/pak/bin/
+*.dSYM/
+.DS_Store
+
