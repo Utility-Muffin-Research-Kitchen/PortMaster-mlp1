@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "kind": "libmali-rockchip-deb",
+  "name": "libmali-bifrost-g52-g24p0-wayland-gbm",
+  "architecture": "arm64",
+  "version": "1.9-1",
+  "release": {
+    "repo": "tsukumijima/libmali-rockchip",
+    "tag": "v1.9-1-20260312-bd33ee2",
+    "commit": "bd33ee262f47fd936b831afccaa0759b3ecc2482"
+  },
+  "asset": {
+    "filename": "libmali-bifrost-g52-g24p0-wayland-gbm_1.9-1_arm64.deb",
+    "url": "https://github.com/tsukumijima/libmali-rockchip/releases/download/v1.9-1-20260312-bd33ee2/libmali-bifrost-g52-g24p0-wayland-gbm_1.9-1_arm64.deb",
+    "size": 18557582,
+    "sha256": "260af0c8bef4e3a8357003514cc5b1d9fdfdb4b97de9ff337d2c610c4861c3c4"
+  },
+  "installed_files": [
+    "libmali.so.1",
+    "libmali-hook.so.1"
+  ],
+  "license": {
+    "url": "https://raw.githubusercontent.com/tsukumijima/libmali-rockchip/bd33ee262f47fd936b831afccaa0759b3ecc2482/debian/copyright",
+    "installed_path": "LICENSES/mali/libmali-rockchip-debian-copyright"
+  }
+}

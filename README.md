@@ -230,7 +230,17 @@ Leaf-only Wayland block. MLP1 already has Leaf's Weston compositor running, so
 patched Godot scripts bypass PortMaster's nested Westonpack launch path and run
 directly against the active Wayland display. When present, the EGL/GLES
 compatibility shim is prepended only for that direct Godot command so armhf and
-non-Godot ports do not inherit the aarch64 graphics shim.
+non-Godot ports do not inherit the aarch64 graphics shim. The scanner also
+guards Westonpack cleanup calls for those Godot launchers, because cleaning up a
+nested compositor that was never started can disturb Leaf's real Wayland
+runtime.
+
+MLP1 stock ships a 64-bit `g13p0` Mali userspace blob that can fault under some
+Godot 4 content. `make package-mlp1` therefore builds a small aarch64 Mali
+compat bundle from the pinned `tsukumijima/libmali-rockchip` `g24p0`
+Wayland/GBM deb. Install/repair copies only `libmali.so.1` and
+`libmali-hook.so.1` to SD user data, and the Godot hook puts that directory
+ahead of stock only for direct Godot launches.
 
 After the post-exit scan, the manager sends Jawaka a non-fatal
 `scan-library` IPC request through `jawaka-platformctl` so newly installed

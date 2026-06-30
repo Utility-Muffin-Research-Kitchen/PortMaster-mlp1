@@ -451,10 +451,18 @@ static int copy_file_atomic(const char *src, const char *dst, char *err, size_t 
     return 0;
 }
 
-static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err_size)
+static int copy_compat_asset_set(const pm_context *ctx,
+                                 const char *src_mid,
+                                 const char *src_leaf,
+                                 const char *dst_mid,
+                                 const char *dst_leaf,
+                                 const char *const *files,
+                                 size_t file_count,
+                                 char *err,
+                                 size_t err_size)
 {
     char src_dir[PM_PATH_MAX];
-    if (pm_join3(src_dir, sizeof(src_dir), ctx->pak_dir, "compat/egl", "aarch64") != 0) {
+    if (pm_join3(src_dir, sizeof(src_dir), ctx->pak_dir, src_mid, src_leaf) != 0) {
         snprintf(err, err_size, "compat source path too long");
         return -1;
     }
@@ -463,7 +471,7 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
     }
 
     char dst_dir[PM_PATH_MAX];
-    if (pm_join3(dst_dir, sizeof(dst_dir), ctx->data_dir, "compat/egl", "aarch64") != 0) {
+    if (pm_join3(dst_dir, sizeof(dst_dir), ctx->data_dir, dst_mid, dst_leaf) != 0) {
         snprintf(err, err_size, "compat destination path too long");
         return -1;
     }
@@ -471,8 +479,7 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
         return -1;
     }
 
-    const char *files[] = { "libEGL.so.1", "libEGL.so" };
-    for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
+    for (size_t i = 0; i < file_count; i++) {
         char src[PM_PATH_MAX];
         char dst[PM_PATH_MAX];
         if (pm_join(src, sizeof(src), src_dir, files[i]) != 0 ||
@@ -484,6 +491,38 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
             return -1;
         }
     }
+    return 0;
+}
+
+static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err_size)
+{
+    const char *egl_files[] = { "libEGL.so.1", "libEGL.so" };
+    const char *mali_files[] = { "libmali.so.1", "libmali-hook.so.1" };
+
+    if (copy_compat_asset_set(ctx,
+                              "compat/egl",
+                              "aarch64",
+                              "compat/egl",
+                              "aarch64",
+                              egl_files,
+                              sizeof(egl_files) / sizeof(egl_files[0]),
+                              err,
+                              err_size) != 0) {
+        return -1;
+    }
+
+    if (copy_compat_asset_set(ctx,
+                              "compat/mali",
+                              "aarch64",
+                              "compat/mali",
+                              "aarch64",
+                              mali_files,
+                              sizeof(mali_files) / sizeof(mali_files[0]),
+                              err,
+                              err_size) != 0) {
+        return -1;
+    }
+
     return 0;
 }
 

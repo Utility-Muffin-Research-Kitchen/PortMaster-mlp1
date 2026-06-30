@@ -241,8 +241,10 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
 
     ok = ok && fputs(
         "export LEAF_PM_EGL_SHIM_DIR=\"${LEAF_PM_EGL_SHIM_DIR:-$LEAF_PM_DATA_DIR/compat/egl/aarch64}\"\n"
+        "export LEAF_PM_MALI_AARCH64_DIR=\"${LEAF_PM_MALI_AARCH64_DIR:-$LEAF_PM_DATA_DIR/compat/mali/aarch64}\"\n"
         "leaf_pm_enable_godot_wayland_runtime() {\n"
         "  [ \"${DEVICE_ARCH:-aarch64}\" = \"aarch64\" ] || return 0\n"
+        "  export LEAF_PM_SKIP_WESTONPACK_CLEANUP=\"${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}\"\n"
         "  _leaf_pm_env_bin=\"$(command -v env 2>/dev/null || printf '%s\\n' /usr/bin/env)\"\n"
         "  env() {\n"
         "    if [ \"${1##*/}\" = \"westonwrap.sh\" ] && [ \"${2:-}\" != \"cleanup\" ] && [ \"$#\" -ge 6 ]; then\n"
@@ -262,6 +264,12 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "      _leaf_pm_wayland_runtime=\"${LEAF_PM_WAYLAND_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/run}}\"\n"
         "      _leaf_pm_wayland_display=\"${LEAF_PM_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-wayland-0}}\"\n"
         "      _leaf_pm_egl_shim=\"${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1\"\n"
+        "      if [ -f \"${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1\" ]; then\n"
+        "        case \":${LD_LIBRARY_PATH:-}:\" in\n"
+        "          *:\"$LEAF_PM_MALI_AARCH64_DIR\":*) ;;\n"
+        "          *) export LD_LIBRARY_PATH=\"$LEAF_PM_MALI_AARCH64_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\" ;;\n"
+        "        esac\n"
+        "      fi\n"
         "      if [ -f \"$_leaf_pm_egl_shim\" ]; then\n"
         "        case \":${LD_LIBRARY_PATH:-}:\" in\n"
         "          *:\"$LEAF_PM_EGL_SHIM_DIR\":*) ;;\n"

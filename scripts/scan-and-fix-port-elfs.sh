@@ -105,8 +105,10 @@ export HM_PORTS_DIR="\${HM_PORTS_DIR:-\$_leaf_pm_ports_dir}"
 export HM_SCRIPTS_DIR="\${HM_SCRIPTS_DIR:-\$HM_PORTS_DIR}"
 
 export LEAF_PM_EGL_SHIM_DIR="\${LEAF_PM_EGL_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/egl/aarch64}"
+export LEAF_PM_MALI_AARCH64_DIR="\${LEAF_PM_MALI_AARCH64_DIR:-\$LEAF_PM_DATA_DIR/compat/mali/aarch64}"
 leaf_pm_enable_godot_wayland_runtime() {
   [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
+  export LEAF_PM_SKIP_WESTONPACK_CLEANUP="\${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}"
   _leaf_pm_env_bin="\$(command -v env 2>/dev/null || printf '%s\n' /usr/bin/env)"
   env() {
     if [ "\${1##*/}" = "westonwrap.sh" ] && [ "\${2:-}" != "cleanup" ] && [ "\$#" -ge 6 ]; then
@@ -126,6 +128,12 @@ leaf_pm_enable_godot_wayland_runtime() {
       _leaf_pm_wayland_runtime="\${LEAF_PM_WAYLAND_RUNTIME_DIR:-\${XDG_RUNTIME_DIR:-/run}}"
       _leaf_pm_wayland_display="\${LEAF_PM_WAYLAND_DISPLAY:-\${WAYLAND_DISPLAY:-wayland-0}}"
       _leaf_pm_egl_shim="\${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1"
+      if [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ]; then
+        case ":\${LD_LIBRARY_PATH:-}:" in
+          *:"\$LEAF_PM_MALI_AARCH64_DIR":*) ;;
+          *) export LD_LIBRARY_PATH="\$LEAF_PM_MALI_AARCH64_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
+        esac
+      fi
       if [ -f "\$_leaf_pm_egl_shim" ]; then
         case ":\${LD_LIBRARY_PATH:-}:" in
           *:"\$LEAF_PM_EGL_SHIM_DIR":*) ;;
@@ -483,6 +491,54 @@ normalize_godot_wayland_script() {
   printf 'godot-wayland-patched'
 }
 
+normalize_godot_weston_cleanup_script() {
+  file="$1"
+  if ! is_godot_script "$file"; then
+    printf 'not-godot'
+    return 0
+  fi
+  if grep -q 'LEAF_PM_WESTONPACK_CLEANUP_GUARD=1' "$file" 2>/dev/null; then
+    printf 'weston-cleanup-already'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  awk '
+    /^[[:space:]]*#/ { print; next }
+    index($0, "westonwrap.sh cleanup") > 0 {
+      indent = $0
+      sub(/[^[:space:]].*$/, "", indent)
+      cmd = substr($0, length(indent) + 1)
+      print indent "# LEAF_PM_WESTONPACK_CLEANUP_GUARD=1"
+      print indent "if [ \"${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-0}\" != \"1\" ]; then"
+      print indent "  " cmd
+      print indent "fi"
+      changed = 1
+      next
+    }
+    { print }
+    END {
+      if (!changed) {
+        exit 2
+      }
+    }
+  ' "$file" >"$tmp"
+  rc=$?
+  if [ "$rc" -eq 2 ]; then
+    rm -f "$tmp"
+    printf 'weston-cleanup-missing'
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$tmp"
+    printf 'weston-cleanup-error'
+    return 0
+  fi
+  mv "$tmp" "$file"
+  chmod 755 "$file" 2>/dev/null || true
+  printf 'weston-cleanup-patched'
+}
+
 normalize_armhf_executable() {
   file="$1"
   [ "$compat_available" -eq 1 ] || {
@@ -516,6 +572,9 @@ already=0
 errors=0
 godot_patched=0
 godot_already=0
+weston_cleanup_patched=0
+weston_cleanup_already=0
+weston_cleanup_missing=0
 port_env_patched=0
 port_env_already=0
 port_paths_patched=0
@@ -535,6 +594,12 @@ while IFS= read -r -d '' file; do
   case "$(normalize_godot_wayland_script "$file")" in
     godot-wayland-patched) godot_patched=$((godot_patched + 1)) ;;
     godot-wayland-already) godot_already=$((godot_already + 1)) ;;
+  esac
+
+  case "$(normalize_godot_weston_cleanup_script "$file")" in
+    weston-cleanup-patched) weston_cleanup_patched=$((weston_cleanup_patched + 1)) ;;
+    weston-cleanup-already) weston_cleanup_already=$((weston_cleanup_already + 1)) ;;
+    weston-cleanup-missing) weston_cleanup_missing=$((weston_cleanup_missing + 1)) ;;
   esac
 
   header="$(elf_header_hex "$file")"
@@ -596,6 +661,9 @@ cat >"$tmp_json" <<EOF
   "port_path_scripts_already_patched": $port_paths_already,
   "godot_wayland_scripts_patched": $godot_patched,
   "godot_wayland_scripts_already_patched": $godot_already,
+  "godot_weston_cleanup_scripts_patched": $weston_cleanup_patched,
+  "godot_weston_cleanup_scripts_already_patched": $weston_cleanup_already,
+  "godot_weston_cleanup_scripts_missing_cleanup": $weston_cleanup_missing,
   "godot_egl_scripts_patched": $godot_patched,
   "godot_egl_scripts_already_patched": $godot_already,
   "errors": $errors
@@ -603,4 +671,4 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched godot_patched=$godot_patched report=$report_tsv"
+log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched godot_patched=$godot_patched weston_cleanup_patched=$weston_cleanup_patched report=$report_tsv"

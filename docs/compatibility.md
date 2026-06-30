@@ -124,8 +124,20 @@ Westonpack's nested compositor path. When the SD-installed EGL/GLES
 compatibility shim is available, that direct Godot launch prepends it to
 `LD_LIBRARY_PATH`; the shim is built from source into the Pak and copied to
 `$USERDATA_PATH/portmaster/compat/egl/aarch64`. The compatibility path never
-writes to the stock rootfs/eMMC. Older `LEAF_PM_EGL_GLES_SHIM=1` script patches
-are still recognized through a hook alias.
+writes to the stock rootfs/eMMC. The scanner also wraps direct
+`westonwrap.sh cleanup` calls behind `LEAF_PM_SKIP_WESTONPACK_CLEANUP` for
+patched Godot launchers; this prevents PortMaster's nested-compositor cleanup
+from removing runtime files that belong to Leaf's real compositor. Older
+`LEAF_PM_EGL_GLES_SHIM=1` script patches are still recognized through a hook
+alias.
+
+The Godot hook also prefers an SD-installed aarch64 Mali userspace bundle when
+`$USERDATA_PATH/portmaster/compat/mali/aarch64/libmali.so.1` is present. This
+bundle is built from the pinned `tsukumijima/libmali-rockchip`
+`libmali-bifrost-g52-g24p0-wayland-gbm_1.9-1_arm64.deb` asset and contains only
+`libmali.so.1` and `libmali-hook.so.1`. It is intentionally scoped to Godot
+direct-Wayland launches; other ports continue to use the stock rootfs graphics
+stack unless their own wrapper opts in.
 
 The same hook also applies the global controller-layout preference for installed
 ports. By default it exports the MLP1 X360 SDL mapping. If

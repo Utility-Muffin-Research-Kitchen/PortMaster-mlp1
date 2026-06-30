@@ -57,7 +57,7 @@ ifeq ($(shell uname -s),Darwin)
 LDLIBS_COMMON += -lobjc
 endif
 
-.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat spruce-bin-closure clean
+.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat spruce-bin-closure clean
 
 all: native
 
@@ -87,6 +87,7 @@ package-build:
 		"$(PACKAGE_DIR)/patches/portmaster-gui/mlp1" \
 		"$(PACKAGE_DIR)/overlays/portmaster-gui/mlp1" \
 		"$(PACKAGE_DIR)/compat/armhf" "$(PACKAGE_DIR)/compat/egl/aarch64" \
+		"$(PACKAGE_DIR)/compat/mali/aarch64" \
 		"$(PACKAGE_DIR)/LICENSES"
 	@cp -f "$(BIN)" "$(PACKAGE_DIR)/bin/$(APP_ID)"
 	@cp -f pak/launch.sh pak/pak.json "$(PACKAGE_DIR)/"
@@ -96,12 +97,14 @@ package-build:
 	@cp -f overlays/portmaster-gui/mlp1/* "$(PACKAGE_DIR)/overlays/portmaster-gui/mlp1/" 2>/dev/null || true
 	@cp -f compat/armhf/* "$(PACKAGE_DIR)/compat/armhf/" 2>/dev/null || true
 	@if [ -d "$(BUILD)/compat/egl/aarch64" ]; then cp -f "$(BUILD)"/compat/egl/aarch64/* "$(PACKAGE_DIR)/compat/egl/aarch64/"; fi
+	@if [ -d "$(BUILD)/compat/mali/aarch64" ]; then cp -f "$(BUILD)"/compat/mali/aarch64/* "$(PACKAGE_DIR)/compat/mali/aarch64/"; fi
 	@if [ -f LICENSE ]; then cp -f LICENSE "$(PACKAGE_DIR)/LICENSE"; fi
 	@if [ -d LICENSES ]; then cp -Rf LICENSES/. "$(PACKAGE_DIR)/LICENSES/"; fi
+	@if [ -d "$(BUILD)/licenses" ]; then cp -Rf "$(BUILD)"/licenses/. "$(PACKAGE_DIR)/LICENSES/"; fi
 	@chmod 755 "$(PACKAGE_DIR)/launch.sh" "$(PACKAGE_DIR)/bin/$(APP_ID)" "$(PACKAGE_DIR)"/scripts/*.sh
 	@find "$(PACKAGE_DIR)" -type f | sort
 
-package-mlp1: mlp1
+package-mlp1: mlp1 build-aarch64-mali-compat
 	@$(MAKE) BUILD="$(MLP1_BUILD)" PLATFORM=mlp1 BIN="$(MLP1_BIN)" package-build
 
 package-platform:
@@ -135,6 +138,9 @@ build-ui-runtime-cpython:
 
 build-armhf-compat:
 	@bash scripts/build-armhf-compat-pack.sh
+
+build-aarch64-mali-compat:
+	@bash scripts/build-aarch64-mali-compat-pack.sh
 
 spruce-bin-closure:
 	@python3 scripts/generate-spruce-bin-closure.py
