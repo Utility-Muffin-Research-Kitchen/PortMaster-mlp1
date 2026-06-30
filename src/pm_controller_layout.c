@@ -190,11 +190,17 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "export XDG_DATA_HOME=\"$LEAF_PM_DATA_DIR\"\n"
         "export HM_TOOLS_DIR=\"${HM_TOOLS_DIR:-$LEAF_PM_DATA_DIR}\"\n"
         "if [ -n \"${ROMS_PATH:-}\" ]; then\n"
+        "  _leaf_pm_roms_dir=\"${ROMS_PATH%%/}\"\n"
         "  _leaf_pm_ports_dir=\"$ROMS_PATH/PORTS\"\n"
         "elif [ -n \"${SDCARD_PATH:-}\" ]; then\n"
+        "  _leaf_pm_roms_dir=\"${SDCARD_PATH%%/}/Roms\"\n"
         "  _leaf_pm_ports_dir=\"$SDCARD_PATH/Roms/PORTS\"\n"
         "else\n"
+        "  _leaf_pm_roms_dir=\"\"\n"
         "  _leaf_pm_ports_dir=\"/${directory:-roms}/ports\"\n"
+        "fi\n"
+        "if [ -n \"$_leaf_pm_roms_dir\" ]; then\n"
+        "  export directory=\"${_leaf_pm_roms_dir#/}\"\n"
         "fi\n"
         "export HM_PORTS_DIR=\"${HM_PORTS_DIR:-$_leaf_pm_ports_dir}\"\n"
         "export HM_SCRIPTS_DIR=\"${HM_SCRIPTS_DIR:-$HM_PORTS_DIR}\"\n"
@@ -339,7 +345,7 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "  }\n"
         "fi\n"
         "\n"
-        "unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_ports_dir _leaf_pm_python_shim_dir\n",
+        "unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_python_shim_dir\n",
         fp) >= 0;
 
     if (fclose(fp) != 0 || !ok) {

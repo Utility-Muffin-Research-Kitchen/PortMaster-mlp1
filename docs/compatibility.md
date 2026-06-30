@@ -103,6 +103,15 @@ helper Python process, which lets port scripts run
 `harbourmaster runtime_check` without leaking Python runtime settings into the
 game executable.
 
+Installed `.sh` port launchers also receive a small `LEAF_PM_PORT_ENV=1`
+normalization block before they source upstream `control.txt`. That block
+selects the active SD-managed PortMaster tree through `XDG_DATA_HOME` and
+`PORTMASTER_CONTROLFOLDER`, rather than letting upstream scripts fall back to
+`/roms/ports/PortMaster` on the stock rootfs. The generated hook then exports
+`directory` from the active `ROMS_PATH`/`SDCARD_PATH`, so legacy port paths like
+`/$directory/ports/<game>` resolve to the SD card. This keeps the runtime on SD
+and avoids writing compatibility state to eMMC/rootfs.
+
 For aarch64 Godot 4.3 ports, the scanner also patches installed Godot shell
 launchers with a small `LEAF_PM_GODOT_WAYLAND=1` block. That block calls a hook
 function which intercepts only `env $weston_dir/westonwrap.sh ...` invocations

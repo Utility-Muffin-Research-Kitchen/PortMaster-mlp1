@@ -220,6 +220,11 @@ Dynamic armhf executables that require `/lib/ld-linux-armhf.so.3` are moved to
 executes them through `bin/leaf-armhf-run`. Armhf shared objects, such as
 libretro cores, are reported but not rewritten.
 
+Installed `.sh` launchers are also patched with a small SD environment block so
+upstream PortMaster scripts resolve `XDG_DATA_HOME`, `PORTMASTER_CONTROLFOLDER`,
+and legacy `/$directory/ports/...` paths to the active SD-managed PortMaster
+tree instead of `/roms/ports` on the stock rootfs.
+
 The same scan patches installed aarch64 Godot 4.3 shell launchers with a
 Leaf-only Wayland block. MLP1 already has Leaf's Weston compositor running, so
 patched Godot scripts bypass PortMaster's nested Westonpack launch path and run

@@ -88,11 +88,17 @@ export HOME="\$LEAF_PM_DATA_DIR"
 export XDG_DATA_HOME="\$LEAF_PM_DATA_DIR"
 export HM_TOOLS_DIR="\${HM_TOOLS_DIR:-\$LEAF_PM_DATA_DIR}"
 if [ -n "\${ROMS_PATH:-}" ]; then
+  _leaf_pm_roms_dir="\${ROMS_PATH%/}"
   _leaf_pm_ports_dir="\$ROMS_PATH/PORTS"
 elif [ -n "\${SDCARD_PATH:-}" ]; then
+  _leaf_pm_roms_dir="\${SDCARD_PATH%/}/Roms"
   _leaf_pm_ports_dir="\$SDCARD_PATH/Roms/PORTS"
 else
+  _leaf_pm_roms_dir=""
   _leaf_pm_ports_dir="/\${directory:-roms}/ports"
+fi
+if [ -n "\$_leaf_pm_roms_dir" ]; then
+  export directory="\${_leaf_pm_roms_dir#/}"
 fi
 export HM_PORTS_DIR="\${HM_PORTS_DIR:-\$_leaf_pm_ports_dir}"
 export HM_SCRIPTS_DIR="\${HM_SCRIPTS_DIR:-\$HM_PORTS_DIR}"
@@ -356,6 +362,60 @@ is_godot_script() {
   grep -Eq 'godot_runtime=|godot_executable=|--rendering-driver[[:space:]]+opengl3_es|godot[0-9]+.*DEVICE_ARCH' "$file" 2>/dev/null
 }
 
+normalize_port_env_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) printf 'not-shell'; return 0 ;;
+  esac
+  if grep -q 'LEAF_PM_PORT_ENV=1' "$file" 2>/dev/null; then
+    printf 'port-env-already'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  awk '
+    function insert_block() {
+      print ""
+      print "# LEAF_PM_PORT_ENV=1"
+      print "_leaf_pm_platform=\"${PLATFORM:-mlp1}\""
+      print "if [ -z \"${XDG_DATA_HOME:-}\" ] || [ ! -d \"$XDG_DATA_HOME/PortMaster\" ]; then"
+      print "  for _leaf_pm_sd in \"${SDCARD_PATH:-}\" \"${JAWAKA_SDCARD_ROOT:-}\" /media/sdcard1 /mnt/sdcard; do"
+      print "    [ -n \"$_leaf_pm_sd\" ] || continue"
+      print "    _leaf_pm_userdata=\"${USERDATA_PATH:-$_leaf_pm_sd/.userdata/$_leaf_pm_platform}\""
+      print "    if [ -d \"$_leaf_pm_userdata/portmaster/PortMaster\" ]; then"
+      print "      export SDCARD_PATH=\"${SDCARD_PATH:-$_leaf_pm_sd}\""
+      print "      export USERDATA_PATH=\"$_leaf_pm_userdata\""
+      print "      export ROMS_PATH=\"${ROMS_PATH:-$SDCARD_PATH/Roms}\""
+      print "      export IMAGES_PATH=\"${IMAGES_PATH:-$SDCARD_PATH/Images}\""
+      print "      export XDG_DATA_HOME=\"$_leaf_pm_userdata/portmaster\""
+      print "      export PORTMASTER_CONTROLFOLDER=\"$_leaf_pm_userdata/portmaster/PortMaster\""
+      print "      break"
+      print "    fi"
+      print "  done"
+      print "fi"
+      print "unset _leaf_pm_sd _leaf_pm_userdata _leaf_pm_platform"
+      inserted = 1
+    }
+    {
+      print
+      if (!inserted && $0 ~ /^XDG_DATA_HOME=/) {
+        insert_block()
+      } else if (!inserted && $0 ~ /source[[:space:]]+\$?controlfolder\/control[.]txt/) {
+        insert_block()
+      }
+    }
+    END {
+      if (!inserted) {
+        insert_block()
+      }
+    }
+  ' "$file" >"$tmp"
+  mv "$tmp" "$file"
+  chmod 755 "$file" 2>/dev/null || true
+  printf 'port-env-patched'
+}
+
 normalize_godot_wayland_script() {
   file="$1"
   if ! is_godot_script "$file"; then
@@ -429,8 +489,15 @@ already=0
 errors=0
 godot_patched=0
 godot_already=0
+port_env_patched=0
+port_env_already=0
 
 while IFS= read -r -d '' file; do
+  case "$(normalize_port_env_script "$file")" in
+    port-env-patched) port_env_patched=$((port_env_patched + 1)) ;;
+    port-env-already) port_env_already=$((port_env_already + 1)) ;;
+  esac
+
   case "$(normalize_godot_wayland_script "$file")" in
     godot-wayland-patched) godot_patched=$((godot_patched + 1)) ;;
     godot-wayland-already) godot_already=$((godot_already + 1)) ;;
@@ -489,6 +556,8 @@ cat >"$tmp_json" <<EOF
   "armhf_execs_already_normalized": $already,
   "armhf_execs_needing_compat": $needs_wrapper,
   "armhf_shared_objects_seen": $shared,
+  "port_env_scripts_patched": $port_env_patched,
+  "port_env_scripts_already_patched": $port_env_already,
   "godot_wayland_scripts_patched": $godot_patched,
   "godot_wayland_scripts_already_patched": $godot_already,
   "godot_egl_scripts_patched": $godot_patched,
@@ -498,4 +567,4 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper godot_patched=$godot_patched report=$report_tsv"
+log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched godot_patched=$godot_patched report=$report_tsv"
