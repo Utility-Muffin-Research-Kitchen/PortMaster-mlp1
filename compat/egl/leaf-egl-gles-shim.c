@@ -14,7 +14,16 @@ EGLSurface eglCreatePlatformPixmapSurfaceEXT(EGLDisplay dpy, EGLConfig config, v
 static void *leaf_sym(const char *name)
 {
     if (!leaf_mali) {
-        leaf_mali = dlopen("/lib/libmali.so.1", RTLD_LAZY | RTLD_GLOBAL);
+        const char *override = getenv("LEAF_PM_MALI_LIB");
+        if (override && override[0]) {
+            leaf_mali = dlopen(override, RTLD_LAZY | RTLD_GLOBAL);
+        }
+        if (!leaf_mali) {
+            leaf_mali = dlopen("libmali.so.1", RTLD_LAZY | RTLD_GLOBAL);
+        }
+        if (!leaf_mali) {
+            leaf_mali = dlopen("/lib/libmali.so.1", RTLD_LAZY | RTLD_GLOBAL);
+        }
         if (!leaf_mali) {
             abort();
         }

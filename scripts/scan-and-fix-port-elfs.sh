@@ -129,6 +129,7 @@ leaf_pm_enable_godot_wayland_runtime() {
       _leaf_pm_wayland_display="\${LEAF_PM_WAYLAND_DISPLAY:-\${WAYLAND_DISPLAY:-wayland-0}}"
       _leaf_pm_egl_shim="\${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1"
       if [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ]; then
+        export LEAF_PM_MALI_LIB="\$LEAF_PM_MALI_AARCH64_DIR/libmali.so.1"
         case ":\${LD_LIBRARY_PATH:-}:" in
           *:"\$LEAF_PM_MALI_AARCH64_DIR":*) ;;
           *) export LD_LIBRARY_PATH="\$LEAF_PM_MALI_AARCH64_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;

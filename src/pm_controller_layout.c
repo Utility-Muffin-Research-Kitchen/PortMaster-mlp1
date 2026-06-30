@@ -265,6 +265,7 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "      _leaf_pm_wayland_display=\"${LEAF_PM_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-wayland-0}}\"\n"
         "      _leaf_pm_egl_shim=\"${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1\"\n"
         "      if [ -f \"${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1\" ]; then\n"
+        "        export LEAF_PM_MALI_LIB=\"$LEAF_PM_MALI_AARCH64_DIR/libmali.so.1\"\n"
         "        case \":${LD_LIBRARY_PATH:-}:\" in\n"
         "          *:\"$LEAF_PM_MALI_AARCH64_DIR\":*) ;;\n"
         "          *) export LD_LIBRARY_PATH=\"$LEAF_PM_MALI_AARCH64_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\" ;;\n"
