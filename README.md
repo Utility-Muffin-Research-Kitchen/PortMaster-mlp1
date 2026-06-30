@@ -235,6 +235,12 @@ guards Westonpack cleanup calls for those Godot launchers, because cleaning up a
 nested compositor that was never started can disturb Leaf's real Wayland
 runtime.
 
+The scanner also patches Mina the Hollower's `machismo` launcher on Leaf to
+default `GOTHIC_BACKEND=gles`. Leaf stock Vulkan currently exposes only the
+direct-display path for this port, which sees the MLP1 panel as `720x960` and
+rotates the game. The GLES path uses the active Wayland surface and keeps the
+game at `960x720`.
+
 MLP1 stock ships a 64-bit `g13p0` Mali userspace blob that can fault under some
 Godot 4 content. `make package-mlp1` therefore builds a small aarch64 Mali
 compat bundle from the pinned `tsukumijima/libmali-rockchip` `g24p0`

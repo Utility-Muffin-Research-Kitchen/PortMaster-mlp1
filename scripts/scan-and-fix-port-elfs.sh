@@ -372,6 +372,16 @@ is_godot_script() {
   grep -Eq 'godot_runtime=|godot_executable=|--rendering-driver[[:space:]]+opengl3_es|godot[0-9]+.*DEVICE_ARCH' "$file" 2>/dev/null
 }
 
+is_mina_machismo_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) return 1 ;;
+  esac
+  grep -Eq 'Mina the Hollower|MinaTheHollower|GOTHIC_BACKEND|bin/machismo' "$file" 2>/dev/null &&
+    grep -Eq 'GOTHIC_BACKEND|bin/machismo' "$file" 2>/dev/null
+}
+
 normalize_port_env_script() {
   file="$1"
   case "$file" in
@@ -540,6 +550,47 @@ normalize_godot_weston_cleanup_script() {
   printf 'weston-cleanup-patched'
 }
 
+normalize_mina_gles_script() {
+  file="$1"
+  if ! is_mina_machismo_script "$file"; then
+    printf 'not-mina'
+    return 0
+  fi
+  if grep -q 'LEAF_PM_MINA_GLES=1' "$file" 2>/dev/null; then
+    printf 'mina-gles-already'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  awk '
+    function insert_block() {
+      print ""
+      print "# LEAF_PM_MINA_GLES=1"
+      print "# MLP1 stock Vulkan lacks Wayland WSI; avoid the raw 720x960 direct-display fallback."
+      print "if [ \"${CFW_NAME:-}\" = \"Leaf\" ]; then"
+      print "  export GOTHIC_BACKEND=\"${GOTHIC_BACKEND:-gles}\""
+      print "fi"
+      inserted = 1
+    }
+    {
+      print
+      if (!inserted && $0 ~ /^[[:space:]]*get_controls([[:space:]]|$)/) {
+        insert_block()
+      } else if (!inserted && $0 ~ /source[[:space:]].*control[.]txt/) {
+        insert_block()
+      }
+    }
+    END {
+      if (!inserted) {
+        insert_block()
+      }
+    }
+  ' "$file" >"$tmp"
+  mv "$tmp" "$file"
+  chmod 755 "$file" 2>/dev/null || true
+  printf 'mina-gles-patched'
+}
+
 normalize_armhf_executable() {
   file="$1"
   [ "$compat_available" -eq 1 ] || {
@@ -580,6 +631,8 @@ port_env_patched=0
 port_env_already=0
 port_paths_patched=0
 port_paths_already=0
+mina_gles_patched=0
+mina_gles_already=0
 
 while IFS= read -r -d '' file; do
   case "$(normalize_port_env_script "$file")" in
@@ -601,6 +654,11 @@ while IFS= read -r -d '' file; do
     weston-cleanup-patched) weston_cleanup_patched=$((weston_cleanup_patched + 1)) ;;
     weston-cleanup-already) weston_cleanup_already=$((weston_cleanup_already + 1)) ;;
     weston-cleanup-missing) weston_cleanup_missing=$((weston_cleanup_missing + 1)) ;;
+  esac
+
+  case "$(normalize_mina_gles_script "$file")" in
+    mina-gles-patched) mina_gles_patched=$((mina_gles_patched + 1)) ;;
+    mina-gles-already) mina_gles_already=$((mina_gles_already + 1)) ;;
   esac
 
   header="$(elf_header_hex "$file")"
@@ -665,6 +723,8 @@ cat >"$tmp_json" <<EOF
   "godot_weston_cleanup_scripts_patched": $weston_cleanup_patched,
   "godot_weston_cleanup_scripts_already_patched": $weston_cleanup_already,
   "godot_weston_cleanup_scripts_missing_cleanup": $weston_cleanup_missing,
+  "mina_gles_scripts_patched": $mina_gles_patched,
+  "mina_gles_scripts_already_patched": $mina_gles_already,
   "godot_egl_scripts_patched": $godot_patched,
   "godot_egl_scripts_already_patched": $godot_already,
   "errors": $errors
@@ -672,4 +732,4 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched godot_patched=$godot_patched weston_cleanup_patched=$weston_cleanup_patched report=$report_tsv"
+log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched godot_patched=$godot_patched weston_cleanup_patched=$weston_cleanup_patched mina_gles_patched=$mina_gles_patched report=$report_tsv"
