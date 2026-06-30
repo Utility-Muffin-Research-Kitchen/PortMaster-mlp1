@@ -91,6 +91,15 @@ The hook exports `DEVICE_HAS_ARMHF=Y` plus `LEAF_PM_ARMHF_RUN`,
 `LEAF_PM_ARMHF_LOADER`, and `LEAF_PM_ARMHF_LIB_PATH`. `DEVICE_ARCH` remains
 `aarch64`, so ports that provide native assets still prefer them.
 
+The hook also normalizes PortMaster helper state for launched ports. It exports
+`HM_TOOLS_DIR`, `HM_PORTS_DIR`, and `HM_SCRIPTS_DIR` to the SD/userdata paths
+used by the GUI. When the managed UI Python runtime exists, it creates
+`/tmp/leaf-portmaster-python/python3` and prepends that shim to `PATH`. The shim
+adds `PYTHONHOME`, `PYTHONPATH`, and the runtime `lib` directory only for the
+helper Python process, which lets port scripts run
+`harbourmaster runtime_check` without leaking Python runtime settings into the
+game executable.
+
 The same hook also applies the global controller-layout preference for installed
 ports. By default it exports the MLP1 X360 SDL mapping. If
 `$USERDATA_PATH/portmaster/nintendo` exists, it exports the Nintendo mapping

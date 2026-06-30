@@ -87,6 +87,12 @@ repo does not vendor that binary payload. The UI currently uses stock MLP1 SDL
 libraries from `/usr/lib` because the bundled `pysdl2-dll` SDL stack segfaulted
 during device smoke testing.
 
+Installed port scripts also source the Leaf PortMaster hook from upstream
+`control.txt`. When the managed Python runtime exists, that hook creates a
+temporary `/tmp/leaf-portmaster-python/python3` shim so PortMaster helper calls
+such as `harbourmaster runtime_check` can download and verify game runtimes
+without exporting Python runtime variables into every launched game.
+
 On launch it sources:
 
 ```text

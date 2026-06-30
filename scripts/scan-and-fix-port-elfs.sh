@@ -83,6 +83,49 @@ else
   _leaf_pm_data_dir="$data_dir"
 fi
 export LEAF_PM_DATA_DIR="\$_leaf_pm_data_dir"
+export PORTMASTER_CONTROLFOLDER="\${PORTMASTER_CONTROLFOLDER:-\$_leaf_pm_controlfolder}"
+export HOME="\$LEAF_PM_DATA_DIR"
+export XDG_DATA_HOME="\$LEAF_PM_DATA_DIR"
+export HM_TOOLS_DIR="\${HM_TOOLS_DIR:-\$LEAF_PM_DATA_DIR}"
+if [ -n "\${ROMS_PATH:-}" ]; then
+  _leaf_pm_ports_dir="\$ROMS_PATH/PORTS"
+elif [ -n "\${SDCARD_PATH:-}" ]; then
+  _leaf_pm_ports_dir="\$SDCARD_PATH/Roms/PORTS"
+else
+  _leaf_pm_ports_dir="/\${directory:-roms}/ports"
+fi
+export HM_PORTS_DIR="\${HM_PORTS_DIR:-\$_leaf_pm_ports_dir}"
+export HM_SCRIPTS_DIR="\${HM_SCRIPTS_DIR:-\$HM_PORTS_DIR}"
+
+export LEAF_PM_RUNTIME_DIR="\${LEAF_PM_RUNTIME_DIR:-\$LEAF_PM_DATA_DIR/runtime}"
+if [ -x "\$LEAF_PM_RUNTIME_DIR/bin/python3" ]; then
+  _leaf_pm_python_shim_dir="/tmp/leaf-portmaster-python"
+  if mkdir -p "\$_leaf_pm_python_shim_dir" 2>/dev/null; then
+    cat >"\$_leaf_pm_python_shim_dir/python3" <<'LEAF_PM_PYTHON_SHIM'
+#!/bin/sh
+_runtime="\${LEAF_PM_RUNTIME_DIR:-}"
+if [ -z "\$_runtime" ] || [ ! -x "\$_runtime/bin/python3" ]; then
+  echo "Leaf PortMaster python runtime missing" >&2
+  exit 127
+fi
+if [ -n "\${LD_LIBRARY_PATH:-}" ]; then
+  export LD_LIBRARY_PATH="\$_runtime/lib:\$LD_LIBRARY_PATH"
+else
+  export LD_LIBRARY_PATH="\$_runtime/lib"
+fi
+export PYTHONHOME="\$_runtime"
+export PYTHONPATH="\$_runtime/lib/python3.10:\$_runtime/lib/python3.10/site-packages:\$_runtime/lib\${PYTHONPATH:+:\$PYTHONPATH}"
+export PYTHONDONTWRITEBYTECODE="\${PYTHONDONTWRITEBYTECODE:-1}"
+exec "\$_runtime/bin/python3" "\$@"
+LEAF_PM_PYTHON_SHIM
+    chmod 755 "\$_leaf_pm_python_shim_dir/python3" 2>/dev/null || true
+    cp -f "\$_leaf_pm_python_shim_dir/python3" "\$_leaf_pm_python_shim_dir/python" 2>/dev/null || true
+    case ":\${PATH:-}:" in
+      *:"\$_leaf_pm_python_shim_dir":*) ;;
+      *) export PATH="\$_leaf_pm_python_shim_dir:\${PATH:-/usr/bin:/usr/sbin}" ;;
+    esac
+  fi
+fi
 
 leaf_pm_apply_controller_layout() {
   if [ "\${PORTMASTER_LEAF_PORT_LAYOUT_SCOPE:-ports}" = "gui" ]; then
@@ -133,7 +176,7 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
   }
 fi
 
-unset _leaf_pm_controlfolder _leaf_pm_data_dir
+unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_ports_dir _leaf_pm_python_shim_dir
 EOF
   mv "$tmp" "$hook_path"
   chmod 755 "$hook_path" 2>/dev/null || true
