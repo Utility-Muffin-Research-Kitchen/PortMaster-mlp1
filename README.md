@@ -181,8 +181,8 @@ make build-armhf-compat
 Output:
 
 ```text
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.zip
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.json
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.zip
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.json
 ```
 
 The zip installs under:
@@ -192,13 +192,16 @@ $USERDATA_PATH/portmaster/compat/armhf
 ```
 
 It includes `bin/leaf-armhf-run`, which runs dynamic armhf programs through the
-packaged loader and library path without writing to the stock rootfs.
+packaged loader and library path without writing to the stock rootfs. It also
+includes a managed current `bin/box86`; wrapped port-bundled `box86` binaries
+prefer this managed copy when present.
 
-The Mali blob is `libmali-bifrost-g52-g24p0-wayland-gbm.so` from
-`tsukumijima/libmali-rockchip`, pinned by commit and SHA-256 in
-`scripts/build-armhf-compat-pack.sh`. The generated pack includes the upstream
-Debian copyright file under `licenses/mali/`; that file contains the Arm Mali
-userspace driver EULA and redistribution notice requirements.
+The Mali stack is the armhf `libmali-bifrost-g52-g13p0-wayland-gbm` deb from
+the `home:amazingfate:libmali-rockchip` OBS repository, pinned by package
+URL, size, and SHA-256 in `scripts/build-armhf-compat-pack.sh`. The generated
+pack includes the upstream Debian copyright file under `licenses/mali/`; that
+file contains the Arm Mali userspace driver EULA and redistribution notice
+requirements.
 
 On PortMaster launch, and again after the upstream GUI exits, the manager runs:
 
@@ -230,8 +233,8 @@ libretro cores, are reported but not rewritten.
 
 Installed `.sh` launchers are also patched with a small SD environment block so
 upstream PortMaster scripts resolve `XDG_DATA_HOME`, `PORTMASTER_CONTROLFOLDER`,
-and common `GAMEDIR=/$directory/ports/...` paths to the active SD-managed
-PortMaster tree instead of `/roms/ports` on the stock rootfs.
+and common quoted or unquoted `GAMEDIR=/$directory/ports/...` paths to the
+active SD-managed PortMaster tree instead of `/roms/ports` on the stock rootfs.
 
 The same scan patches installed aarch64 Godot 4.3 shell launchers with a
 Leaf-only Wayland block. MLP1 already has Leaf's Weston compositor running, so

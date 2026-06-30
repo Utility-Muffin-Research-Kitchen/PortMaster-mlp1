@@ -3,18 +3,25 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${PM_ARMHF_BUILD_IMAGE:-debian:bookworm-slim}"
-VERSION="${PM_ARMHF_COMPAT_VERSION:-bookworm-mali-g24p0-20260630}"
+VERSION="${PM_ARMHF_COMPAT_VERSION:-bookworm-mali-g13p0-box86-20260630}"
 container=0
 
 MALI_REPO="https://github.com/tsukumijima/libmali-rockchip"
-MALI_RAW_BASE="https://raw.githubusercontent.com/tsukumijima/libmali-rockchip"
-MALI_COMMIT="${PM_ARMHF_MALI_COMMIT:-bd33ee262f47fd936b831afccaa0759b3ecc2482}"
-MALI_VARIANT="bifrost-g52-g24p0-wayland-gbm"
-MALI_BLOB_PATH="lib/arm-linux-gnueabihf/libmali-$MALI_VARIANT.so"
-MALI_BLOB_SHA256="67d7d1d275eb437b6d4470529230c8bc6289bdf0a288fdc3ab5ee2bd648a95f6"
-MALI_BLOB_SIZE="38116912"
-MALI_COPYRIGHT_PATH="debian/copyright"
+MALI_RELEASE_TAG="${PM_ARMHF_MALI_RELEASE_TAG:-v1.9-1+debian1}"
+MALI_VARIANT="bifrost-g52-g13p0-wayland-gbm"
+MALI_PACKAGE="libmali-$MALI_VARIANT"
+MALI_DEB_URL="${PM_ARMHF_MALI_DEB_URL:-https://download.opensuse.org/repositories/home:/amazingfate:/libmali-rockchip/Debian_Testing/armhf/${MALI_PACKAGE}_1.9-1%2Bdebian1_armhf.deb}"
+MALI_DEB_SHA256="109f707eb40e64f374cddeccb3f53f1921799f5d6450ffc5f8a2e4580d77bfff"
+MALI_DEB_SIZE="14615064"
+MALI_BLOB_SHA256="3461a2aa9961df8cd5ad6804e8acb0bb805396790c15b7963e3e569c2d473375"
+MALI_BLOB_SIZE="42534288"
+MALI_HOOK_SHA256="1eed0607b024ce4a18db3bd88fe71b3c424aab66524de940cb446ef8e951d389"
+MALI_COPYRIGHT_PATH="usr/share/doc/$MALI_PACKAGE/copyright"
 MALI_COPYRIGHT_SHA256="a254205ab051a9a6cf952bf73d9f40715eb3bd2963d82ac462762e4dda1e8c77"
+
+BOX86_REPO="https://github.com/ptitSeb/box86"
+BOX86_COMMIT="${PM_ARMHF_BOX86_COMMIT:-0579f8b9c47d87d700724f4cce559b06cbd2b0f5}"
+BOX86_LICENSE_SHA256="56215a2e982c1fde0f63afcdeff6c0f44826711f17e9c87a4c1d2cfb1694a789"
 
 if [[ "${1:-}" == "--container" ]]; then
   container=1
@@ -47,6 +54,7 @@ PACKAGES=(
   libwayland-client0:armhf
   libwayland-cursor0:armhf
   libwayland-egl1:armhf
+  libwayland-server0:armhf
   libxkbcommon0:armhf
   libdrm2:armhf
   libgbm1:armhf
@@ -79,7 +87,9 @@ if [[ "$container" == "0" ]]; then
     -w /work \
     -e PM_ARMHF_OUT_DIR="$OUT_REL" \
     -e PM_ARMHF_COMPAT_VERSION="$VERSION" \
-    -e PM_ARMHF_MALI_COMMIT="$MALI_COMMIT" \
+    -e PM_ARMHF_MALI_DEB_URL="$MALI_DEB_URL" \
+    -e PM_ARMHF_MALI_RELEASE_TAG="$MALI_RELEASE_TAG" \
+    -e PM_ARMHF_BOX86_COMMIT="$BOX86_COMMIT" \
     "$IMAGE" \
     bash scripts/build-armhf-compat-pack.sh --container
 fi
@@ -97,6 +107,7 @@ DEB_DIR="$WORK_DIR/debs"
 SOURCES_REPORT="$WORK_DIR/sources.json"
 FILE_REPORT="$WORK_DIR/files.json"
 MALI_REPORT="$WORK_DIR/mali.json"
+BOX86_REPORT="$WORK_DIR/box86.json"
 ARTIFACT="$OUT_DIR/portmaster-mlp1-armhf-compat-$VERSION.zip"
 MANIFEST="$OUT_DIR/portmaster-mlp1-armhf-compat-$VERSION.json"
 EMBEDDED_MANIFEST="$ROOTFS/.leaf-armhf-compat-manifest.json"
@@ -110,10 +121,15 @@ apt-get update
 apt-get install -y --no-install-recommends \
   binutils-arm-linux-gnueabihf \
   ca-certificates \
+  cmake \
   dpkg-dev \
   file \
   gcc-arm-linux-gnueabihf \
+  g++-arm-linux-gnueabihf \
+  git \
   libc6-dev-armhf-cross \
+  make \
+  pkg-config \
   python3 \
   curl \
   zip
@@ -215,6 +231,8 @@ rm -rf "$ROOTFS/usr/share/doc" \
 
 echo "=== Installing Rockchip Mali armhf GLES stack ==="
 MALI_WORK="$WORK_DIR/mali"
+MALI_EXTRACT="$MALI_WORK/root"
+MALI_DEB="$MALI_WORK/$MALI_PACKAGE.deb"
 MALI_LIB_DIR="$ROOTFS/usr/lib/arm-linux-gnueabihf"
 MALI_VENDOR_DIR="$MALI_LIB_DIR/mali"
 mkdir -p "$MALI_WORK" "$MALI_VENDOR_DIR" "$MALI_LIB_DIR/pkgconfig" \
@@ -222,16 +240,39 @@ mkdir -p "$MALI_WORK" "$MALI_VENDOR_DIR" "$MALI_LIB_DIR/pkgconfig" \
          "$ROOTFS/etc/OpenCL/vendors" "$ROOTFS/etc/ld.so.conf.d" \
          "$ROOTFS/etc/profile.d"
 
-curl -fsSL "$MALI_RAW_BASE/$MALI_COMMIT/$MALI_BLOB_PATH" \
-  -o "$MALI_WORK/libmali.so.1.9.0"
-curl -fsSL "$MALI_RAW_BASE/$MALI_COMMIT/$MALI_COPYRIGHT_PATH" \
-  -o "$ROOTFS/licenses/mali/libmali-rockchip-debian-copyright"
+curl -fL "$MALI_DEB_URL" -o "$MALI_DEB"
 
-mali_blob_sha="$(sha256sum "$MALI_WORK/libmali.so.1.9.0" | awk '{print $1}')"
-mali_copyright_sha="$(sha256sum "$ROOTFS/licenses/mali/libmali-rockchip-debian-copyright" | awk '{print $1}')"
-mali_blob_size="$(wc -c <"$MALI_WORK/libmali.so.1.9.0" | tr -d ' ')"
+mali_deb_sha="$(sha256sum "$MALI_DEB" | awk '{print $1}')"
+mali_deb_size="$(wc -c <"$MALI_DEB" | tr -d ' ')"
+if [[ "$mali_deb_sha" != "$MALI_DEB_SHA256" ]]; then
+  echo "Mali deb sha256 mismatch: $mali_deb_sha != $MALI_DEB_SHA256" >&2
+  exit 1
+fi
+if [[ "$mali_deb_size" != "$MALI_DEB_SIZE" ]]; then
+  echo "Mali deb size mismatch: $mali_deb_size != $MALI_DEB_SIZE" >&2
+  exit 1
+fi
+
+mkdir -p "$MALI_EXTRACT"
+dpkg-deb -x "$MALI_DEB" "$MALI_EXTRACT"
+
+MALI_SRC_LIB="$MALI_EXTRACT/usr/lib/arm-linux-gnueabihf"
+MALI_SRC_VENDOR="$MALI_SRC_LIB/mali"
+MALI_SRC_COPYRIGHT="$MALI_EXTRACT/$MALI_COPYRIGHT_PATH"
+test -f "$MALI_SRC_LIB/libmali.so.1.9.0" || { echo "missing libmali.so.1.9.0 in Mali deb" >&2; exit 1; }
+test -f "$MALI_SRC_LIB/libmali-hook.so.1.9.0" || { echo "missing libmali-hook.so.1.9.0 in Mali deb" >&2; exit 1; }
+test -f "$MALI_SRC_COPYRIGHT" || { echo "missing copyright in Mali deb" >&2; exit 1; }
+
+mali_blob_sha="$(sha256sum "$MALI_SRC_LIB/libmali.so.1.9.0" | awk '{print $1}')"
+mali_hook_sha="$(sha256sum "$MALI_SRC_LIB/libmali-hook.so.1.9.0" | awk '{print $1}')"
+mali_copyright_sha="$(sha256sum "$MALI_SRC_COPYRIGHT" | awk '{print $1}')"
+mali_blob_size="$(wc -c <"$MALI_SRC_LIB/libmali.so.1.9.0" | tr -d ' ')"
 if [[ "$mali_blob_sha" != "$MALI_BLOB_SHA256" ]]; then
   echo "Mali blob sha256 mismatch: $mali_blob_sha != $MALI_BLOB_SHA256" >&2
+  exit 1
+fi
+if [[ "$mali_hook_sha" != "$MALI_HOOK_SHA256" ]]; then
+  echo "Mali hook sha256 mismatch: $mali_hook_sha != $MALI_HOOK_SHA256" >&2
   exit 1
 fi
 if [[ "$mali_copyright_sha" != "$MALI_COPYRIGHT_SHA256" ]]; then
@@ -243,28 +284,24 @@ if [[ "$mali_blob_size" != "$MALI_BLOB_SIZE" ]]; then
   exit 1
 fi
 
-cp -f "$MALI_WORK/libmali.so.1.9.0" "$MALI_LIB_DIR/libmali.so.1"
-ln -sf libmali.so.1 "$MALI_LIB_DIR/libmali.so"
+cp -f "$MALI_SRC_LIB/libmali.so.1.9.0" "$MALI_LIB_DIR/libmali.so.1"
+cp -f "$MALI_SRC_LIB/libmali-hook.so.1.9.0" "$MALI_LIB_DIR/libmali-hook.so.1"
+cp -f "$MALI_SRC_COPYRIGHT" "$ROOTFS/licenses/mali/libmali-rockchip-debian-copyright"
 
-cat >"$MALI_WORK/dummy.c" <<'C'
-void leaf_mali_wrapper_anchor(void) {}
-C
-
-for spec in EGL:1 GLESv1_CM:1 GLESv2:2 gbm:1 wayland-egl:1 MaliOpenCL:1; do
-  name="${spec%%:*}"
-  soname_version="${spec##*:}"
-  arm-linux-gnueabihf-gcc -shared -fPIC \
-    -Wl,-soname,"lib${name}.so.${soname_version}" \
-    -Wl,--no-as-needed -L"$MALI_LIB_DIR" -lmali -Wl,--as-needed \
-    -o "$MALI_VENDOR_DIR/lib${name}.so.${soname_version}" \
-    "$MALI_WORK/dummy.c"
-  cp -f "$MALI_VENDOR_DIR/lib${name}.so.${soname_version}" \
-        "$MALI_VENDOR_DIR/lib${name}.so"
+for name in EGL:libEGL.so.1 GLESv1_CM:libGLESv1_CM.so.1 GLESv2:libGLESv2.so.2 gbm:libgbm.so.1 wayland-egl:libwayland-egl.so.1 MaliOpenCL:libMaliOpenCL.so.1; do
+  short="${name%%:*}"
+  file="${name##*:}"
+  test -f "$MALI_SRC_VENDOR/$file" || { echo "missing $file in Mali deb" >&2; exit 1; }
+  cp -f "$MALI_SRC_VENDOR/$file" "$MALI_VENDOR_DIR/$file"
+  cp -f "$MALI_SRC_VENDOR/$file" "$MALI_VENDOR_DIR/lib${short}.so"
 done
 
 printf '%s\n' 'libMaliOpenCL.so.1' >"$ROOTFS/etc/OpenCL/vendors/mali.icd"
 printf '%s\n' '/usr/lib/arm-linux-gnueabihf/mali' >"$ROOTFS/etc/ld.so.conf.d/00-arm-mali.conf"
-printf '%s\n' 'export MALI_SCHED_RT_THREAD_PRIORITY=95' >"$ROOTFS/etc/profile.d/mali-priority.sh"
+cat >"$ROOTFS/etc/profile.d/mali-priority.sh" <<'SH'
+export MALI_SCHED_RT_THREAD_PRIORITY=95
+export SDL_VIDEO_EGL_DRIVER=libEGL.so
+SH
 cat >"$MALI_LIB_DIR/pkgconfig/mali.pc" <<'PC'
 prefix=/usr
 libdir=${prefix}/lib/arm-linux-gnueabihf
@@ -277,14 +314,14 @@ Libs: -L${libdir} -lmali
 PC
 
 chmod 755 "$MALI_LIB_DIR"/libmali*.so* "$MALI_VENDOR_DIR"/*.so*
-rm -f "$MALI_LIB_DIR/libmali.so"
 chmod 644 "$ROOTFS/licenses/mali/libmali-rockchip-debian-copyright" \
           "$ROOTFS/etc/OpenCL/vendors/mali.icd" \
           "$ROOTFS/etc/ld.so.conf.d/00-arm-mali.conf" \
           "$MALI_LIB_DIR/pkgconfig/mali.pc"
 
-python3 - "$MALI_REPORT" "$MALI_REPO" "$MALI_COMMIT" "$MALI_VARIANT" \
-  "$MALI_BLOB_PATH" "$MALI_BLOB_SHA256" "$MALI_BLOB_SIZE" \
+python3 - "$MALI_REPORT" "$MALI_REPO" "$MALI_RELEASE_TAG" "$MALI_VARIANT" \
+  "$MALI_DEB_URL" "$MALI_DEB_SHA256" "$MALI_DEB_SIZE" \
+  "$MALI_BLOB_SHA256" "$MALI_BLOB_SIZE" "$MALI_HOOK_SHA256" \
   "$MALI_COPYRIGHT_PATH" "$MALI_COPYRIGHT_SHA256" <<'PY'
 import json
 import sys
@@ -292,20 +329,28 @@ import sys
 (
     report_path,
     repo,
-    commit,
+    release_tag,
     variant,
-    blob_path,
+    deb_url,
+    deb_sha,
+    deb_size,
     blob_sha,
     blob_size,
+    hook_sha,
     copyright_path,
     copyright_sha,
-) = sys.argv[1:10]
+) = sys.argv[1:13]
 
 report = {
     "repo": repo,
-    "commit": commit,
+    "release_tag": release_tag,
     "variant": variant,
     "architecture": "armhf",
+    "deb": {
+        "url": deb_url,
+        "size": int(deb_size),
+        "sha256": deb_sha,
+    },
     "license": {
         "kind": "ARM Mali userspace driver EULA",
         "upstream_path": copyright_path,
@@ -317,13 +362,18 @@ report = {
         ],
     },
     "blob": {
-        "upstream_path": blob_path,
         "installed_paths": [
             "usr/lib/arm-linux-gnueabihf/libmali.so.1",
         ],
         "size": int(blob_size),
         "sha256": blob_sha,
-        "driver_release": "g24p0-00eac0",
+        "driver_release": "g13p0-01eac0",
+    },
+    "hook": {
+        "installed_paths": [
+            "usr/lib/arm-linux-gnueabihf/libmali-hook.so.1",
+        ],
+        "sha256": hook_sha,
     },
     "wrappers": [
         "usr/lib/arm-linux-gnueabihf/mali/libEGL.so.1",
@@ -335,6 +385,70 @@ report = {
     ],
 }
 
+with open(report_path, "w", encoding="utf-8") as fp:
+    json.dump(report, fp, indent=2, sort_keys=True)
+    fp.write("\n")
+PY
+
+echo "=== Building managed box86 ==="
+BOX86_SRC="$WORK_DIR/box86-src"
+BOX86_BUILD="$WORK_DIR/box86-build"
+mkdir -p "$ROOTFS/licenses/box86"
+git init "$BOX86_SRC"
+git -C "$BOX86_SRC" remote add origin "$BOX86_REPO"
+git -C "$BOX86_SRC" fetch --depth 1 origin "$BOX86_COMMIT"
+git -C "$BOX86_SRC" checkout --detach FETCH_HEAD
+box86_short_commit="${BOX86_COMMIT:0:7}"
+sed -i "s/git rev-parse --short HEAD/printf %s $box86_short_commit/g" "$BOX86_SRC/CMakeLists.txt"
+
+box86_license_sha="$(sha256sum "$BOX86_SRC/LICENSE" | awk '{print $1}')"
+if [[ "$box86_license_sha" != "$BOX86_LICENSE_SHA256" ]]; then
+  echo "box86 license sha256 mismatch: $box86_license_sha != $BOX86_LICENSE_SHA256" >&2
+  exit 1
+fi
+
+cmake -S "$BOX86_SRC" -B "$BOX86_BUILD" \
+  -DARM64=ON \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_INSTALL_PREFIX=/usr \
+  -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
+  -DCMAKE_ASM_COMPILER=arm-linux-gnueabihf-gcc
+cmake --build "$BOX86_BUILD" --parallel "${BUILD_JOBS:-$(nproc)}"
+arm-linux-gnueabihf-strip -o "$ROOTFS/bin/box86" "$BOX86_BUILD/box86"
+cp -f "$BOX86_SRC/LICENSE" "$ROOTFS/licenses/box86/LICENSE"
+chmod 755 "$ROOTFS/bin/box86"
+chmod 644 "$ROOTFS/licenses/box86/LICENSE"
+
+box86_sha="$(sha256sum "$ROOTFS/bin/box86" | awk '{print $1}')"
+box86_size="$(wc -c <"$ROOTFS/bin/box86" | tr -d ' ')"
+python3 - "$BOX86_REPORT" "$BOX86_REPO" "$BOX86_COMMIT" "$box86_sha" \
+  "$box86_size" "$BOX86_LICENSE_SHA256" "$box86_short_commit" <<'PY'
+import json
+import sys
+
+report_path, repo, commit, binary_sha, binary_size, license_sha, short_commit = sys.argv[1:8]
+report = {
+    "repo": repo,
+    "commit": commit,
+    "reported_commit": short_commit,
+    "architecture": "armhf",
+    "cmake": {
+        "ARM64": True,
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "arm-linux-gnueabihf-gcc",
+    },
+    "binary": {
+        "installed_path": "bin/box86",
+        "size": int(binary_size),
+        "sha256": binary_sha,
+    },
+    "license": {
+        "kind": "MIT",
+        "upstream_path": "LICENSE",
+        "installed_path": "licenses/box86/LICENSE",
+        "sha256": license_sha,
+    },
+}
 with open(report_path, "w", encoding="utf-8") as fp:
     json.dump(report, fp, indent=2, sort_keys=True)
     fp.write("\n")
@@ -380,6 +494,9 @@ if [ -n "${LD_LIBRARY_PATH:-}" ]; then
 fi
 export LIBGL_DRIVERS_PATH="${LIBGL_DRIVERS_PATH:-$ROOT/usr/lib/arm-linux-gnueabihf/dri}"
 export __EGL_VENDOR_LIBRARY_DIRS="${__EGL_VENDOR_LIBRARY_DIRS:-$ROOT/usr/share/glvnd/egl_vendor.d}"
+export LD_LIBRARY_PATH="$LIB_PATH"
+export SDL_VIDEO_EGL_DRIVER="${SDL_VIDEO_EGL_DRIVER:-libEGL.so}"
+export MALI_SCHED_RT_THREAD_PRIORITY="${MALI_SCHED_RT_THREAD_PRIORITY:-95}"
 export PULSE_SERVER="${PULSE_SERVER:-unix:/tmp/pulse-socket}"
 export PULSE_CLIENTCONFIG="${PULSE_CLIENTCONFIG:-$ROOT/etc/pulse/client.conf}"
 export ALSOFT_DRIVERS="${ALSOFT_DRIVERS:-pulse}"
@@ -448,18 +565,20 @@ report.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="u
 PY
 
 echo "=== Writing embedded manifest ==="
-python3 - "$VERSION" "$SOURCES_REPORT" "$FILE_REPORT" "$MALI_REPORT" "$EMBEDDED_MANIFEST" <<'PY'
+python3 - "$VERSION" "$SOURCES_REPORT" "$FILE_REPORT" "$MALI_REPORT" "$BOX86_REPORT" "$EMBEDDED_MANIFEST" <<'PY'
 import datetime as dt
 import json
 import sys
 
-version, sources_path, files_path, mali_path, manifest_path = sys.argv[1:6]
+version, sources_path, files_path, mali_path, box86_path, manifest_path = sys.argv[1:7]
 with open(sources_path, "r", encoding="utf-8") as fp:
     sources = json.load(fp)
 with open(files_path, "r", encoding="utf-8") as fp:
     files = json.load(fp)
 with open(mali_path, "r", encoding="utf-8") as fp:
     mali = json.load(fp)
+with open(box86_path, "r", encoding="utf-8") as fp:
+    box86 = json.load(fp)
 
 manifest = {
     "version": version,
@@ -467,6 +586,7 @@ manifest = {
     "minimum_manager_version": "0.1.1",
     "sources": sources,
     "mali": mali,
+    "box86": box86,
     "files": files,
     "sha256": {
         "artifact": None,

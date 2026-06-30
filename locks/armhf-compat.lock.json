@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "status": "mali-g24p0-builder",
+  "status": "mali-g13p0-box86-builder",
   "install_dir": "$USERDATA_PATH/portmaster/compat/armhf",
   "builder": {
     "script": "scripts/build-armhf-compat-pack.sh",
     "make_target": "build-armhf-compat",
     "base_image": "debian:bookworm-slim",
-    "version": "bookworm-mali-g24p0-20260630"
+    "version": "bookworm-mali-g13p0-box86-20260630"
   },
   "tiers": {
     "tier0": "static armhf helpers",
@@ -15,10 +15,10 @@
   },
   "artifacts": [
     {
-      "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.zip",
-      "manifest": "portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.json",
-      "size": 61172289,
-      "sha256": "3eea9af35114fb94db57eb0954b446dbddfd40ce14d6e521269cdd94bb044c63",
+      "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.zip",
+      "manifest": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.json",
+      "size": 61986877,
+      "sha256": "630153d0060f21c34d0d51a520b7f352e6cd10d31edb75d1ada72396ab2caa09",
       "package_count": 104,
       "package_architectures": {
         "all": 7,
@@ -26,16 +26,27 @@
       },
       "mali": {
         "repo": "https://github.com/tsukumijima/libmali-rockchip",
-        "commit": "bd33ee262f47fd936b831afccaa0759b3ecc2482",
-        "variant": "bifrost-g52-g24p0-wayland-gbm",
+        "release_tag": "v1.9-1+debian1",
+        "variant": "bifrost-g52-g13p0-wayland-gbm",
         "architecture": "armhf",
-        "driver_release": "g24p0-00eac0",
-        "blob_path": "lib/arm-linux-gnueabihf/libmali-bifrost-g52-g24p0-wayland-gbm.so",
-        "blob_size": 38116912,
-        "blob_sha256": "67d7d1d275eb437b6d4470529230c8bc6289bdf0a288fdc3ab5ee2bd648a95f6",
-        "license_path": "debian/copyright",
+        "driver_release": "g13p0-01eac0",
+        "deb_url": "https://download.opensuse.org/repositories/home:/amazingfate:/libmali-rockchip/Debian_Testing/armhf/libmali-bifrost-g52-g13p0-wayland-gbm_1.9-1%2Bdebian1_armhf.deb",
+        "deb_size": 14615064,
+        "deb_sha256": "109f707eb40e64f374cddeccb3f53f1921799f5d6450ffc5f8a2e4580d77bfff",
+        "blob_size": 42534288,
+        "blob_sha256": "3461a2aa9961df8cd5ad6804e8acb0bb805396790c15b7963e3e569c2d473375",
+        "hook_sha256": "1eed0607b024ce4a18db3bd88fe71b3c424aab66524de940cb446ef8e951d389",
+        "license_path": "usr/share/doc/libmali-bifrost-g52-g13p0-wayland-gbm/copyright",
         "license_sha256": "a254205ab051a9a6cf952bf73d9f40715eb3bd2963d82ac462762e4dda1e8c77",
         "installed_license": "licenses/mali/libmali-rockchip-debian-copyright"
+      },
+      "box86": {
+        "repo": "https://github.com/ptitSeb/box86",
+        "commit": "0579f8b9c47d87d700724f4cce559b06cbd2b0f5",
+        "binary_size": 7302296,
+        "binary_sha256": "7435d83df9a3d9e1598b17ddd4d9695a85cd6ce5313201f20313cad13c9063e1",
+        "license": "MIT",
+        "license_sha256": "56215a2e982c1fde0f63afcdeff6c0f44826711f17e9c87a4c1d2cfb1694a789"
       },
       "device_smoke": {
         "date": "2026-06-30",
@@ -43,7 +54,7 @@
         "dynamic_loader_smoke": "leaf-armhf-smoke ok",
         "upstream_dynamic_helper": "xdelta3.armhf -V ok",
         "sdl_helper_dependency_check": "gptokeyb.armhf and sdl_resolution.armhf resolve with ld-linux --list",
-        "tier2_gles": "Lineoff/gmloader launched through Leaf PortMaster launcher and reported OpenGL ES 3.2, vendor ARM, driver g24p0-00eac0",
+        "tier2_gles": "Shovel Knight launched with managed box86, exported armhf LD_LIBRARY_PATH, and driver g13p0-01eac0; older port-bundled box86 still crashed in comparison",
         "openal_pulse": "Lineoff/gmloader opened a PulseAudio sink input through armhf OpenAL Soft without manual audio environment overrides; Lineoff is not an audible-audio validation candidate",
         "openal_smoke": "Dedicated armhf OpenAL smoke binary completed against OpenAL Soft through leaf-armhf-run",
         "known_audio_port": "Apotris launched as a real PortMaster port and produced audible, correct audio on MLP1"

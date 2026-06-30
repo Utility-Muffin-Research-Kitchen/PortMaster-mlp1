@@ -10,8 +10,8 @@ Compatibility tiers:
 - Tier 1: dynamic armhf SDL/software-rendered ports using the Leaf armhf pack.
 - Tier 2: dynamic armhf GLES ports using the bundled 32-bit Rockchip Mali stack.
 
-Tier 2 is claimed only for the pinned Rockchip Mali g24p0 stack after an MLP1
-Lineoff GLES smoke test. More GLES ports still need per-port smoke testing.
+Tier 2 is claimed only for the pinned Rockchip Mali g13p0 armhf stack after an
+MLP1 GLES smoke test. More GLES ports still need per-port smoke testing.
 
 The Spruce binary closure report covers the binaries Spruce ships with its
 PortMaster app and runtime. It includes upstream static armhf helper binaries
@@ -26,8 +26,8 @@ armhf packages plus a pinned Rockchip Mali armhf userspace blob. The generated
 zip is a release-asset candidate, not a git-vendored payload:
 
 ```text
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.zip
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.json
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.zip
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.json
 ```
 
 The pack installs under `$USERDATA_PATH/portmaster/compat/armhf` and includes:
@@ -35,10 +35,12 @@ The pack installs under `$USERDATA_PATH/portmaster/compat/armhf` and includes:
 - `lib/ld-linux-armhf.so.3`
 - glibc, libgcc, libstdc++, SDL2, SDL2_image, SDL2_mixer, SDL2_ttf, SDL2_gfx
 - common audio/image/font/Wayland/X11 support libraries needed by SDL helpers
-- Rockchip Mali Bifrost G52 `g24p0-00eac0` 32-bit Wayland/GBM userspace from
-  `tsukumijima/libmali-rockchip`
+- Rockchip Mali Bifrost G52 `g13p0-01eac0` 32-bit Wayland/GBM userspace from
+  the `home:amazingfate:libmali-rockchip` armhf deb
 - `licenses/mali/libmali-rockchip-debian-copyright`, which includes the Arm
   Mali userspace driver EULA and redistribution notice requirements
+- `bin/box86`, built from pinned upstream `ptitSeb/box86` source under MIT
+  license, used in preference to wrapped port-bundled `box86`
 - `bin/leaf-armhf-run`, a non-root loader wrapper
 - `bin/leaf-armhf-smoke`, a tiny dynamic armhf smoke binary
 
@@ -48,9 +50,9 @@ defaults used by gmloader-style ports: `PULSE_SERVER=unix:/tmp/pulse-socket`,
 `ALSOFT_DRIVERS=pulse`, and
 `ALSOFT_CONF=$LEAF_PM_ARMHF_ROOT/etc/openal/alsoft.conf`.
 
-The Mali blob is pinned by commit, path, size, and SHA-256 in the generated
-manifest. The blob is not built from source and remains under Arm's closed Mali
-userspace driver EULA.
+The Mali deb, inner blob, hook library, and license text are pinned by URL,
+size, and SHA-256 in the generated manifest. The blob is not built from source
+and remains under Arm's closed Mali userspace driver EULA.
 
 Device smoke on MLP1 on 2026-06-29 and 2026-06-30:
 
@@ -60,15 +62,17 @@ Device smoke on MLP1 on 2026-06-29 and 2026-06-30:
   libraries with `ld-linux-armhf.so.3 --list`.
 - `scripts/scan-and-fix-port-elfs.sh` wrapped a temporary dynamic armhf smoke
   executable and the wrapper ran successfully through `leaf-armhf-run`.
-- Lineoff/gmloader created a hardware OpenGL ES 3.2 context on MLP1 with ARM
-  vendor string and the `g24p0-00eac0` driver string.
+- Lineoff/gmloader created a hardware OpenGL ES 3.2 context during prototype
+  testing, but Lineoff itself is not an audible-audio validation candidate.
 - Lineoff/gmloader opened a live PulseAudio sink input through armhf OpenAL
   Soft (`float32le 2ch 44100Hz`) without manual audio environment overrides.
-  Lineoff itself is not an audible-audio validation candidate.
 - A dedicated armhf OpenAL smoke binary ran through `bin/leaf-armhf-run` and
   completed against OpenAL Soft.
 - Apotris launched as a real PortMaster port and produced audible, correct
   audio on MLP1.
+- Shovel Knight launched on MLP1 with managed box86, exported armhf
+  `LD_LIBRARY_PATH`, and the `g13p0-01eac0` Mali stack learned from the dArkOS
+  RG353V image; the older port-bundled box86 still crashed in comparison.
 
 This proves the dynamic loader path, the SDL helper closure, and one real
 dynamic armhf GLES game-port path. It also proves audible audio for at least
@@ -88,11 +92,12 @@ again after upstream PortMaster exits:
 - leave armhf shared objects untouched and report them
 
 The hook exports `DEVICE_HAS_ARMHF=Y` plus `LEAF_PM_ARMHF_RUN`,
-`LEAF_PM_ARMHF_LOADER`, and `LEAF_PM_ARMHF_LIB_PATH`. `DEVICE_ARCH` remains
-`aarch64`, so ports that provide native assets still prefer them. The hook does
-not export armhf GL or audio variables globally; those stay scoped to
-`leaf-armhf-run` so native aarch64 runtimes such as Godot/Weston do not inherit
-32-bit compatibility paths.
+`LEAF_PM_ARMHF_LOADER`, `LEAF_PM_ARMHF_LIB_PATH`, and `LEAF_PM_BOX86` when the
+managed box86 is installed. `DEVICE_ARCH` remains `aarch64`, so ports that
+provide native assets still prefer them. The hook does not export armhf GL or
+audio variables globally; those stay scoped to `leaf-armhf-run` so native
+aarch64 runtimes such as Godot/Weston do not inherit 32-bit compatibility
+paths.
 
 The hook also normalizes PortMaster helper state for launched ports. It exports
 `HM_TOOLS_DIR`, `HM_PORTS_DIR`, and `HM_SCRIPTS_DIR` to the SD/userdata paths
@@ -108,8 +113,8 @@ normalization block before they source upstream `control.txt`. That block
 selects the active SD-managed PortMaster tree through `XDG_DATA_HOME` and
 `PORTMASTER_CONTROLFOLDER`, rather than letting upstream scripts fall back to
 `/roms/ports/PortMaster` on the stock rootfs. The scanner also rewrites common
-`GAMEDIR=/$directory/ports/<game>` assignments to prefer `HM_PORTS_DIR`, and
-the generated hook only overrides `directory` from the active
+quoted or unquoted `GAMEDIR=/$directory/ports/<game>` assignments to prefer
+`HM_PORTS_DIR`, and the generated hook only overrides `directory` from the active
 `ROMS_PATH`/`SDCARD_PATH` when Jawaka's `/roms/ports` bind mount is not present.
 This keeps the runtime on SD and avoids writing compatibility state to
 eMMC/rootfs.

@@ -240,6 +240,9 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
   export LEAF_PM_ARMHF_LOADER="\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3"
   export LEAF_PM_ARMHF_RUN="\$LEAF_PM_ARMHF_ROOT/bin/leaf-armhf-run"
   export LEAF_PM_ARMHF_LIB_PATH="\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/mali:\$LEAF_PM_ARMHF_ROOT/lib/arm-linux-gnueabihf:\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf:\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/pulseaudio:\$LEAF_PM_ARMHF_ROOT/lib:\$LEAF_PM_ARMHF_ROOT/usr/lib"
+  if [ -x "\$LEAF_PM_ARMHF_ROOT/bin/box86" ]; then
+    export LEAF_PM_BOX86="\$LEAF_PM_ARMHF_ROOT/bin/box86"
+  fi
 
   leaf_pm_armhf_run() {
     "\$LEAF_PM_ARMHF_RUN" "\$@"
@@ -340,6 +343,7 @@ write_armhf_wrapper() {
   cat >"$tmp" <<EOF
 #!/bin/sh
 # LEAF_PM_ARMHF_WRAPPER=1
+# LEAF_PM_ARMHF_WRAPPER_VERSION=2
 set -eu
 
 self_dir="\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)"
@@ -348,7 +352,7 @@ if [ -n "\$control_dir" ] && [ -f "\$control_dir/leaf-armhf-env.sh" ]; then
   . "\$control_dir/leaf-armhf-env.sh"
 fi
 
-if [ -z "\${LEAF_PM_ARMHF_RUN:-}" ]; then
+if [ -z "\${LEAF_PM_ARMHF_RUN:-}" ] || [ -z "\${LEAF_PM_BOX86:-}" ]; then
   platform="\${PLATFORM:-mlp1}"
   sdcard="\${SDCARD_PATH:-}"
   if [ -z "\$sdcard" ]; then
@@ -359,7 +363,18 @@ if [ -z "\${LEAF_PM_ARMHF_RUN:-}" ]; then
     fi
   fi
   userdata="\${USERDATA_PATH:-\$sdcard/.userdata/\$platform}"
+fi
+
+if [ -z "\${LEAF_PM_ARMHF_RUN:-}" ]; then
   LEAF_PM_ARMHF_RUN="\${LEAF_PM_ARMHF_ROOT:-\$userdata/portmaster/compat/armhf}/bin/leaf-armhf-run"
+fi
+
+if [ -z "\${LEAF_PM_BOX86:-}" ]; then
+  LEAF_PM_BOX86="\${LEAF_PM_ARMHF_ROOT:-\$userdata/portmaster/compat/armhf}/bin/box86"
+fi
+
+if [ "$base" = "box86" ] && [ -x "\$LEAF_PM_BOX86" ]; then
+  exec "\$LEAF_PM_ARMHF_RUN" "\$LEAF_PM_BOX86" "\$@"
 fi
 
 exec "\$LEAF_PM_ARMHF_RUN" "\$self_dir"/$quoted_original "\$@"
@@ -447,13 +462,19 @@ normalize_port_paths_script() {
     *.sh) ;;
     *) printf 'not-shell'; return 0 ;;
   esac
-  if ! grep -q 'GAMEDIR=/\$directory/ports/' "$file" 2>/dev/null; then
+  if ! grep -Eq 'GAMEDIR="?/\$directory/ports/' "$file" 2>/dev/null; then
     printf 'port-paths-already'
     return 0
   fi
 
   tmp="$file.tmp.$$"
   awk '
+    /^[[:space:]]*GAMEDIR="\/\$directory\/ports\/[^"#[:space:]]+"[[:space:]]*$/ {
+      line = $0
+      sub(/GAMEDIR="\/\$directory\/ports\//, "GAMEDIR=\"${HM_PORTS_DIR:-/$directory/ports}/", line)
+      print line
+      next
+    }
     /^[[:space:]]*GAMEDIR=\/\$directory\/ports\/[^[:space:]#]+[[:space:]]*$/ {
       line = $0
       sub(/GAMEDIR=\/\$directory\/ports\//, "GAMEDIR=\"${HM_PORTS_DIR:-/$directory/ports}/", line)
@@ -642,6 +663,12 @@ normalize_armhf_executable() {
   original="$(wrapper_path_for "$file")"
   mkdir -p "$(dirname "$original")"
   if [ -f "$original" ]; then
+    if head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER=1' &&
+       ! head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER_VERSION=2'; then
+      write_armhf_wrapper "$file" "$original"
+      printf 'rewrapped'
+      return 0
+    fi
     printf 'already-normalized'
     return 0
   fi
@@ -715,10 +742,20 @@ done < <(find_shell_script_candidates)
 while IFS= read -r -d '' file; do
   header="$(elf_header_hex "$file")"
   if ! is_armhf_elf "$header"; then
-    if head -n 3 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER=1'; then
-      already=$((already + 1))
+    if head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER=1'; then
+      action="wrapper-present"
+      original="$(wrapper_path_for "$file")"
+      if [ "$compat_available" -eq 1 ] &&
+         [ -f "$original" ] &&
+         ! head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER_VERSION=2'; then
+        write_armhf_wrapper "$file" "$original"
+        wrapped=$((wrapped + 1))
+        action="rewrapped"
+      else
+        already=$((already + 1))
+      fi
       sha="$(file_sha256 "$file")"
-      printf '%s\t%s\t%s\t%s\t%s\n' "$file" "wrapper" "" "$sha" "wrapper-present" >>"$tmp_records"
+      printf '%s\t%s\t%s\t%s\t%s\n' "$file" "wrapper" "" "$sha" "$action" >>"$tmp_records"
     fi
     continue
   fi
@@ -732,7 +769,7 @@ while IFS= read -r -d '' file; do
   if [ -n "$interpreter" ]; then
     if action="$(normalize_armhf_executable "$file")"; then
       case "$action" in
-        wrapped) wrapped=$((wrapped + 1)) ;;
+        wrapped|rewrapped) wrapped=$((wrapped + 1)) ;;
         already-normalized) already=$((already + 1)) ;;
         needs-wrapper-compat-missing) needs_wrapper=$((needs_wrapper + 1)) ;;
       esac
