@@ -3,6 +3,7 @@
 #include "catastrophe.h"
 #include "catastrophe_widgets.h"
 
+#include "pm_artwork.h"
 #include "pm_controller_layout.h"
 #include "pm_doctor.h"
 #include "pm_installer.h"
@@ -125,13 +126,22 @@ static void show_install(pm_context *ctx)
 typedef struct {
     pm_context *ctx;
     char err[512];
+    pm_artwork_sync_result artwork;
 } pm_repatch_job;
 
 static int repatch_worker(void *userdata)
 {
     pm_repatch_job *job = (pm_repatch_job *)userdata;
     job->err[0] = '\0';
-    return pm_repatch_portmaster(job->ctx, job->err, sizeof(job->err));
+    memset(&job->artwork, 0, sizeof(job->artwork));
+    if (pm_repatch_portmaster(job->ctx, job->err, sizeof(job->err)) != 0) {
+        return -1;
+    }
+    if (pm_artwork_sync(job->ctx, &job->artwork, job->err, sizeof(job->err)) != 0) {
+        return -1;
+    }
+    pm_request_jawaka_library_rescan(job->ctx);
+    return 0;
 }
 
 static void show_repatch(pm_context *ctx)
@@ -144,7 +154,14 @@ static void show_repatch(pm_context *ctx)
     };
     int rc = cat_process_message(&opts, repatch_worker, &job);
     if (rc == 0) {
-        show_message("PortMaster patches are applied.\n\nLeaf manifest has been refreshed.");
+        char msg[512];
+        snprintf(msg, sizeof(msg),
+                 "PortMaster patches are applied.\n\nArtwork: %d synced, %d preserved, %d missing, %d failed.\n\nJawaka rescan requested.",
+                 job.artwork.synced,
+                 job.artwork.skipped_existing,
+                 job.artwork.missing_source,
+                 job.artwork.failed);
+        show_message(msg);
     } else {
         char msg[1024];
         snprintf(msg, sizeof(msg), "PortMaster repair failed.\n\n%s",

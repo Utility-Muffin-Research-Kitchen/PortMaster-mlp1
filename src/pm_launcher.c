@@ -1,5 +1,6 @@
 #include "pm_launcher.h"
 
+#include "pm_artwork.h"
 #include "pm_controller_layout.h"
 #include "pm_installer.h"
 #include "pm_util.h"
@@ -85,7 +86,7 @@ static bool pm_resolve_jawaka_platformctl(pm_context *ctx, char *out, size_t out
     return pm_copy(out, out_size, "jawaka-platformctl") == 0;
 }
 
-static void pm_request_jawaka_library_rescan(pm_context *ctx)
+void pm_request_jawaka_library_rescan(pm_context *ctx)
 {
     char ctl[PM_PATH_MAX];
     if (!pm_resolve_jawaka_platformctl(ctx, ctl, sizeof(ctl))) {
@@ -224,6 +225,15 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     int rc = pm_run_argv_env_in_dir(ctx->portmaster_dir, argv, env, err, err_size);
     pm_refresh_armhf_port_wrappers(ctx);
     (void)pm_controller_layout_sync_hook(ctx, NULL, 0);
+    pm_artwork_sync_result art = {0};
+    char art_err[512];
+    if (pm_artwork_sync(ctx, &art, art_err, sizeof(art_err)) != 0) {
+        fprintf(stderr, "PortMaster artwork sync warning: %s\n", art_err);
+    } else if (art.failed > 0) {
+        fprintf(stderr,
+                "PortMaster artwork sync completed with warnings: scanned=%d synced=%d skipped=%d missing=%d failed=%d\n",
+                art.scanned, art.synced, art.skipped_existing, art.missing_source, art.failed);
+    }
     pm_request_jawaka_library_rescan(ctx);
     return rc;
 }

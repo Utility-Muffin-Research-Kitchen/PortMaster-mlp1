@@ -3,6 +3,7 @@
 #define CAT_WIDGETS_IMPLEMENTATION
 #include "catastrophe_widgets.h"
 
+#include "pm_artwork.h"
 #include "pm_context.h"
 #include "pm_controller_layout.h"
 #include "pm_doctor.h"
@@ -104,6 +105,22 @@ int main(int argc, char **argv)
             return 1;
         }
         puts("PortMaster patches applied and manifest written");
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--sync-port-artwork") == 0) {
+        pm_artwork_sync_result result = {0};
+        char err[512];
+        if (pm_artwork_sync(&ctx, &result, err, sizeof(err)) != 0) {
+            fprintf(stderr, "artwork sync failed: %s\n", err);
+            return 1;
+        }
+        printf("port artwork sync: scanned=%d synced=%d skipped_existing=%d missing_source=%d failed=%d\n",
+               result.scanned,
+               result.synced,
+               result.skipped_existing,
+               result.missing_source,
+               result.failed);
         return 0;
     }
 
