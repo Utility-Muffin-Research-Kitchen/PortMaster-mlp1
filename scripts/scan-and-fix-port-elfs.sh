@@ -97,7 +97,8 @@ else
   _leaf_pm_roms_dir=""
   _leaf_pm_ports_dir="/\${directory:-roms}/ports"
 fi
-if [ -n "\$_leaf_pm_roms_dir" ]; then
+if [ -n "\$_leaf_pm_roms_dir" ] &&
+   ! awk '\$2 == "/roms/ports" { found = 1 } END { exit found ? 0 : 1 }' /proc/mounts 2>/dev/null; then
   export directory="\${_leaf_pm_roms_dir#/}"
 fi
 export HM_PORTS_DIR="\${HM_PORTS_DIR:-\$_leaf_pm_ports_dir}"
@@ -416,6 +417,32 @@ normalize_port_env_script() {
   printf 'port-env-patched'
 }
 
+normalize_port_paths_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) printf 'not-shell'; return 0 ;;
+  esac
+  if ! grep -q 'GAMEDIR=/\$directory/ports/' "$file" 2>/dev/null; then
+    printf 'port-paths-already'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  awk '
+    /^[[:space:]]*GAMEDIR=\/\$directory\/ports\/[^[:space:]#]+[[:space:]]*$/ {
+      line = $0
+      sub(/GAMEDIR=\/\$directory\/ports\//, "GAMEDIR=\"${HM_PORTS_DIR:-/$directory/ports}/", line)
+      print line "\""
+      next
+    }
+    { print }
+  ' "$file" >"$tmp"
+  mv "$tmp" "$file"
+  chmod 755 "$file" 2>/dev/null || true
+  printf 'port-paths-patched'
+}
+
 normalize_godot_wayland_script() {
   file="$1"
   if ! is_godot_script "$file"; then
@@ -491,11 +518,18 @@ godot_patched=0
 godot_already=0
 port_env_patched=0
 port_env_already=0
+port_paths_patched=0
+port_paths_already=0
 
 while IFS= read -r -d '' file; do
   case "$(normalize_port_env_script "$file")" in
     port-env-patched) port_env_patched=$((port_env_patched + 1)) ;;
     port-env-already) port_env_already=$((port_env_already + 1)) ;;
+  esac
+
+  case "$(normalize_port_paths_script "$file")" in
+    port-paths-patched) port_paths_patched=$((port_paths_patched + 1)) ;;
+    port-paths-already) port_paths_already=$((port_paths_already + 1)) ;;
   esac
 
   case "$(normalize_godot_wayland_script "$file")" in
@@ -558,6 +592,8 @@ cat >"$tmp_json" <<EOF
   "armhf_shared_objects_seen": $shared,
   "port_env_scripts_patched": $port_env_patched,
   "port_env_scripts_already_patched": $port_env_already,
+  "port_path_scripts_patched": $port_paths_patched,
+  "port_path_scripts_already_patched": $port_paths_already,
   "godot_wayland_scripts_patched": $godot_patched,
   "godot_wayland_scripts_already_patched": $godot_already,
   "godot_egl_scripts_patched": $godot_patched,
@@ -567,4 +603,4 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched godot_patched=$godot_patched report=$report_tsv"
+log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched godot_patched=$godot_patched report=$report_tsv"
