@@ -215,6 +215,14 @@ $USERDATA_PATH/portmaster/.leaf/armhf-scan.json
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.tsv
 ```
 
+Normal launch uses a fast scan: installed `.sh` launchers plus likely binary
+and library locations are checked, while large asset trees are skipped. Set
+`LEAF_PM_FULL_PORT_SCAN=1` when running `scripts/scan-and-fix-port-elfs.sh`
+manually to force the older exhaustive walk of every file under `Roms/PORTS`.
+The wrapper also stores a cheap top-level `Roms/PORTS` stamp so repeated
+PortMaster open/close cycles skip port repair, artwork sync, and Jawaka rescan
+when no ports changed.
+
 Dynamic armhf executables that require `/lib/ld-linux-armhf.so.3` are moved to
 `.leaf-armhf/` beside the original file and replaced with a shell wrapper that
 executes them through `bin/leaf-armhf-run`. Armhf shared objects, such as

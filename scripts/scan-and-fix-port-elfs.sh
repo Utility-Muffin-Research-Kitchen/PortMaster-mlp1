@@ -38,6 +38,11 @@ leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
+full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
+scan_mode="fast"
+if [ "$full_port_scan" = "1" ] || [ "$full_port_scan" = "true" ] || [ "$full_port_scan" = "yes" ]; then
+  scan_mode="full"
+fi
 controller_x360="1900fe3c039900001399000002010000,Loong Gamepad,a:b0,b:b1,x:b3,y:b2,back:b8,guide:b10,start:b9,leftstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,crc:3cfe,platform:Linux"
 controller_gui="1900fe3c039900001399000002010000,Loong Gamepad,a:b1,b:b0,x:b3,y:b2,back:b8,guide:b10,start:b9,leftstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,crc:3cfe,platform:Linux"
 controller_nintendo="1900fe3c039900001399000002010000,Loong Gamepad,a:b1,b:b0,x:b2,y:b3,back:b8,guide:b10,start:b9,leftstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,crc:3cfe,platform:Linux"
@@ -604,6 +609,29 @@ apply_runtime_compat_rules_script() {
   fi
 }
 
+find_shell_script_candidates() {
+  find "$ports_dir" -type f -name '*.sh' ! -path '*/.leaf-armhf/*' -print0
+}
+
+find_elf_candidates() {
+  if [ "$scan_mode" = "full" ]; then
+    find "$ports_dir" -type f ! -path '*/.leaf-armhf/*' -print0
+    return 0
+  fi
+
+  ports_root="${ports_dir%/}"
+  find "$ports_dir" -type f ! -path '*/.leaf-armhf/*' ! -name '*.sh' \
+    \( \
+      \( -path "$ports_root/*/*" ! -path "$ports_root/*/*/*" \) -o \
+      -path '*/bin/*' -o \
+      -path '*/box86/*' -o \
+      -path '*/libs/*' -o \
+      -path '*/lib/*' -o \
+      -name '*.so' -o \
+      -name '*.so.*' \
+    \) -print0
+}
+
 normalize_armhf_executable() {
   file="$1"
   [ "$compat_available" -eq 1 ] || {
@@ -630,6 +658,7 @@ tmp_records="$report_tsv.tmp.$$"
 printf 'path\tkind\tinterpreter\tsha256\taction\n' >"$tmp_records"
 
 seen=0
+shell_scripts_seen=0
 wrapped=0
 shared=0
 needs_wrapper=0
@@ -648,6 +677,8 @@ runtime_compat_gothic_machismo_gles_patched=0
 runtime_compat_gothic_machismo_gles_already=0
 
 while IFS= read -r -d '' file; do
+  shell_scripts_seen=$((shell_scripts_seen + 1))
+
   case "$(normalize_port_env_script "$file")" in
     port-env-patched) port_env_patched=$((port_env_patched + 1)) ;;
     port-env-already) port_env_already=$((port_env_already + 1)) ;;
@@ -679,7 +710,9 @@ while IFS= read -r -d '' file; do
         ;;
     esac
   done < <(apply_runtime_compat_rules_script "$file")
+done < <(find_shell_script_candidates)
 
+while IFS= read -r -d '' file; do
   header="$(elf_header_hex "$file")"
   if ! is_armhf_elf "$header"; then
     if head -n 3 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER=1'; then
@@ -713,7 +746,7 @@ while IFS= read -r -d '' file; do
   fi
 
   printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$kind" "$interpreter" "$sha" "$action" >>"$tmp_records"
-done < <(find "$ports_dir" -type f ! -path '*/.leaf-armhf/*' -print0)
+done < <(find_elf_candidates)
 
 mv "$tmp_records" "$report_tsv"
 
@@ -723,6 +756,7 @@ cat >"$tmp_json" <<EOF
   "schema": 1,
   "platform": "$(json_escape "$platform")",
   "ports_dir": "$(json_escape "$ports_dir")",
+  "scan_mode": "$(json_escape "$scan_mode")",
   "controlfolder": "$(json_escape "$controlfolder")",
   "compat_root": "$(json_escape "$compat_root")",
   "compat_available": $([ "$compat_available" -eq 1 ] && printf 'true' || printf 'false'),
@@ -733,6 +767,7 @@ cat >"$tmp_json" <<EOF
   "armhf_execs_already_normalized": $already,
   "armhf_execs_needing_compat": $needs_wrapper,
   "armhf_shared_objects_seen": $shared,
+  "shell_scripts_seen": $shell_scripts_seen,
   "port_env_scripts_patched": $port_env_patched,
   "port_env_scripts_already_patched": $port_env_already,
   "port_path_scripts_patched": $port_paths_patched,
@@ -751,4 +786,4 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched godot_patched=$godot_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched godot_patched=$godot_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched report=$report_tsv"

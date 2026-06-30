@@ -5,9 +5,14 @@
 #include "pm_installer.h"
 #include "pm_util.h"
 
+#include <dirent.h>
+#include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static bool pm_armhf_compat_available(pm_context *ctx, char *root, size_t root_size)
 {
@@ -24,14 +29,151 @@ static bool pm_armhf_compat_available(pm_context *ctx, char *root, size_t root_s
            pm_file_exists(runner);
 }
 
-static void pm_refresh_armhf_port_wrappers(pm_context *ctx)
+static bool pm_env_truthy(const char *name)
+{
+    const char *value = getenv(name);
+    return value && value[0] &&
+           strcmp(value, "0") != 0 &&
+           strcmp(value, "false") != 0 &&
+           strcmp(value, "no") != 0;
+}
+
+static uint64_t pm_hash_bytes(uint64_t hash, const void *data, size_t size)
+{
+    const unsigned char *bytes = (const unsigned char *)data;
+    for (size_t i = 0; i < size; i++) {
+        hash ^= (uint64_t)bytes[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+static uint64_t pm_hash_u64(uint64_t hash, uint64_t value)
+{
+    return pm_hash_bytes(hash, &value, sizeof(value));
+}
+
+static uint64_t pm_stat_mtime_nsec(const struct stat *st)
+{
+#if defined(__APPLE__)
+    return (uint64_t)st->st_mtimespec.tv_nsec;
+#else
+    return (uint64_t)st->st_mtim.tv_nsec;
+#endif
+}
+
+static bool pm_ports_tree_stamp(pm_context *ctx, uint64_t *out)
+{
+    if (!ctx || !out || !ctx->ports_dir[0]) {
+        return false;
+    }
+
+    DIR *dir = opendir(ctx->ports_dir);
+    if (!dir) {
+        return false;
+    }
+
+    uint64_t acc = 1469598103934665603ULL;
+    uint64_t count = 0;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 ||
+            strcmp(ent->d_name, "..") == 0 ||
+            strcmp(ent->d_name, ".leaf-armhf") == 0) {
+            continue;
+        }
+
+        char path[PM_PATH_MAX];
+        if (pm_join(path, sizeof(path), ctx->ports_dir, ent->d_name) != 0) {
+            continue;
+        }
+
+        struct stat st;
+        if (stat(path, &st) != 0) {
+            continue;
+        }
+
+        uint64_t entry = 1469598103934665603ULL;
+        entry = pm_hash_bytes(entry, ent->d_name, strlen(ent->d_name));
+        entry = pm_hash_u64(entry, (uint64_t)st.st_mode);
+        entry = pm_hash_u64(entry, (uint64_t)st.st_size);
+        entry = pm_hash_u64(entry, (uint64_t)st.st_mtime);
+        entry = pm_hash_u64(entry, pm_stat_mtime_nsec(&st));
+        acc ^= entry;
+        count++;
+    }
+    closedir(dir);
+
+    acc = pm_hash_u64(acc, count);
+    *out = acc;
+    return true;
+}
+
+static bool pm_port_scan_stamp_path(pm_context *ctx, char *out, size_t out_size)
+{
+    return ctx && pm_join(out, out_size, ctx->leaf_dir, "port-tree.stamp") == 0;
+}
+
+static bool pm_read_port_scan_stamp(pm_context *ctx, uint64_t *out)
+{
+    char path[PM_PATH_MAX];
+    if (!out || !pm_port_scan_stamp_path(ctx, path, sizeof(path))) {
+        return false;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        return false;
+    }
+    unsigned long long value = 0;
+    int matched = fscanf(fp, "%llx", &value);
+    fclose(fp);
+    if (matched != 1) {
+        return false;
+    }
+    *out = (uint64_t)value;
+    return true;
+}
+
+static void pm_write_port_scan_stamp(pm_context *ctx, uint64_t stamp)
+{
+    char path[PM_PATH_MAX];
+    char tmp[PM_PATH_MAX];
+    if (!pm_port_scan_stamp_path(ctx, path, sizeof(path)) ||
+        pm_format(tmp, sizeof(tmp), "%s.tmp", path) != 0) {
+        return;
+    }
+
+    FILE *fp = fopen(tmp, "wb");
+    if (!fp) {
+        return;
+    }
+    fprintf(fp, "%016llx\n", (unsigned long long)stamp);
+    if (fclose(fp) != 0) {
+        unlink(tmp);
+        return;
+    }
+    if (rename(tmp, path) != 0) {
+        unlink(tmp);
+    }
+}
+
+static bool pm_armhf_scan_report_exists(pm_context *ctx)
+{
+    char path[PM_PATH_MAX];
+    return ctx &&
+           pm_join(path, sizeof(path), ctx->leaf_dir, "armhf-scan.json") == 0 &&
+           pm_file_exists(path);
+}
+
+static bool pm_refresh_armhf_port_wrappers(pm_context *ctx)
 {
     char script[PM_PATH_MAX];
     if (!ctx ||
         pm_join3(script, sizeof(script), ctx->pak_dir,
                  "scripts", "scan-and-fix-port-elfs.sh") != 0 ||
         !pm_file_exists(script)) {
-        return;
+        return false;
     }
 
     pm_env_override env[] = {
@@ -49,7 +191,13 @@ static void pm_refresh_armhf_port_wrappers(pm_context *ctx)
     if (pm_run_argv_env_in_dir(ctx->pak_dir, argv, env,
                                scan_err, sizeof(scan_err)) != 0) {
         fprintf(stderr, "PortMaster armhf scan warning: %s\n", scan_err);
+        return false;
     }
+    uint64_t stamp = 0;
+    if (pm_ports_tree_stamp(ctx, &stamp)) {
+        pm_write_port_scan_stamp(ctx, stamp);
+    }
+    return true;
 }
 
 static bool pm_resolve_jawaka_platformctl(pm_context *ctx, char *out, size_t out_size)
@@ -147,7 +295,21 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     if (pm_repatch_portmaster(ctx, err, err_size) != 0) {
         return -1;
     }
-    pm_refresh_armhf_port_wrappers(ctx);
+
+    uint64_t ports_stamp_before = 0;
+    uint64_t stored_ports_stamp = 0;
+    bool have_ports_stamp_before = pm_ports_tree_stamp(ctx, &ports_stamp_before);
+    bool have_stored_ports_stamp = pm_read_port_scan_stamp(ctx, &stored_ports_stamp);
+    bool scanned_before_launch = false;
+    if (pm_env_truthy("LEAF_PM_SCAN_BEFORE_LAUNCH") ||
+        !pm_armhf_scan_report_exists(ctx) ||
+        !have_ports_stamp_before ||
+        !have_stored_ports_stamp ||
+        ports_stamp_before != stored_ports_stamp) {
+        scanned_before_launch = pm_refresh_armhf_port_wrappers(ctx);
+        have_ports_stamp_before = pm_ports_tree_stamp(ctx, &ports_stamp_before);
+    }
+
     if (pm_controller_layout_sync_hook(ctx, err, err_size) != 0) {
         return -1;
     }
@@ -223,17 +385,30 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
 
     char *argv[] = { "bash", "./PortMaster.sh", NULL };
     int rc = pm_run_argv_env_in_dir(ctx->portmaster_dir, argv, env, err, err_size);
-    pm_refresh_armhf_port_wrappers(ctx);
-    (void)pm_controller_layout_sync_hook(ctx, NULL, 0);
-    pm_artwork_sync_result art = {0};
-    char art_err[512];
-    if (pm_artwork_sync(ctx, &art, art_err, sizeof(art_err)) != 0) {
-        fprintf(stderr, "PortMaster artwork sync warning: %s\n", art_err);
-    } else if (art.failed > 0) {
-        fprintf(stderr,
-                "PortMaster artwork sync completed with warnings: scanned=%d synced=%d skipped=%d missing=%d failed=%d\n",
-                art.scanned, art.synced, art.skipped_existing, art.missing_source, art.failed);
+
+    uint64_t ports_stamp_after = 0;
+    bool have_ports_stamp_after = pm_ports_tree_stamp(ctx, &ports_stamp_after);
+    bool ports_changed_during_session = !have_ports_stamp_before ||
+                                        !have_ports_stamp_after ||
+                                        ports_stamp_before != ports_stamp_after;
+    if (ports_changed_during_session && pm_refresh_armhf_port_wrappers(ctx)) {
+        have_ports_stamp_after = pm_ports_tree_stamp(ctx, &ports_stamp_after);
+        if (have_ports_stamp_after) {
+            pm_write_port_scan_stamp(ctx, ports_stamp_after);
+        }
     }
-    pm_request_jawaka_library_rescan(ctx);
+    (void)pm_controller_layout_sync_hook(ctx, NULL, 0);
+    if (scanned_before_launch || ports_changed_during_session) {
+        pm_artwork_sync_result art = {0};
+        char art_err[512];
+        if (pm_artwork_sync(ctx, &art, art_err, sizeof(art_err)) != 0) {
+            fprintf(stderr, "PortMaster artwork sync warning: %s\n", art_err);
+        } else if (art.failed > 0) {
+            fprintf(stderr,
+                    "PortMaster artwork sync completed with warnings: scanned=%d synced=%d skipped=%d missing=%d failed=%d\n",
+                    art.scanned, art.synced, art.skipped_existing, art.missing_source, art.failed);
+        }
+        pm_request_jawaka_library_rescan(ctx);
+    }
     return rc;
 }
