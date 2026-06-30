@@ -104,15 +104,17 @@ helper Python process, which lets port scripts run
 game executable.
 
 For aarch64 Godot 4.3 ports, the scanner also patches installed Godot shell
-launchers with a small `LEAF_PM_EGL_GLES_SHIM=1` block. That block calls a hook
-function which enables the SD-installed EGL/GLES compatibility shim and
-intercepts only `env $weston_dir/westonwrap.sh ...` invocations from those
-Godot scripts. On MLP1 this runs Godot directly against the stock Wayland
-display (`XDG_RUNTIME_DIR=/run`, `WAYLAND_DISPLAY=wayland-0`) instead of
-Westonpack's nested headless compositor, which cannot provide the EGL display
-Godot 4.3 needs. The shim is built from source into the Pak and copied to
-`$USERDATA_PATH/portmaster/compat/egl/aarch64`; it never writes to the stock
-rootfs/eMMC.
+launchers with a small `LEAF_PM_GODOT_WAYLAND=1` block. That block calls a hook
+function which intercepts only `env $weston_dir/westonwrap.sh ...` invocations
+from those Godot scripts. MLP1 already has Leaf's real Weston compositor
+running, so Godot is launched directly against the active Wayland display
+(`XDG_RUNTIME_DIR=/run`, `WAYLAND_DISPLAY=wayland-0` by default) instead of
+Westonpack's nested compositor path. When the SD-installed EGL/GLES
+compatibility shim is available, that direct Godot launch prepends it to
+`LD_LIBRARY_PATH`; the shim is built from source into the Pak and copied to
+`$USERDATA_PATH/portmaster/compat/egl/aarch64`. The compatibility path never
+writes to the stock rootfs/eMMC. Older `LEAF_PM_EGL_GLES_SHIM=1` script patches
+are still recognized through a hook alias.
 
 The same hook also applies the global controller-layout preference for installed
 ports. By default it exports the MLP1 X360 SDL mapping. If

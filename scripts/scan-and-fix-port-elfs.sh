@@ -98,29 +98,13 @@ export HM_PORTS_DIR="\${HM_PORTS_DIR:-\$_leaf_pm_ports_dir}"
 export HM_SCRIPTS_DIR="\${HM_SCRIPTS_DIR:-\$HM_PORTS_DIR}"
 
 export LEAF_PM_EGL_SHIM_DIR="\${LEAF_PM_EGL_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/egl/aarch64}"
-leaf_pm_enable_egl_gles_shim() {
+leaf_pm_enable_godot_wayland_runtime() {
   [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
-  _leaf_pm_egl_shim="\${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1"
-  [ -f "\$_leaf_pm_egl_shim" ] || return 0
-  case ":\${LD_LIBRARY_PATH:-}:" in
-    *:"\$LEAF_PM_EGL_SHIM_DIR":*) ;;
-    *) export LD_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
-  esac
-  case ":\${WRAPPED_LIBRARY_PATH:-}:" in
-    *:"\$LEAF_PM_EGL_SHIM_DIR":*) ;;
-    *) export WRAPPED_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${WRAPPED_LIBRARY_PATH:+:\$WRAPPED_LIBRARY_PATH}" ;;
-  esac
-  case ":\${LD_PRELOAD:-}:" in
-    *:"\$_leaf_pm_egl_shim":*) ;;
-    *) export LD_PRELOAD="\$_leaf_pm_egl_shim\${LD_PRELOAD:+:\$LD_PRELOAD}" ;;
-  esac
-  case ":\${WRAPPED_PRELOAD:-}:" in
-    *:"\$_leaf_pm_egl_shim":*) ;;
-    *) export WRAPPED_PRELOAD="\$_leaf_pm_egl_shim\${WRAPPED_PRELOAD:+:\$WRAPPED_PRELOAD}" ;;
-  esac
   _leaf_pm_env_bin="\$(command -v env 2>/dev/null || printf '%s\n' /usr/bin/env)"
   env() {
     if [ "\${1##*/}" = "westonwrap.sh" ] && [ "\${2:-}" != "cleanup" ] && [ "\$#" -ge 6 ]; then
+      # MLP1 already has Leaf's Weston running; PortMaster's nested Westonpack
+      # wrapper cannot provide the EGL display Godot 4 expects on stock firmware.
       shift
       shift 4
       while [ "\$#" -gt 0 ]; do
@@ -132,30 +116,40 @@ leaf_pm_enable_egl_gles_shim() {
       [ "\$#" -gt 0 ] || return 127
       _leaf_pm_godot_cmd="\$1"
       shift
+      _leaf_pm_wayland_runtime="\${LEAF_PM_WAYLAND_RUNTIME_DIR:-\${XDG_RUNTIME_DIR:-/run}}"
+      _leaf_pm_wayland_display="\${LEAF_PM_WAYLAND_DISPLAY:-\${WAYLAND_DISPLAY:-wayland-0}}"
+      _leaf_pm_egl_shim="\${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1"
+      if [ -f "\$_leaf_pm_egl_shim" ]; then
+        case ":\${LD_LIBRARY_PATH:-}:" in
+          *:"\$LEAF_PM_EGL_SHIM_DIR":*) ;;
+          *) export LD_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
+        esac
+      fi
       _leaf_pm_has_display_driver=0
       for _leaf_pm_arg in "\$@"; do
         [ "\$_leaf_pm_arg" = "--display-driver" ] && _leaf_pm_has_display_driver=1
       done
       if [ "\$_leaf_pm_has_display_driver" -eq 1 ]; then
         "\$_leaf_pm_env_bin" \
-          XDG_RUNTIME_DIR="\${LEAF_PM_WAYLAND_RUNTIME_DIR:-/run}" \
-          WAYLAND_DISPLAY="\${LEAF_PM_WAYLAND_DISPLAY:-wayland-0}" \
+          XDG_RUNTIME_DIR="\$_leaf_pm_wayland_runtime" \
+          WAYLAND_DISPLAY="\$_leaf_pm_wayland_display" \
           SDL_VIDEODRIVER=wayland \
-          LD_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" \
           "\$_leaf_pm_godot_cmd" "\$@"
         return \$?
       fi
       "\$_leaf_pm_env_bin" \
-        XDG_RUNTIME_DIR="\${LEAF_PM_WAYLAND_RUNTIME_DIR:-/run}" \
-        WAYLAND_DISPLAY="\${LEAF_PM_WAYLAND_DISPLAY:-wayland-0}" \
+        XDG_RUNTIME_DIR="\$_leaf_pm_wayland_runtime" \
+        WAYLAND_DISPLAY="\$_leaf_pm_wayland_display" \
         SDL_VIDEODRIVER=wayland \
-        LD_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" \
         "\$_leaf_pm_godot_cmd" --display-driver wayland "\$@"
       return \$?
     fi
     "\$_leaf_pm_env_bin" "\$@"
   }
-  unset _leaf_pm_egl_shim
+}
+
+leaf_pm_enable_egl_gles_shim() {
+  leaf_pm_enable_godot_wayland_runtime "\$@"
 }
 
 export LEAF_PM_RUNTIME_DIR="\${LEAF_PM_RUNTIME_DIR:-\$LEAF_PM_DATA_DIR/runtime}"
@@ -362,14 +356,14 @@ is_godot_script() {
   grep -Eq 'godot_runtime=|godot_executable=|--rendering-driver[[:space:]]+opengl3_es|godot[0-9]+.*DEVICE_ARCH' "$file" 2>/dev/null
 }
 
-normalize_godot_egl_script() {
+normalize_godot_wayland_script() {
   file="$1"
   if ! is_godot_script "$file"; then
     printf 'not-godot'
     return 0
   fi
-  if grep -q 'LEAF_PM_EGL_GLES_SHIM=1' "$file" 2>/dev/null; then
-    printf 'godot-egl-already'
+  if grep -Eq 'LEAF_PM_(GODOT_WAYLAND|EGL_GLES_SHIM)=1' "$file" 2>/dev/null; then
+    printf 'godot-wayland-already'
     return 0
   fi
 
@@ -377,9 +371,9 @@ normalize_godot_egl_script() {
   awk '
     function insert_block() {
       print ""
-      print "# LEAF_PM_EGL_GLES_SHIM=1"
-      print "if declare -f leaf_pm_enable_egl_gles_shim >/dev/null 2>&1; then"
-      print "  leaf_pm_enable_egl_gles_shim"
+      print "# LEAF_PM_GODOT_WAYLAND=1"
+      print "if declare -f leaf_pm_enable_godot_wayland_runtime >/dev/null 2>&1; then"
+      print "  leaf_pm_enable_godot_wayland_runtime"
       print "fi"
       inserted = 1
     }
@@ -399,7 +393,7 @@ normalize_godot_egl_script() {
   ' "$file" >"$tmp"
   mv "$tmp" "$file"
   chmod 755 "$file" 2>/dev/null || true
-  printf 'godot-egl-patched'
+  printf 'godot-wayland-patched'
 }
 
 normalize_armhf_executable() {
@@ -437,9 +431,9 @@ godot_patched=0
 godot_already=0
 
 while IFS= read -r -d '' file; do
-  case "$(normalize_godot_egl_script "$file")" in
-    godot-egl-patched) godot_patched=$((godot_patched + 1)) ;;
-    godot-egl-already) godot_already=$((godot_already + 1)) ;;
+  case "$(normalize_godot_wayland_script "$file")" in
+    godot-wayland-patched) godot_patched=$((godot_patched + 1)) ;;
+    godot-wayland-already) godot_already=$((godot_already + 1)) ;;
   esac
 
   header="$(elf_header_hex "$file")"
@@ -495,6 +489,8 @@ cat >"$tmp_json" <<EOF
   "armhf_execs_already_normalized": $already,
   "armhf_execs_needing_compat": $needs_wrapper,
   "armhf_shared_objects_seen": $shared,
+  "godot_wayland_scripts_patched": $godot_patched,
+  "godot_wayland_scripts_already_patched": $godot_already,
   "godot_egl_scripts_patched": $godot_patched,
   "godot_egl_scripts_already_patched": $godot_already,
   "errors": $errors

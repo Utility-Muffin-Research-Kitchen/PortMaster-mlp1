@@ -221,9 +221,11 @@ executes them through `bin/leaf-armhf-run`. Armhf shared objects, such as
 libretro cores, are reported but not rewritten.
 
 The same scan patches installed aarch64 Godot 4.3 shell launchers with a
-Leaf-only EGL/GLES shim block. The shim is built into the Pak, copied to
-`$USERDATA_PATH/portmaster/compat/egl/aarch64`, and used only by patched Godot
-scripts so armhf and non-Godot ports do not inherit the aarch64 graphics shim.
+Leaf-only Wayland block. MLP1 already has Leaf's Weston compositor running, so
+patched Godot scripts bypass PortMaster's nested Westonpack launch path and run
+directly against the active Wayland display. When present, the EGL/GLES
+compatibility shim is prepended only for that direct Godot command so armhf and
+non-Godot ports do not inherit the aarch64 graphics shim.
 
 After the post-exit scan, the manager sends Jawaka a non-fatal
 `scan-library` IPC request through `jawaka-platformctl` so newly installed
