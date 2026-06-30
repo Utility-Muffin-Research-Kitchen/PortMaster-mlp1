@@ -11,7 +11,7 @@ Compatibility tiers:
 - Tier 2: dynamic armhf GLES ports using the bundled 32-bit Rockchip Mali stack.
 
 Tier 2 is claimed only for the pinned Rockchip Mali g24p0 stack after an MLP1
-Lineoff smoke test. More GLES ports still need per-port smoke testing.
+Lineoff GLES smoke test. More GLES ports still need per-port smoke testing.
 
 The Spruce binary closure report covers the binaries Spruce ships with its
 PortMaster app and runtime. It includes upstream static armhf helper binaries
@@ -42,6 +42,12 @@ The pack installs under `$USERDATA_PATH/portmaster/compat/armhf` and includes:
 - `bin/leaf-armhf-run`, a non-root loader wrapper
 - `bin/leaf-armhf-smoke`, a tiny dynamic armhf smoke binary
 
+`bin/leaf-armhf-run` also exports the Leaf PulseAudio socket and OpenAL Soft
+defaults used by gmloader-style ports: `PULSE_SERVER=unix:/tmp/pulse-socket`,
+`PULSE_CLIENTCONFIG=$LEAF_PM_ARMHF_ROOT/etc/pulse/client.conf`,
+`ALSOFT_DRIVERS=pulse`, and
+`ALSOFT_CONF=$LEAF_PM_ARMHF_ROOT/etc/openal/alsoft.conf`.
+
 The Mali blob is pinned by commit, path, size, and SHA-256 in the generated
 manifest. The blob is not built from source and remains under Arm's closed Mali
 userspace driver EULA.
@@ -56,9 +62,17 @@ Device smoke on MLP1 on 2026-06-29 and 2026-06-30:
   executable and the wrapper ran successfully through `leaf-armhf-run`.
 - Lineoff/gmloader created a hardware OpenGL ES 3.2 context on MLP1 with ARM
   vendor string and the `g24p0-00eac0` driver string.
+- Lineoff/gmloader opened a live PulseAudio sink input through armhf OpenAL
+  Soft (`float32le 2ch 44100Hz`) without manual audio environment overrides.
+  Lineoff itself is not an audible-audio validation candidate.
+- A dedicated armhf OpenAL smoke binary ran through `bin/leaf-armhf-run` and
+  completed against OpenAL Soft.
+- Apotris launched as a real PortMaster port and produced audible, correct
+  audio on MLP1.
 
 This proves the dynamic loader path, the SDL helper closure, and one real
-dynamic armhf GLES game-port path. It does not prove every PortMaster GLES port.
+dynamic armhf GLES game-port path. It also proves audible audio for at least
+one known-audio PortMaster port. It does not prove every PortMaster GLES port.
 
 ## Port normalization
 
@@ -76,6 +90,23 @@ again after upstream PortMaster exits:
 The hook exports `DEVICE_HAS_ARMHF=Y` plus `LEAF_PM_ARMHF_RUN`,
 `LEAF_PM_ARMHF_LOADER`, and `LEAF_PM_ARMHF_LIB_PATH`. `DEVICE_ARCH` remains
 `aarch64`, so ports that provide native assets still prefer them.
+
+The same hook also applies the global controller-layout preference for installed
+ports. By default it exports the MLP1 X360 SDL mapping. If
+`$USERDATA_PATH/portmaster/nintendo` exists, it exports the Nintendo mapping
+instead. The PortMaster GUI launch sets `PORTMASTER_LEAF_PORT_LAYOUT_SCOPE=gui`,
+which forces X360 for the GUI so upstream button hints still match actions. For
+ports, the hook wraps upstream `get_controls`, then writes
+`SDL_GAMECONTROLLERCONFIG`, `sdl_controllerconfig`, and a temporary
+`SDL_GAMECONTROLLERCONFIG_FILE` under `/tmp` so both direct SDL users and
+PortMaster scripts that re-export `$sdl_controllerconfig` see the selected
+layout.
+
+On MLP1, `/mnt/sdcard` and `/media/sdcard1` may both exist, but they are not
+safe to treat as interchangeable. The scanner prefers the Leaf-marked SD path
+and the generated hook derives `LEAF_PM_ARMHF_ROOT` from the active
+`controlfolder` at launch time. This keeps wrapped ports working after reboot
+when PortMaster was previously scanned through the other SD alias.
 
 The upstream PortMaster GUI filters available ports through HarbourMaster's
 Python device `capabilities`, not only the shell `DEVICE_HAS_ARMHF` flag. Leaf

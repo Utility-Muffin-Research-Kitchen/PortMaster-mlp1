@@ -17,8 +17,8 @@
     {
       "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.zip",
       "manifest": "portmaster-mlp1-armhf-compat-bookworm-mali-g24p0-20260630.json",
-      "size": 61172192,
-      "sha256": "834dc01f17b4a0faa04448c8e85b170dd49130b228824fc6be080b1cbe3d6194",
+      "size": 61172289,
+      "sha256": "3eea9af35114fb94db57eb0954b446dbddfd40ce14d6e521269cdd94bb044c63",
       "package_count": 104,
       "package_architectures": {
         "all": 7,
@@ -43,7 +43,10 @@
         "dynamic_loader_smoke": "leaf-armhf-smoke ok",
         "upstream_dynamic_helper": "xdelta3.armhf -V ok",
         "sdl_helper_dependency_check": "gptokeyb.armhf and sdl_resolution.armhf resolve with ld-linux --list",
-        "tier2_gles": "Lineoff/gmloader launched through Leaf PortMaster launcher and reported OpenGL ES 3.2, vendor ARM, driver g24p0-00eac0"
+        "tier2_gles": "Lineoff/gmloader launched through Leaf PortMaster launcher and reported OpenGL ES 3.2, vendor ARM, driver g24p0-00eac0",
+        "openal_pulse": "Lineoff/gmloader opened a PulseAudio sink input through armhf OpenAL Soft without manual audio environment overrides; Lineoff is not an audible-audio validation candidate",
+        "openal_smoke": "Dedicated armhf OpenAL smoke binary completed against OpenAL Soft through leaf-armhf-run",
+        "known_audio_port": "Apotris launched as a real PortMaster port and produced audible, correct audio on MLP1"
       }
     }
   ]

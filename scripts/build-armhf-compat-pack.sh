@@ -380,6 +380,10 @@ if [ -n "${LD_LIBRARY_PATH:-}" ]; then
 fi
 export LIBGL_DRIVERS_PATH="${LIBGL_DRIVERS_PATH:-$ROOT/usr/lib/arm-linux-gnueabihf/dri}"
 export __EGL_VENDOR_LIBRARY_DIRS="${__EGL_VENDOR_LIBRARY_DIRS:-$ROOT/usr/share/glvnd/egl_vendor.d}"
+export PULSE_SERVER="${PULSE_SERVER:-unix:/tmp/pulse-socket}"
+export PULSE_CLIENTCONFIG="${PULSE_CLIENTCONFIG:-$ROOT/etc/pulse/client.conf}"
+export ALSOFT_DRIVERS="${ALSOFT_DRIVERS:-pulse}"
+export ALSOFT_CONF="${ALSOFT_CONF:-$ROOT/etc/openal/alsoft.conf}"
 
 exec "$LOADER" --library-path "$LIB_PATH" "$@"
 SH

@@ -3,6 +3,7 @@
 #include "catastrophe.h"
 #include "catastrophe_widgets.h"
 
+#include "pm_controller_layout.h"
 #include "pm_doctor.h"
 #include "pm_installer.h"
 #include "pm_launcher.h"
@@ -15,6 +16,7 @@ typedef enum {
     PM_ACTION_INSTALL,
     PM_ACTION_INSTALL_UI_RUNTIME,
     PM_ACTION_LAUNCH,
+    PM_ACTION_CONTROLLER_LAYOUT,
     PM_ACTION_REPATCH,
     PM_ACTION_RUNTIMES,
     PM_ACTION_ARMHF,
@@ -191,6 +193,70 @@ static void show_launch(pm_context *ctx)
     }
 }
 
+static pm_controller_layout current_controller_layout(pm_context *ctx)
+{
+    pm_controller_layout layout = PM_CONTROLLER_LAYOUT_X360;
+    if (pm_controller_layout_load(ctx, &layout) != 0) {
+        return PM_CONTROLLER_LAYOUT_X360;
+    }
+    return layout;
+}
+
+static void show_controller_layout(pm_context *ctx)
+{
+    cat_option layout_options[] = {
+        { .label = "X360", .value = "x360" },
+        { .label = "Nintendo", .value = "nintendo" },
+    };
+    cat_options_item item = {
+        .label = "Controller Layout",
+        .type = CAT_OPT_STANDARD,
+        .options = layout_options,
+        .option_count = 2,
+        .selected_option = current_controller_layout(ctx) == PM_CONTROLLER_LAYOUT_NINTENDO ? 1 : 0,
+    };
+    cat_footer_item footer[] = {
+        { .button = CAT_BTN_LEFT, .label = "Change", .button_text = "< >" },
+        { .button = CAT_BTN_B, .label = "Back" },
+        { .button = CAT_BTN_START, .label = "Save", .is_confirm = true },
+    };
+    cat_options_list_opts opts = {
+        .title = "Controller",
+        .items = &item,
+        .item_count = 1,
+        .footer = footer,
+        .footer_count = 3,
+        .confirm_button = CAT_BTN_START,
+        .label_font = cat_get_font(CAT_FONT_MEDIUM),
+        .value_font = cat_get_font(CAT_FONT_TINY),
+    };
+    cat_options_list_result result = {0};
+    if (cat_options_list(&opts, &result) != CAT_OK || result.action == CAT_ACTION_BACK) {
+        return;
+    }
+    if (result.action != CAT_ACTION_CONFIRMED) {
+        return;
+    }
+
+    pm_controller_layout selected = item.selected_option == 1
+        ? PM_CONTROLLER_LAYOUT_NINTENDO
+        : PM_CONTROLLER_LAYOUT_X360;
+    char err[512];
+    if (pm_controller_layout_save(ctx, selected, err, sizeof(err)) != 0) {
+        char msg[1024];
+        snprintf(msg, sizeof(msg), "Could not save controller layout.\n\n%s",
+                 err[0] ? err : "Unknown error");
+        show_message(msg);
+        return;
+    }
+
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "Controller layout saved: %s.\n\nIt will apply to launched ports. The PortMaster GUI stays X360 so its button hints match.",
+             pm_controller_layout_label(selected));
+    show_message(msg);
+}
+
 static void show_paths(pm_context *ctx)
 {
     char msg[65536];
@@ -222,11 +288,13 @@ static pm_action menu(pm_context *ctx)
     bool has_runtime = pm_join3(runtime_python, sizeof(runtime_python),
                                 ctx->runtime_dir, "bin", "python3") == 0 &&
                        pm_file_exists(runtime_python);
+    pm_controller_layout layout = current_controller_layout(ctx);
     cat_list_item items[] = {
         { .label = "Doctor / Status", .trailing_text = ctx->lock_loaded ? "locked" : "lock missing" },
         { .label = "Install PortMaster", .trailing_text = "Phase 1" },
         { .label = "Install UI Runtime", .trailing_text = has_runtime ? "installed" : "required" },
         { .label = "Launch PortMaster", .trailing_text = pm_dir_exists(ctx->portmaster_dir) ? "ready" : "not installed" },
+        { .label = "Controller Layout", .trailing_text = pm_controller_layout_label(layout) },
         { .label = "Repair / Repatch", .trailing_text = pm_dir_exists(ctx->portmaster_dir) ? "ready" : "not installed" },
         { .label = "Popular Runtimes", .trailing_text = "planned" },
         { .label = "armhf Compatibility", .trailing_text = "planned" },
@@ -238,6 +306,7 @@ static pm_action menu(pm_context *ctx)
         PM_ACTION_INSTALL,
         PM_ACTION_INSTALL_UI_RUNTIME,
         PM_ACTION_LAUNCH,
+        PM_ACTION_CONTROLLER_LAYOUT,
         PM_ACTION_REPATCH,
         PM_ACTION_RUNTIMES,
         PM_ACTION_ARMHF,
@@ -279,6 +348,9 @@ void pm_ui_run(pm_context *ctx)
                 break;
             case PM_ACTION_LAUNCH:
                 show_launch(ctx);
+                break;
+            case PM_ACTION_CONTROLLER_LAYOUT:
+                show_controller_layout(ctx);
                 break;
             case PM_ACTION_REPATCH:
                 show_repatch(ctx);

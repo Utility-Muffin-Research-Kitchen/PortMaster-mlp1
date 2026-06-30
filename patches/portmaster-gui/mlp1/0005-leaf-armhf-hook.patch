@@ -5,7 +5,7 @@
  source $controlfolder/device_info.txt
  source $controlfolder/funcs.txt
  
-+# Leaf armhf compatibility hook
++# Leaf runtime compatibility hook
 +if [ -f "$controlfolder/leaf-armhf-env.sh" ]; then
 +  source "$controlfolder/leaf-armhf-env.sh"
 +fi

@@ -4,6 +4,7 @@
 #include "catastrophe_widgets.h"
 
 #include "pm_context.h"
+#include "pm_controller_layout.h"
 #include "pm_doctor.h"
 #include "pm_downloader.h"
 #include "pm_installer.h"
@@ -37,6 +38,31 @@ int main(int argc, char **argv)
         char summary[1024];
         pm_lock_summary(&ctx.lock, summary, sizeof(summary));
         puts(summary);
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--controller-layout") == 0) {
+        pm_controller_layout layout = PM_CONTROLLER_LAYOUT_X360;
+        if (pm_controller_layout_load(&ctx, &layout) != 0) {
+            fprintf(stderr, "controller layout load failed\n");
+            return 1;
+        }
+        puts(pm_controller_layout_slug(layout));
+        return 0;
+    }
+
+    if (argc > 2 && strcmp(argv[1], "--set-controller-layout") == 0) {
+        pm_controller_layout layout = PM_CONTROLLER_LAYOUT_X360;
+        char err[512];
+        if (pm_controller_layout_from_string(argv[2], &layout) != 0) {
+            fprintf(stderr, "unknown controller layout: %s\n", argv[2]);
+            return 1;
+        }
+        if (pm_controller_layout_save(&ctx, layout, err, sizeof(err)) != 0) {
+            fprintf(stderr, "controller layout save failed: %s\n", err);
+            return 1;
+        }
+        printf("controller layout set: %s\n", pm_controller_layout_slug(layout));
         return 0;
     }
 

@@ -1,19 +1,12 @@
 #include "pm_launcher.h"
 
+#include "pm_controller_layout.h"
 #include "pm_installer.h"
 #include "pm_util.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static const char *PM_MLP1_GAMECONTROLLERCONFIG =
-    "1900fe3c039900001399000002010000,Loong Gamepad,"
-    "a:b1,b:b0,x:b2,y:b3,back:b8,guide:b10,start:b9,"
-    "leftstick:b11,leftshoulder:b4,rightshoulder:b5,"
-    "dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,"
-    "leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,"
-    "crc:3cfe,platform:Linux";
 
 static bool pm_armhf_compat_available(pm_context *ctx, char *root, size_t root_size)
 {
@@ -154,6 +147,9 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         return -1;
     }
     pm_refresh_armhf_port_wrappers(ctx);
+    if (pm_controller_layout_sync_hook(ctx, err, err_size) != 0) {
+        return -1;
+    }
 
     char runtime_python[PM_PATH_MAX];
     bool has_runtime = pm_join3(runtime_python, sizeof(runtime_python), ctx->runtime_dir,
@@ -185,6 +181,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
 
     char armhf_root[PM_PATH_MAX];
     bool has_armhf = pm_armhf_compat_available(ctx, armhf_root, sizeof(armhf_root));
+    const char *controller_config = pm_controller_layout_sdl_config(PM_CONTROLLER_LAYOUT_X360);
 
     pm_env_override env[] = {
         { "HOME", ctx->data_dir },
@@ -216,13 +213,17 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "ASPECT_Y", "3" },
         { "ANALOG_STICKS", "2" },
         { "ANALOGSTICKS", "2" },
-        { "SDL_GAMECONTROLLERCONFIG", PM_MLP1_GAMECONTROLLERCONFIG },
+        { "PORTMASTER_LEAF_PORT_LAYOUT_SCOPE", "gui" },
+        { "PORTMASTER_LEAF_CONTROLLER_LAYOUT", pm_controller_layout_slug(PM_CONTROLLER_LAYOUT_X360) },
+        { "SDL_GAMECONTROLLERCONFIG", controller_config },
+        { "sdl_controllerconfig", controller_config },
         { NULL, NULL },
     };
 
     char *argv[] = { "bash", "./PortMaster.sh", NULL };
     int rc = pm_run_argv_env_in_dir(ctx->portmaster_dir, argv, env, err, err_size);
     pm_refresh_armhf_port_wrappers(ctx);
+    (void)pm_controller_layout_sync_hook(ctx, NULL, 0);
     pm_request_jawaka_library_rescan(ctx);
     return rc;
 }

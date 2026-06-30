@@ -1,5 +1,6 @@
 #include "pm_installer.h"
 
+#include "pm_controller_layout.h"
 #include "pm_downloader.h"
 #include "pm_sha256.h"
 #include "pm_util.h"
@@ -371,7 +372,8 @@ int pm_repatch_portmaster(pm_context *ctx, char *err, size_t err_size)
     size_t patch_count = 0;
     if (load_patch_records(ctx, patches, &patch_count, err, err_size) != 0 ||
         apply_patch_records(ctx->portmaster_dir, patches, patch_count, err, err_size) != 0 ||
-        write_manifest(ctx, patches, patch_count, err, err_size) != 0) {
+        write_manifest(ctx, patches, patch_count, err, err_size) != 0 ||
+        pm_controller_layout_sync_hook(ctx, err, err_size) != 0) {
         return -1;
     }
     return 0;
@@ -586,7 +588,8 @@ int pm_install_portmaster(pm_context *ctx, char *err, size_t err_size)
         return -1;
     }
 
-    if (write_manifest(ctx, patches, patch_count, err, err_size) != 0) {
+    if (write_manifest(ctx, patches, patch_count, err, err_size) != 0 ||
+        pm_controller_layout_sync_hook(ctx, err, err_size) != 0) {
         return -1;
     }
 
