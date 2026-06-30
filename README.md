@@ -76,8 +76,9 @@ The manager also stores the global controller-layout preference there. X360 is
 the default. Creating `$USERDATA_PATH/portmaster/nintendo` selects the Nintendo
 face-button layout; deleting that file returns to X360. The app's Controller
 Layout screen manages the same sentinel and applies the selected SDL mapping to
-installed port launch scripts. The PortMaster GUI itself stays on X360 so its
-button hints continue to match its actions.
+installed port launch scripts. The PortMaster GUI itself uses a fixed GUI-only
+mapping with A/B swapped for the MLP1 face-button labels; the global layout
+setting does not affect the GUI.
 
 The `runtime` directory is for the Python runtime needed by upstream
 PortMaster's Python UI on stock MLP1 firmware. It is installed from the

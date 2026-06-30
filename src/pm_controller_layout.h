@@ -11,6 +11,7 @@ typedef enum {
 const char *pm_controller_layout_slug(pm_controller_layout layout);
 const char *pm_controller_layout_label(pm_controller_layout layout);
 const char *pm_controller_layout_sdl_config(pm_controller_layout layout);
+const char *pm_controller_layout_gui_sdl_config(void);
 int pm_controller_layout_from_string(const char *value, pm_controller_layout *out);
 int pm_controller_layout_load(const pm_context *ctx, pm_controller_layout *out);
 int pm_controller_layout_save(const pm_context *ctx, pm_controller_layout layout,

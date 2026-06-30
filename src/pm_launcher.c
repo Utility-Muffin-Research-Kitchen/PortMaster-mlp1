@@ -182,7 +182,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
 
     char armhf_root[PM_PATH_MAX];
     bool has_armhf = pm_armhf_compat_available(ctx, armhf_root, sizeof(armhf_root));
-    const char *controller_config = pm_controller_layout_sdl_config(PM_CONTROLLER_LAYOUT_X360);
+    const char *controller_config = pm_controller_layout_gui_sdl_config();
 
     pm_env_override env[] = {
         { "HOME", ctx->data_dir },
@@ -215,7 +215,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "ANALOG_STICKS", "2" },
         { "ANALOGSTICKS", "2" },
         { "PORTMASTER_LEAF_PORT_LAYOUT_SCOPE", "gui" },
-        { "PORTMASTER_LEAF_CONTROLLER_LAYOUT", pm_controller_layout_slug(PM_CONTROLLER_LAYOUT_X360) },
+        { "PORTMASTER_LEAF_CONTROLLER_LAYOUT", "gui" },
         { "SDL_GAMECONTROLLERCONFIG", controller_config },
         { "sdl_controllerconfig", controller_config },
         { NULL, NULL },

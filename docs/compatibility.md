@@ -95,8 +95,8 @@ The same hook also applies the global controller-layout preference for installed
 ports. By default it exports the MLP1 X360 SDL mapping. If
 `$USERDATA_PATH/portmaster/nintendo` exists, it exports the Nintendo mapping
 instead. The PortMaster GUI launch sets `PORTMASTER_LEAF_PORT_LAYOUT_SCOPE=gui`,
-which forces X360 for the GUI so upstream button hints still match actions. For
-ports, the hook wraps upstream `get_controls`, then writes
+which forces a GUI-only mapping with A/B swapped and X/Y kept in the X360
+positions. For ports, the hook wraps upstream `get_controls`, then writes
 `SDL_GAMECONTROLLERCONFIG`, `sdl_controllerconfig`, and a temporary
 `SDL_GAMECONTROLLERCONFIG_FILE` under `/tmp` so both direct SDL users and
 PortMaster scripts that re-export `$sdl_controllerconfig` see the selected

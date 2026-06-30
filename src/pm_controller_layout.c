@@ -16,6 +16,14 @@ static const char *PM_MLP1_GAMECONTROLLERCONFIG_X360 =
     "leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,"
     "crc:3cfe,platform:Linux";
 
+static const char *PM_MLP1_GAMECONTROLLERCONFIG_GUI =
+    "1900fe3c039900001399000002010000,Loong Gamepad,"
+    "a:b1,b:b0,x:b3,y:b2,back:b8,guide:b10,start:b9,"
+    "leftstick:b11,leftshoulder:b4,rightshoulder:b5,"
+    "dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,"
+    "leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,"
+    "crc:3cfe,platform:Linux";
+
 static const char *PM_MLP1_GAMECONTROLLERCONFIG_NINTENDO =
     "1900fe3c039900001399000002010000,Loong Gamepad,"
     "a:b1,b:b0,x:b2,y:b3,back:b8,guide:b10,start:b9,"
@@ -59,6 +67,11 @@ const char *pm_controller_layout_sdl_config(pm_controller_layout layout)
     return layout == PM_CONTROLLER_LAYOUT_NINTENDO
         ? PM_MLP1_GAMECONTROLLERCONFIG_NINTENDO
         : PM_MLP1_GAMECONTROLLERCONFIG_X360;
+}
+
+const char *pm_controller_layout_gui_sdl_config(void)
+{
+    return PM_MLP1_GAMECONTROLLERCONFIG_GUI;
 }
 
 int pm_controller_layout_from_string(const char *value, pm_controller_layout *out)
@@ -174,7 +187,7 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "\n"
         "leaf_pm_apply_controller_layout() {\n"
         "  if [ \"${PORTMASTER_LEAF_PORT_LAYOUT_SCOPE:-ports}\" = \"gui\" ]; then\n"
-        "    export PORTMASTER_LEAF_CONTROLLER_LAYOUT=\"x360\"\n"
+        "    export PORTMASTER_LEAF_CONTROLLER_LAYOUT=\"gui\"\n"
         "    export SDL_GAMECONTROLLERCONFIG='%s'\n"
         "  elif [ -f \"$LEAF_PM_DATA_DIR/nintendo\" ]; then\n"
         "    export PORTMASTER_LEAF_CONTROLLER_LAYOUT=\"nintendo\"\n"
@@ -224,7 +237,7 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "unset _leaf_pm_controlfolder _leaf_pm_data_dir\n",
         ctx->portmaster_dir,
         ctx->data_dir,
-        PM_MLP1_GAMECONTROLLERCONFIG_X360,
+        PM_MLP1_GAMECONTROLLERCONFIG_GUI,
         PM_MLP1_GAMECONTROLLERCONFIG_NINTENDO,
         PM_MLP1_GAMECONTROLLERCONFIG_X360) > 0;
 

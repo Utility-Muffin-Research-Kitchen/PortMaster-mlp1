@@ -269,7 +269,7 @@ static void show_controller_layout(pm_context *ctx)
 
     char msg[256];
     snprintf(msg, sizeof(msg),
-             "Controller layout saved: %s.\n\nIt will apply to launched ports. The PortMaster GUI stays X360 so its button hints match.",
+             "Controller layout saved: %s.\n\nIt will apply to launched ports. The PortMaster GUI keeps its own A/B mapping.",
              pm_controller_layout_label(selected));
     show_message(msg);
 }

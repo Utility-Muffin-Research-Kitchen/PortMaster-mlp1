@@ -39,6 +39,7 @@ report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 controller_x360="1900fe3c039900001399000002010000,Loong Gamepad,a:b0,b:b1,x:b3,y:b2,back:b8,guide:b10,start:b9,leftstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,crc:3cfe,platform:Linux"
+controller_gui="1900fe3c039900001399000002010000,Loong Gamepad,a:b1,b:b0,x:b3,y:b2,back:b8,guide:b10,start:b9,leftstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,crc:3cfe,platform:Linux"
 controller_nintendo="1900fe3c039900001399000002010000,Loong Gamepad,a:b1,b:b0,x:b2,y:b3,back:b8,guide:b10,start:b9,leftstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,crc:3cfe,platform:Linux"
 
 log() {
@@ -85,8 +86,8 @@ export LEAF_PM_DATA_DIR="\$_leaf_pm_data_dir"
 
 leaf_pm_apply_controller_layout() {
   if [ "\${PORTMASTER_LEAF_PORT_LAYOUT_SCOPE:-ports}" = "gui" ]; then
-    export PORTMASTER_LEAF_CONTROLLER_LAYOUT="x360"
-    export SDL_GAMECONTROLLERCONFIG='$controller_x360'
+    export PORTMASTER_LEAF_CONTROLLER_LAYOUT="gui"
+    export SDL_GAMECONTROLLERCONFIG='$controller_gui'
   elif [ -f "\$LEAF_PM_DATA_DIR/nintendo" ]; then
     export PORTMASTER_LEAF_CONTROLLER_LAYOUT="nintendo"
     export SDL_GAMECONTROLLERCONFIG='$controller_nintendo'
