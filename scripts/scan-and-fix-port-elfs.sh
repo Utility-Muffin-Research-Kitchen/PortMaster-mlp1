@@ -97,6 +97,67 @@ fi
 export HM_PORTS_DIR="\${HM_PORTS_DIR:-\$_leaf_pm_ports_dir}"
 export HM_SCRIPTS_DIR="\${HM_SCRIPTS_DIR:-\$HM_PORTS_DIR}"
 
+export LEAF_PM_EGL_SHIM_DIR="\${LEAF_PM_EGL_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/egl/aarch64}"
+leaf_pm_enable_egl_gles_shim() {
+  [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
+  _leaf_pm_egl_shim="\${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1"
+  [ -f "\$_leaf_pm_egl_shim" ] || return 0
+  case ":\${LD_LIBRARY_PATH:-}:" in
+    *:"\$LEAF_PM_EGL_SHIM_DIR":*) ;;
+    *) export LD_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
+  esac
+  case ":\${WRAPPED_LIBRARY_PATH:-}:" in
+    *:"\$LEAF_PM_EGL_SHIM_DIR":*) ;;
+    *) export WRAPPED_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${WRAPPED_LIBRARY_PATH:+:\$WRAPPED_LIBRARY_PATH}" ;;
+  esac
+  case ":\${LD_PRELOAD:-}:" in
+    *:"\$_leaf_pm_egl_shim":*) ;;
+    *) export LD_PRELOAD="\$_leaf_pm_egl_shim\${LD_PRELOAD:+:\$LD_PRELOAD}" ;;
+  esac
+  case ":\${WRAPPED_PRELOAD:-}:" in
+    *:"\$_leaf_pm_egl_shim":*) ;;
+    *) export WRAPPED_PRELOAD="\$_leaf_pm_egl_shim\${WRAPPED_PRELOAD:+:\$WRAPPED_PRELOAD}" ;;
+  esac
+  _leaf_pm_env_bin="\$(command -v env 2>/dev/null || printf '%s\n' /usr/bin/env)"
+  env() {
+    if [ "\${1##*/}" = "westonwrap.sh" ] && [ "\${2:-}" != "cleanup" ] && [ "\$#" -ge 6 ]; then
+      shift
+      shift 4
+      while [ "\$#" -gt 0 ]; do
+        case "\$1" in
+          *=*) export "\$1"; shift ;;
+          *) break ;;
+        esac
+      done
+      [ "\$#" -gt 0 ] || return 127
+      _leaf_pm_godot_cmd="\$1"
+      shift
+      _leaf_pm_has_display_driver=0
+      for _leaf_pm_arg in "\$@"; do
+        [ "\$_leaf_pm_arg" = "--display-driver" ] && _leaf_pm_has_display_driver=1
+      done
+      if [ "\$_leaf_pm_has_display_driver" -eq 1 ]; then
+        "\$_leaf_pm_env_bin" \
+          XDG_RUNTIME_DIR="\${LEAF_PM_WAYLAND_RUNTIME_DIR:-/run}" \
+          WAYLAND_DISPLAY="\${LEAF_PM_WAYLAND_DISPLAY:-wayland-0}" \
+          SDL_VIDEODRIVER=wayland \
+          LD_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" \
+          "\$_leaf_pm_godot_cmd" "\$@"
+        return \$?
+      fi
+      "\$_leaf_pm_env_bin" \
+        XDG_RUNTIME_DIR="\${LEAF_PM_WAYLAND_RUNTIME_DIR:-/run}" \
+        WAYLAND_DISPLAY="\${LEAF_PM_WAYLAND_DISPLAY:-wayland-0}" \
+        SDL_VIDEODRIVER=wayland \
+        LD_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" \
+        "\$_leaf_pm_godot_cmd" --display-driver wayland "\$@"
+      return \$?
+    fi
+    "\$_leaf_pm_env_bin" "\$@"
+  }
+  unset _leaf_pm_egl_shim
+}
+
 export LEAF_PM_RUNTIME_DIR="\${LEAF_PM_RUNTIME_DIR:-\$LEAF_PM_DATA_DIR/runtime}"
 if [ -x "\$LEAF_PM_RUNTIME_DIR/bin/python3" ]; then
   _leaf_pm_python_shim_dir="/tmp/leaf-portmaster-python"
@@ -164,12 +225,6 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
   export LEAF_PM_ARMHF_LOADER="\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3"
   export LEAF_PM_ARMHF_RUN="\$LEAF_PM_ARMHF_ROOT/bin/leaf-armhf-run"
   export LEAF_PM_ARMHF_LIB_PATH="\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/mali:\$LEAF_PM_ARMHF_ROOT/lib/arm-linux-gnueabihf:\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf:\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/pulseaudio:\$LEAF_PM_ARMHF_ROOT/lib:\$LEAF_PM_ARMHF_ROOT/usr/lib"
-  export LIBGL_DRIVERS_PATH="\${LIBGL_DRIVERS_PATH:-\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/dri}"
-  export __EGL_VENDOR_LIBRARY_DIRS="\${__EGL_VENDOR_LIBRARY_DIRS:-\$LEAF_PM_ARMHF_ROOT/usr/share/glvnd/egl_vendor.d}"
-  export PULSE_SERVER="\${PULSE_SERVER:-unix:/tmp/pulse-socket}"
-  export PULSE_CLIENTCONFIG="\${PULSE_CLIENTCONFIG:-\$LEAF_PM_ARMHF_ROOT/etc/pulse/client.conf}"
-  export ALSOFT_DRIVERS="\${ALSOFT_DRIVERS:-pulse}"
-  export ALSOFT_CONF="\${ALSOFT_CONF:-\$LEAF_PM_ARMHF_ROOT/etc/openal/alsoft.conf}"
 
   leaf_pm_armhf_run() {
     "\$LEAF_PM_ARMHF_RUN" "\$@"
@@ -298,6 +353,55 @@ EOF
   chmod 755 "$file" "$original" 2>/dev/null || true
 }
 
+is_godot_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) return 1 ;;
+  esac
+  grep -Eq 'godot_runtime=|godot_executable=|--rendering-driver[[:space:]]+opengl3_es|godot[0-9]+.*DEVICE_ARCH' "$file" 2>/dev/null
+}
+
+normalize_godot_egl_script() {
+  file="$1"
+  if ! is_godot_script "$file"; then
+    printf 'not-godot'
+    return 0
+  fi
+  if grep -q 'LEAF_PM_EGL_GLES_SHIM=1' "$file" 2>/dev/null; then
+    printf 'godot-egl-already'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  awk '
+    function insert_block() {
+      print ""
+      print "# LEAF_PM_EGL_GLES_SHIM=1"
+      print "if declare -f leaf_pm_enable_egl_gles_shim >/dev/null 2>&1; then"
+      print "  leaf_pm_enable_egl_gles_shim"
+      print "fi"
+      inserted = 1
+    }
+    {
+      print
+      if (!inserted && $0 ~ /^[[:space:]]*get_controls([[:space:]]|$)/) {
+        insert_block()
+      } else if (!inserted && $0 ~ /source[[:space:]].*control[.]txt/) {
+        insert_block()
+      }
+    }
+    END {
+      if (!inserted) {
+        insert_block()
+      }
+    }
+  ' "$file" >"$tmp"
+  mv "$tmp" "$file"
+  chmod 755 "$file" 2>/dev/null || true
+  printf 'godot-egl-patched'
+}
+
 normalize_armhf_executable() {
   file="$1"
   [ "$compat_available" -eq 1 ] || {
@@ -329,8 +433,15 @@ shared=0
 needs_wrapper=0
 already=0
 errors=0
+godot_patched=0
+godot_already=0
 
 while IFS= read -r -d '' file; do
+  case "$(normalize_godot_egl_script "$file")" in
+    godot-egl-patched) godot_patched=$((godot_patched + 1)) ;;
+    godot-egl-already) godot_already=$((godot_already + 1)) ;;
+  esac
+
   header="$(elf_header_hex "$file")"
   if ! is_armhf_elf "$header"; then
     if head -n 3 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER=1'; then
@@ -384,9 +495,11 @@ cat >"$tmp_json" <<EOF
   "armhf_execs_already_normalized": $already,
   "armhf_execs_needing_compat": $needs_wrapper,
   "armhf_shared_objects_seen": $shared,
+  "godot_egl_scripts_patched": $godot_patched,
+  "godot_egl_scripts_already_patched": $godot_already,
   "errors": $errors
 }
 EOF
 mv "$tmp_json" "$report_json"
 
-log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper report=$report_tsv"
+log "seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper godot_patched=$godot_patched report=$report_tsv"

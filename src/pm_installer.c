@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -21,6 +22,8 @@ typedef struct {
     char path[PM_PATH_MAX];
     char sha256[65];
 } pm_patch_record;
+
+static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err_size);
 
 static int verified_existing_zip(const pm_context *ctx, const char *path)
 {
@@ -310,7 +313,9 @@ static int write_manifest(const pm_context *ctx, const pm_patch_record *patches,
             "    \"overlays\": []\n"
             "  },\n"
             "  \"runtimes\": {},\n"
-            "  \"compat\": {},\n"
+            "  \"compat\": {\n"
+            "    \"egl_gles_shim\": \"compat/egl/aarch64/libEGL.so.1\"\n"
+            "  },\n"
             "  \"ports_scan\": {\n"
             "    \"schema\": 1,\n"
             "    \"report\": \".leaf/armhf-scan.json\",\n"
@@ -372,6 +377,7 @@ int pm_repatch_portmaster(pm_context *ctx, char *err, size_t err_size)
     size_t patch_count = 0;
     if (load_patch_records(ctx, patches, &patch_count, err, err_size) != 0 ||
         apply_patch_records(ctx->portmaster_dir, patches, patch_count, err, err_size) != 0 ||
+        pm_install_compat_assets(ctx, err, err_size) != 0 ||
         write_manifest(ctx, patches, patch_count, err, err_size) != 0 ||
         pm_controller_layout_sync_hook(ctx, err, err_size) != 0) {
         return -1;
@@ -386,6 +392,99 @@ static void chmod_if_present(const char *path)
     }
     char *argv[] = { "chmod", "755", (char *)path, NULL };
     (void)pm_run_argv(argv, NULL, 0);
+}
+
+static int copy_file_atomic(const char *src, const char *dst, char *err, size_t err_size)
+{
+    FILE *in = fopen(src, "rb");
+    if (!in) {
+        snprintf(err, err_size, "cannot open %s: %s", src, strerror(errno));
+        return -1;
+    }
+
+    char tmp[PM_PATH_MAX];
+    if (pm_format(tmp, sizeof(tmp), "%s.tmp.%ld", dst, (long)getpid()) != 0) {
+        fclose(in);
+        snprintf(err, err_size, "compat destination path too long");
+        return -1;
+    }
+
+    FILE *out = fopen(tmp, "wb");
+    if (!out) {
+        fclose(in);
+        snprintf(err, err_size, "cannot write %s: %s", tmp, strerror(errno));
+        return -1;
+    }
+
+    unsigned char buf[64 * 1024];
+    int ok = 1;
+    while (!feof(in)) {
+        size_t n = fread(buf, 1, sizeof(buf), in);
+        if (n > 0 && fwrite(buf, 1, n, out) != n) {
+            ok = 0;
+            break;
+        }
+        if (ferror(in)) {
+            ok = 0;
+            break;
+        }
+    }
+
+    if (fclose(in) != 0) {
+        ok = 0;
+    }
+    if (fclose(out) != 0) {
+        ok = 0;
+    }
+    if (!ok) {
+        unlink(tmp);
+        snprintf(err, err_size, "cannot copy %s to %s", src, dst);
+        return -1;
+    }
+
+    if (rename(tmp, dst) != 0) {
+        unlink(tmp);
+        snprintf(err, err_size, "cannot promote %s: %s", dst, strerror(errno));
+        return -1;
+    }
+    chmod(dst, 0755);
+    return 0;
+}
+
+static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err_size)
+{
+    char src_dir[PM_PATH_MAX];
+    if (pm_join3(src_dir, sizeof(src_dir), ctx->pak_dir, "compat/egl", "aarch64") != 0) {
+        snprintf(err, err_size, "compat source path too long");
+        return -1;
+    }
+    if (!pm_dir_exists(src_dir)) {
+        return 0;
+    }
+
+    char dst_dir[PM_PATH_MAX];
+    if (pm_join3(dst_dir, sizeof(dst_dir), ctx->data_dir, "compat/egl", "aarch64") != 0) {
+        snprintf(err, err_size, "compat destination path too long");
+        return -1;
+    }
+    if (pm_mkdir_p(dst_dir, err, err_size) != 0) {
+        return -1;
+    }
+
+    const char *files[] = { "libEGL.so.1", "libEGL.so" };
+    for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
+        char src[PM_PATH_MAX];
+        char dst[PM_PATH_MAX];
+        if (pm_join(src, sizeof(src), src_dir, files[i]) != 0 ||
+            pm_join(dst, sizeof(dst), dst_dir, files[i]) != 0) {
+            snprintf(err, err_size, "compat file path too long");
+            return -1;
+        }
+        if (pm_file_exists(src) && copy_file_atomic(src, dst, err, err_size) != 0) {
+            return -1;
+        }
+    }
+    return 0;
 }
 
 int pm_install_runtime_archive(pm_context *ctx, const char *archive_path, char *err, size_t err_size)
@@ -588,7 +687,8 @@ int pm_install_portmaster(pm_context *ctx, char *err, size_t err_size)
         return -1;
     }
 
-    if (write_manifest(ctx, patches, patch_count, err, err_size) != 0 ||
+    if (pm_install_compat_assets(ctx, err, err_size) != 0 ||
+        write_manifest(ctx, patches, patch_count, err, err_size) != 0 ||
         pm_controller_layout_sync_hook(ctx, err, err_size) != 0) {
         return -1;
     }

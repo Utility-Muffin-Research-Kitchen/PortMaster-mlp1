@@ -89,7 +89,10 @@ again after upstream PortMaster exits:
 
 The hook exports `DEVICE_HAS_ARMHF=Y` plus `LEAF_PM_ARMHF_RUN`,
 `LEAF_PM_ARMHF_LOADER`, and `LEAF_PM_ARMHF_LIB_PATH`. `DEVICE_ARCH` remains
-`aarch64`, so ports that provide native assets still prefer them.
+`aarch64`, so ports that provide native assets still prefer them. The hook does
+not export armhf GL or audio variables globally; those stay scoped to
+`leaf-armhf-run` so native aarch64 runtimes such as Godot/Weston do not inherit
+32-bit compatibility paths.
 
 The hook also normalizes PortMaster helper state for launched ports. It exports
 `HM_TOOLS_DIR`, `HM_PORTS_DIR`, and `HM_SCRIPTS_DIR` to the SD/userdata paths
@@ -99,6 +102,17 @@ adds `PYTHONHOME`, `PYTHONPATH`, and the runtime `lib` directory only for the
 helper Python process, which lets port scripts run
 `harbourmaster runtime_check` without leaking Python runtime settings into the
 game executable.
+
+For aarch64 Godot 4.3 ports, the scanner also patches installed Godot shell
+launchers with a small `LEAF_PM_EGL_GLES_SHIM=1` block. That block calls a hook
+function which enables the SD-installed EGL/GLES compatibility shim and
+intercepts only `env $weston_dir/westonwrap.sh ...` invocations from those
+Godot scripts. On MLP1 this runs Godot directly against the stock Wayland
+display (`XDG_RUNTIME_DIR=/run`, `WAYLAND_DISPLAY=wayland-0`) instead of
+Westonpack's nested headless compositor, which cannot provide the EGL display
+Godot 4.3 needs. The shim is built from source into the Pak and copied to
+`$USERDATA_PATH/portmaster/compat/egl/aarch64`; it never writes to the stock
+rootfs/eMMC.
 
 The same hook also applies the global controller-layout preference for installed
 ports. By default it exports the MLP1 X360 SDL mapping. If

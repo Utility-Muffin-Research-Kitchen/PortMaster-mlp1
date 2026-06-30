@@ -7,6 +7,7 @@ APP      ?= /workspace/PortMaster-mlp1
 CATA     ?= /workspace/Catastrophe
 CJSON    ?= /workspace/Jawaka/third_party/cjson
 OUT      := $(APP)/build/mlp1/bin/portmaster-mlp1
+EGL_SHIM := $(APP)/build/mlp1/compat/egl/aarch64/libEGL.so.1
 SRC      := $(wildcard $(APP)/src/*.c)
 VERSION  ?= 0.1.1
 
@@ -25,9 +26,18 @@ LDFLAGS := -L$(SYSROOT)/usr/lib -lSDL2 -lSDL2_ttf -lSDL2_image \
            $(CURL_LDFLAGS) -lGLESv2 -lEGL -lm -lpthread
 
 .PHONY: all clean
-all:
+all: $(OUT) $(EGL_SHIM)
+
+$(OUT): $(SRC) $(CJSON)/cJSON.c
 	mkdir -p $(dir $(OUT))
 	$(CC) $(CFLAGS) -o $(OUT) $(SRC) $(CJSON)/cJSON.c $(LDFLAGS)
 
+$(EGL_SHIM): $(APP)/compat/egl/leaf-egl-gles-shim.c
+	mkdir -p $(dir $(EGL_SHIM))
+	$(CC) -std=gnu11 -O2 -Wall -Wextra -Wno-unused-parameter \
+		-I$(SYSROOT)/usr/include -shared -fPIC \
+		-Wl,-soname,libEGL.so.1 -o $(EGL_SHIM) $< -ldl
+	cp -f $(EGL_SHIM) $(dir $(EGL_SHIM))/libEGL.so
+
 clean:
-	rm -f $(OUT)
+	rm -f $(OUT) $(EGL_SHIM) $(dir $(EGL_SHIM))/libEGL.so

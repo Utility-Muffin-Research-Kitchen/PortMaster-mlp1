@@ -220,6 +220,11 @@ Dynamic armhf executables that require `/lib/ld-linux-armhf.so.3` are moved to
 executes them through `bin/leaf-armhf-run`. Armhf shared objects, such as
 libretro cores, are reported but not rewritten.
 
+The same scan patches installed aarch64 Godot 4.3 shell launchers with a
+Leaf-only EGL/GLES shim block. The shim is built into the Pak, copied to
+`$USERDATA_PATH/portmaster/compat/egl/aarch64`, and used only by patched Godot
+scripts so armhf and non-Godot ports do not inherit the aarch64 graphics shim.
+
 After the post-exit scan, the manager sends Jawaka a non-fatal
 `scan-library` IPC request through `jawaka-platformctl` so newly installed
 PortMaster `.sh` launchers appear in the Ports list without restarting the

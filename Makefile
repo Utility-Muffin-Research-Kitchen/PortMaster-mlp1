@@ -86,7 +86,8 @@ package-build:
 	@mkdir -p "$(PACKAGE_DIR)/bin" "$(PACKAGE_DIR)/locks" "$(PACKAGE_DIR)/scripts" \
 		"$(PACKAGE_DIR)/patches/portmaster-gui/mlp1" \
 		"$(PACKAGE_DIR)/overlays/portmaster-gui/mlp1" \
-		"$(PACKAGE_DIR)/compat/armhf" "$(PACKAGE_DIR)/LICENSES"
+		"$(PACKAGE_DIR)/compat/armhf" "$(PACKAGE_DIR)/compat/egl/aarch64" \
+		"$(PACKAGE_DIR)/LICENSES"
 	@cp -f "$(BIN)" "$(PACKAGE_DIR)/bin/$(APP_ID)"
 	@cp -f pak/launch.sh pak/pak.json "$(PACKAGE_DIR)/"
 	@cp -f locks/*.json "$(PACKAGE_DIR)/locks/"
@@ -94,6 +95,7 @@ package-build:
 	@cp -f patches/portmaster-gui/mlp1/*.patch "$(PACKAGE_DIR)/patches/portmaster-gui/mlp1/" 2>/dev/null || true
 	@cp -f overlays/portmaster-gui/mlp1/* "$(PACKAGE_DIR)/overlays/portmaster-gui/mlp1/" 2>/dev/null || true
 	@cp -f compat/armhf/* "$(PACKAGE_DIR)/compat/armhf/" 2>/dev/null || true
+	@if [ -d "$(BUILD)/compat/egl/aarch64" ]; then cp -f "$(BUILD)"/compat/egl/aarch64/* "$(PACKAGE_DIR)/compat/egl/aarch64/"; fi
 	@if [ -f LICENSE ]; then cp -f LICENSE "$(PACKAGE_DIR)/LICENSE"; fi
 	@if [ -d LICENSES ]; then cp -Rf LICENSES/. "$(PACKAGE_DIR)/LICENSES/"; fi
 	@chmod 755 "$(PACKAGE_DIR)/launch.sh" "$(PACKAGE_DIR)/bin/$(APP_ID)" "$(PACKAGE_DIR)"/scripts/*.sh
