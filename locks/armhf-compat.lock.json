@@ -6,7 +6,7 @@
     "script": "scripts/build-armhf-compat-pack.sh",
     "make_target": "build-armhf-compat",
     "base_image": "debian:bookworm-slim",
-    "version": "bookworm-mali-g13p0-box86-20260630"
+    "version": "bookworm-mali-g13p0-box86-sdlfs-20260701"
   },
   "tiers": {
     "tier0": "static armhf helpers",
@@ -15,10 +15,10 @@
   },
   "artifacts": [
     {
-      "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.zip",
-      "manifest": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.json",
-      "size": 61986877,
-      "sha256": "630153d0060f21c34d0d51a520b7f352e6cd10d31edb75d1ada72396ab2caa09",
+      "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.zip",
+      "manifest": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.json",
+      "size": 61990341,
+      "sha256": "7774177443fe98ed519457b2e08e774fa4a6f543283d2dd4a19a280b5410b331",
       "package_count": 104,
       "package_architectures": {
         "all": 7,
@@ -44,9 +44,21 @@
         "repo": "https://github.com/ptitSeb/box86",
         "commit": "0579f8b9c47d87d700724f4cce559b06cbd2b0f5",
         "binary_size": 7302296,
-        "binary_sha256": "7435d83df9a3d9e1598b17ddd4d9695a85cd6ce5313201f20313cad13c9063e1",
+        "binary_sha256": "922803a935c72a961231ff992fb6d2d7a227666ef68d32f2d2966499c152e0c8",
         "license": "MIT",
         "license_sha256": "56215a2e982c1fde0f63afcdeff6c0f44826711f17e9c87a4c1d2cfb1694a789"
+      },
+      "leaf_helpers": {
+        "leaf_armhf_run": {
+          "path": "bin/leaf-armhf-run",
+          "size": 1487,
+          "sha256": "49c5734f5b8b1d54d3014bf20a10e26210e6057eb471f01be8ad3d383b1b3948"
+        },
+        "sdl2_fullscreen_shim": {
+          "path": "bin/leaf-sdl2-fullscreen.so",
+          "size": 7764,
+          "sha256": "da71102810f81a055a390c3ab59307ab07ce93db7fa07c85112e27ff66dcac5f"
+        }
       },
       "device_smoke": {
         "date": "2026-06-30",

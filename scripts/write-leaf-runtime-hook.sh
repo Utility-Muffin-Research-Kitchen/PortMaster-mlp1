@@ -285,13 +285,29 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
   if [ -x "\$LEAF_PM_ARMHF_ROOT/bin/box86" ]; then
     export LEAF_PM_BOX86="\$LEAF_PM_ARMHF_ROOT/bin/box86"
   fi
+  export LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM="\${LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM:-\$LEAF_PM_ARMHF_ROOT/bin/leaf-sdl2-fullscreen.so}"
 
   leaf_pm_armhf_run() {
     "\$LEAF_PM_ARMHF_RUN" "\$@"
   }
+
+  leaf_pm_run_armhf_sdl2_fullscreen() {
+    [ "\$#" -gt 0 ] || return 127
+    _leaf_pm_armhf_sdl2_cmd="\$1"
+    shift
+    if [ ! -f "\$LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM" ]; then
+      "\$_leaf_pm_armhf_sdl2_cmd" "\$@"
+      return \$?
+    fi
+    LEAF_PM_SDL_FORCE_FULLSCREEN=1 \
+    LEAF_PM_SDL_FULLSCREEN_WIDTH="\${LEAF_PM_SDL_FULLSCREEN_WIDTH:-\${DISPLAY_WIDTH:-960}}" \
+    LEAF_PM_SDL_FULLSCREEN_HEIGHT="\${LEAF_PM_SDL_FULLSCREEN_HEIGHT:-\${DISPLAY_HEIGHT:-720}}" \
+    LEAF_PM_ARMHF_PRELOAD="\$LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM\${LEAF_PM_ARMHF_PRELOAD:+:\$LEAF_PM_ARMHF_PRELOAD}" \
+      "\$_leaf_pm_armhf_sdl2_cmd" "\$@"
+  }
 fi
 
-unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir
+unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_armhf_sdl2_cmd
 EOF
 
 chmod 755 "$tmp"

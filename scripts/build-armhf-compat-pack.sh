@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${PM_ARMHF_BUILD_IMAGE:-debian:bookworm-slim}"
-VERSION="${PM_ARMHF_COMPAT_VERSION:-bookworm-mali-g13p0-box86-20260630}"
+VERSION="${PM_ARMHF_COMPAT_VERSION:-bookworm-mali-g13p0-box86-sdlfs-20260701}"
 container=0
 
 MALI_REPO="https://github.com/tsukumijima/libmali-rockchip"
@@ -474,6 +474,10 @@ C
 arm-linux-gnueabihf-gcc -O2 -Wl,--as-needed \
   -o "$ROOTFS/bin/leaf-armhf-smoke" "$WORK_DIR/leaf-armhf-smoke.c"
 
+arm-linux-gnueabihf-gcc -shared -fPIC -O2 -Wall -Wextra -Wl,--as-needed \
+  -o "$ROOTFS/bin/leaf-sdl2-fullscreen.so" "$ROOT/compat/armhf/leaf-sdl2-fullscreen.c" \
+  -ldl
+
 cat >"$ROOTFS/bin/leaf-armhf-run" <<'SH'
 #!/bin/sh
 set -eu
@@ -503,10 +507,18 @@ export PULSE_SERVER="${PULSE_SERVER:-unix:/tmp/pulse-socket}"
 export PULSE_CLIENTCONFIG="${PULSE_CLIENTCONFIG:-$ROOT/etc/pulse/client.conf}"
 export ALSOFT_DRIVERS="${ALSOFT_DRIVERS:-pulse}"
 export ALSOFT_CONF="${ALSOFT_CONF:-$ROOT/etc/openal/alsoft.conf}"
+if [ -n "${LEAF_PM_ARMHF_PRELOAD:-}" ]; then
+    if [ -n "${LD_PRELOAD:-}" ]; then
+        export LD_PRELOAD="$LEAF_PM_ARMHF_PRELOAD:$LD_PRELOAD"
+    else
+        export LD_PRELOAD="$LEAF_PM_ARMHF_PRELOAD"
+    fi
+fi
 
 exec "$LOADER" --library-path "$LIB_PATH" "$@"
 SH
-chmod 755 "$ROOTFS/bin/leaf-armhf-run" "$ROOTFS/bin/leaf-armhf-smoke"
+chmod 755 "$ROOTFS/bin/leaf-armhf-run" "$ROOTFS/bin/leaf-armhf-smoke" \
+          "$ROOTFS/bin/leaf-sdl2-fullscreen.so"
 
 echo "=== Flattening symlinks for FAT32-safe install ==="
 python3 - "$ROOTFS" <<'PY'

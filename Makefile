@@ -96,7 +96,7 @@ package-build:
 	@cp -f scripts/*.sh "$(PACKAGE_DIR)/scripts/"
 	@cp -f patches/portmaster-gui/mlp1/*.patch "$(PACKAGE_DIR)/patches/portmaster-gui/mlp1/" 2>/dev/null || true
 	@cp -f overlays/portmaster-gui/mlp1/* "$(PACKAGE_DIR)/overlays/portmaster-gui/mlp1/" 2>/dev/null || true
-	@cp -f compat/armhf/* "$(PACKAGE_DIR)/compat/armhf/" 2>/dev/null || true
+	@cp -f compat/armhf/*.json "$(PACKAGE_DIR)/compat/armhf/" 2>/dev/null || true
 	@if [ -d "$(BUILD)/compat/egl/aarch64" ]; then cp -f "$(BUILD)"/compat/egl/aarch64/* "$(PACKAGE_DIR)/compat/egl/aarch64/"; fi
 	@if [ -d "$(BUILD)/compat/mali/aarch64" ]; then cp -f "$(BUILD)"/compat/mali/aarch64/* "$(PACKAGE_DIR)/compat/mali/aarch64/"; fi
 	@if [ -d "$(BUILD)/compat/tools/aarch64" ]; then cp -Rf "$(BUILD)"/compat/tools/aarch64/. "$(PACKAGE_DIR)/compat/tools/aarch64/"; fi

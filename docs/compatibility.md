@@ -59,6 +59,9 @@ The pack installs under `$USERDATA_PATH/portmaster/compat/armhf` and includes:
   license, used in preference to wrapped port-bundled `box86`
 - `bin/leaf-armhf-run`, a non-root loader wrapper
 - `bin/leaf-armhf-smoke`, a tiny dynamic armhf smoke binary
+- `bin/leaf-sdl2-fullscreen.so`, an armhf SDL2 preload shim built from Leaf
+  source for low-resolution BennuGD/`bgdi` ports that need Weston fullscreen
+  desktop scaling
 
 `bin/leaf-armhf-run` also exports the Leaf PulseAudio socket and OpenAL Soft
 defaults used by gmloader-style ports: `PULSE_SERVER=unix:/tmp/pulse-socket`,
@@ -177,6 +180,15 @@ Leaf/MLP1. The block does not depend on `CFW_NAME`, because direct Jawaka
 launches and source-built local installs may not inherit the PortMaster GUI
 environment. It also forwards `GOTHIC_BACKEND` through the final `env` launcher
 so `sudo`-based setups do not scrub it.
+
+For BennuGD/`bgdi` ports such as Streets of Rage Remake, the scanner patches
+direct `bgdi` launch lines to call `leaf_pm_run_armhf_sdl2_fullscreen` when the
+armhf fullscreen shim is installed. The hook passes the shim through
+`LEAF_PM_ARMHF_PRELOAD`, and `leaf-armhf-run` converts that to `LD_PRELOAD` only
+for the final armhf loader exec. This avoids leaking a 32-bit preload into
+native aarch64 helpers such as `gptokeyb`, `pidof`, or `kill`. The scanner skips
+the patch and reports `bgdi_sdl2_fullscreen_scripts_missing_shim` when an older
+armhf pack is installed.
 
 The Godot hook also prefers an SD-installed aarch64 Mali userspace bundle when
 `$USERDATA_PATH/portmaster/compat/mali/aarch64/libmali.so.1` is present. This

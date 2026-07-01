@@ -52,6 +52,14 @@ if [ -f "$compat_root/lib/ld-linux-armhf.so.3" ] &&
   compat_available=1
   chmod 755 "$compat_root/lib/ld-linux-armhf.so.3" "$compat_root/bin/leaf-armhf-run" 2>/dev/null || true
 fi
+sdl2_fullscreen_shim="$compat_root/bin/leaf-sdl2-fullscreen.so"
+sdl2_fullscreen_available=0
+if [ "$compat_available" -eq 1 ] &&
+   [ -f "$sdl2_fullscreen_shim" ] &&
+   grep -q 'LEAF_PM_ARMHF_PRELOAD' "$compat_root/bin/leaf-armhf-run" 2>/dev/null; then
+  sdl2_fullscreen_available=1
+  chmod 755 "$sdl2_fullscreen_shim" 2>/dev/null || true
+fi
 
 write_leaf_hook() {
   hook_writer="$script_dir/write-leaf-runtime-hook.sh"
@@ -621,6 +629,87 @@ runtime_compat_gothic_machismo_gles_script() {
   printf 'runtime-compat-gothic-machismo-gles-patched'
 }
 
+script_has_bgdi_launch() {
+  file="$1"
+  awk '
+    function bgdi_launch(line, trimmed) {
+      trimmed = line
+      sub(/^[[:space:]]+/, "", trimmed)
+      if (trimmed ~ /^#/) {
+        return 0
+      }
+      return trimmed ~ /^((\.\/)?bgdi|"\$GAMEDIR\/bgdi"|\$GAMEDIR\/bgdi|"\$\{GAMEDIR\}\/bgdi"|\$\{GAMEDIR\}\/bgdi)([[:space:]]|$)/
+    }
+    bgdi_launch($0) { found = 1; exit }
+    END { exit found ? 0 : 1 }
+  ' "$file"
+}
+
+normalize_bgdi_sdl2_fullscreen_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) printf 'not-bgdi'; return 0 ;;
+  esac
+  if grep -q 'LEAF_PM_BGDI_SDL2_FULLSCREEN=1' "$file" 2>/dev/null; then
+    printf 'bgdi-sdl2-fullscreen-already'
+    return 0
+  fi
+  if ! script_has_bgdi_launch "$file"; then
+    printf 'not-bgdi'
+    return 0
+  fi
+  if [ "$sdl2_fullscreen_available" -ne 1 ]; then
+    printf 'bgdi-sdl2-fullscreen-missing-shim'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  if awk '
+    function bgdi_launch(line, trimmed) {
+      trimmed = line
+      sub(/^[[:space:]]+/, "", trimmed)
+      if (trimmed ~ /^#/) {
+        return 0
+      }
+      return trimmed ~ /^((\.\/)?bgdi|"\$GAMEDIR\/bgdi"|\$GAMEDIR\/bgdi|"\$\{GAMEDIR\}\/bgdi"|\$\{GAMEDIR\}\/bgdi)([[:space:]]|$)/
+    }
+    !changed && bgdi_launch($0) {
+      indent = $0
+      sub(/[^[:space:]].*$/, "", indent)
+      cmd = substr($0, length(indent) + 1)
+      print indent "# LEAF_PM_BGDI_SDL2_FULLSCREEN=1"
+      print indent "if declare -f leaf_pm_run_armhf_sdl2_fullscreen >/dev/null 2>&1; then"
+      print indent "  leaf_pm_run_armhf_sdl2_fullscreen " cmd
+      print indent "else"
+      print indent "  " cmd
+      print indent "fi"
+      changed = 1
+      next
+    }
+    { print }
+    END {
+      if (!changed) {
+        exit 2
+      }
+    }
+  ' "$file" >"$tmp"; then
+    mv "$tmp" "$file"
+    chmod 755 "$file" 2>/dev/null || true
+    printf 'bgdi-sdl2-fullscreen-patched'
+    return 0
+  else
+    rc=$?
+  fi
+
+  rm -f "$tmp"
+  if [ "$rc" -eq 2 ]; then
+    printf 'not-bgdi'
+    return 0
+  fi
+  printf 'bgdi-sdl2-fullscreen-error'
+}
+
 apply_runtime_compat_rules_script() {
   file="$1"
   case "$file" in
@@ -712,6 +801,10 @@ libretro_retroarch_already=0
 libretro_retroarch_missing=0
 runtime_compat_gothic_machismo_gles_patched=0
 runtime_compat_gothic_machismo_gles_already=0
+bgdi_sdl2_fullscreen_patched=0
+bgdi_sdl2_fullscreen_already=0
+bgdi_sdl2_fullscreen_missing_shim=0
+bgdi_sdl2_fullscreen_errors=0
 
 while IFS= read -r -d '' file; do
   shell_scripts_seen=$((shell_scripts_seen + 1))
@@ -759,6 +852,16 @@ while IFS= read -r -d '' file; do
         ;;
     esac
   done < <(apply_runtime_compat_rules_script "$file")
+
+  case "$(normalize_bgdi_sdl2_fullscreen_script "$file")" in
+    bgdi-sdl2-fullscreen-patched) bgdi_sdl2_fullscreen_patched=$((bgdi_sdl2_fullscreen_patched + 1)) ;;
+    bgdi-sdl2-fullscreen-already) bgdi_sdl2_fullscreen_already=$((bgdi_sdl2_fullscreen_already + 1)) ;;
+    bgdi-sdl2-fullscreen-missing-shim) bgdi_sdl2_fullscreen_missing_shim=$((bgdi_sdl2_fullscreen_missing_shim + 1)) ;;
+    bgdi-sdl2-fullscreen-error)
+      bgdi_sdl2_fullscreen_errors=$((bgdi_sdl2_fullscreen_errors + 1))
+      errors=$((errors + 1))
+      ;;
+  esac
 done < <(find_shell_script_candidates)
 
 while IFS= read -r -d '' file; do
@@ -819,6 +922,8 @@ cat >"$tmp_json" <<EOF
   "controlfolder": "$(json_escape "$controlfolder")",
   "compat_root": "$(json_escape "$compat_root")",
   "compat_available": $([ "$compat_available" -eq 1 ] && printf 'true' || printf 'false'),
+  "sdl2_fullscreen_shim": "$(json_escape "$sdl2_fullscreen_shim")",
+  "sdl2_fullscreen_available": $([ "$sdl2_fullscreen_available" -eq 1 ] && printf 'true' || printf 'false'),
   "hook": "$(json_escape "$hook_path")",
   "records_tsv": "$(json_escape "$report_tsv")",
   "armhf_elfs_seen": $seen,
@@ -844,6 +949,10 @@ cat >"$tmp_json" <<EOF
   "godot_weston_cleanup_scripts_missing_cleanup": $weston_cleanup_missing,
   "runtime_compat_gothic_machismo_gles_scripts_patched": $runtime_compat_gothic_machismo_gles_patched,
   "runtime_compat_gothic_machismo_gles_scripts_already_patched": $runtime_compat_gothic_machismo_gles_already,
+  "bgdi_sdl2_fullscreen_scripts_patched": $bgdi_sdl2_fullscreen_patched,
+  "bgdi_sdl2_fullscreen_scripts_already_patched": $bgdi_sdl2_fullscreen_already,
+  "bgdi_sdl2_fullscreen_scripts_missing_shim": $bgdi_sdl2_fullscreen_missing_shim,
+  "bgdi_sdl2_fullscreen_script_errors": $bgdi_sdl2_fullscreen_errors,
   "godot_egl_scripts_patched": $godot_patched,
   "godot_egl_scripts_already_patched": $godot_already,
   "errors": $errors
@@ -851,4 +960,4 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched bgdi_sdl2_fullscreen_patched=$bgdi_sdl2_fullscreen_patched bgdi_sdl2_fullscreen_missing_shim=$bgdi_sdl2_fullscreen_missing_shim report=$report_tsv"
