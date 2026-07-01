@@ -111,9 +111,76 @@ export HM_SCRIPTS_DIR="\${HM_SCRIPTS_DIR:-\$HM_PORTS_DIR}"
 
 export LEAF_PM_EGL_SHIM_DIR="\${LEAF_PM_EGL_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/egl/aarch64}"
 export LEAF_PM_MALI_AARCH64_DIR="\${LEAF_PM_MALI_AARCH64_DIR:-\$LEAF_PM_DATA_DIR/compat/mali/aarch64}"
-leaf_pm_enable_godot_wayland_runtime() {
+leaf_pm_prepare_godot_runtime_env() {
   [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
   export LEAF_PM_SKIP_WESTONPACK_CLEANUP="\${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}"
+  _leaf_pm_wayland_runtime="\${LEAF_PM_WAYLAND_RUNTIME_DIR:-\${XDG_RUNTIME_DIR:-/var/run}}"
+  _leaf_pm_wayland_display="\${LEAF_PM_WAYLAND_DISPLAY:-\${WAYLAND_DISPLAY:-wayland-0}}"
+  _leaf_pm_egl_shim="\${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1"
+  if [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ]; then
+    export LEAF_PM_MALI_LIB="\$LEAF_PM_MALI_AARCH64_DIR/libmali.so.1"
+    case ":\${LD_LIBRARY_PATH:-}:" in
+      *:"\$LEAF_PM_MALI_AARCH64_DIR":*) ;;
+      *) export LD_LIBRARY_PATH="\$LEAF_PM_MALI_AARCH64_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
+    esac
+  fi
+  if [ -f "\$_leaf_pm_egl_shim" ]; then
+    case ":\${LD_LIBRARY_PATH:-}:" in
+      *:"\$LEAF_PM_EGL_SHIM_DIR":*) ;;
+      *) export LD_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
+    esac
+  fi
+  export XDG_RUNTIME_DIR="\$_leaf_pm_wayland_runtime"
+  export WAYLAND_DISPLAY="\$_leaf_pm_wayland_display"
+  export SDL_VIDEODRIVER=wayland
+}
+
+leaf_pm_args_have_display_driver() {
+  while [ "\$#" -gt 0 ]; do
+    case "\$1" in
+      --display-driver|--display-driver=*) return 0 ;;
+    esac
+    shift
+  done
+  return 1
+}
+
+leaf_pm_args_have_window_mode() {
+  while [ "\$#" -gt 0 ]; do
+    case "\$1" in
+      -f|--fullscreen|--fullscreen=*|-w|--windowed|--windowed=*|--resolution|--resolution=*|--position|--position=*) return 0 ;;
+    esac
+    shift
+  done
+  return 1
+}
+
+leaf_pm_run_godot_wayland_runtime() {
+  [ "\$#" -gt 0 ] || return 127
+  _leaf_pm_godot_cmd="\$1"
+  shift
+  leaf_pm_prepare_godot_runtime_env
+  if leaf_pm_args_have_display_driver "\$@"; then
+    "\$_leaf_pm_godot_cmd" "\$@"
+    return \$?
+  fi
+  "\$_leaf_pm_godot_cmd" --display-driver wayland "\$@"
+}
+
+leaf_pm_run_godot_sdl2_runtime() {
+  [ "\$#" -gt 0 ] || return 127
+  _leaf_pm_godot_cmd="\$1"
+  shift
+  leaf_pm_prepare_godot_runtime_env
+  _leaf_pm_direct_resolution="\${LEAF_PM_GODOT_DIRECT_RESOLUTION:-960x720}"
+  if [ -n "\$_leaf_pm_direct_resolution" ] && ! leaf_pm_args_have_window_mode "\$@"; then
+    "\$_leaf_pm_godot_cmd" --resolution "\$_leaf_pm_direct_resolution" "\$@"
+    return \$?
+  fi
+  "\$_leaf_pm_godot_cmd" "\$@"
+}
+
+leaf_pm_enable_godot_wayland_runtime() {
   _leaf_pm_env_bin="\$(command -v env 2>/dev/null || printf '%s\n' /usr/bin/env)"
   env() {
     if [ "\${1##*/}" = "westonwrap.sh" ] && [ "\${2:-}" != "cleanup" ] && [ "\$#" -ge 6 ]; then
@@ -130,39 +197,7 @@ leaf_pm_enable_godot_wayland_runtime() {
       [ "\$#" -gt 0 ] || return 127
       _leaf_pm_godot_cmd="\$1"
       shift
-      _leaf_pm_wayland_runtime="\${LEAF_PM_WAYLAND_RUNTIME_DIR:-\${XDG_RUNTIME_DIR:-/run}}"
-      _leaf_pm_wayland_display="\${LEAF_PM_WAYLAND_DISPLAY:-\${WAYLAND_DISPLAY:-wayland-0}}"
-      _leaf_pm_egl_shim="\${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1"
-      if [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ]; then
-        export LEAF_PM_MALI_LIB="\$LEAF_PM_MALI_AARCH64_DIR/libmali.so.1"
-        case ":\${LD_LIBRARY_PATH:-}:" in
-          *:"\$LEAF_PM_MALI_AARCH64_DIR":*) ;;
-          *) export LD_LIBRARY_PATH="\$LEAF_PM_MALI_AARCH64_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
-        esac
-      fi
-      if [ -f "\$_leaf_pm_egl_shim" ]; then
-        case ":\${LD_LIBRARY_PATH:-}:" in
-          *:"\$LEAF_PM_EGL_SHIM_DIR":*) ;;
-          *) export LD_LIBRARY_PATH="\$LEAF_PM_EGL_SHIM_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
-        esac
-      fi
-      _leaf_pm_has_display_driver=0
-      for _leaf_pm_arg in "\$@"; do
-        [ "\$_leaf_pm_arg" = "--display-driver" ] && _leaf_pm_has_display_driver=1
-      done
-      if [ "\$_leaf_pm_has_display_driver" -eq 1 ]; then
-        "\$_leaf_pm_env_bin" \
-          XDG_RUNTIME_DIR="\$_leaf_pm_wayland_runtime" \
-          WAYLAND_DISPLAY="\$_leaf_pm_wayland_display" \
-          SDL_VIDEODRIVER=wayland \
-          "\$_leaf_pm_godot_cmd" "\$@"
-        return \$?
-      fi
-      "\$_leaf_pm_env_bin" \
-        XDG_RUNTIME_DIR="\$_leaf_pm_wayland_runtime" \
-        WAYLAND_DISPLAY="\$_leaf_pm_wayland_display" \
-        SDL_VIDEODRIVER=wayland \
-        "\$_leaf_pm_godot_cmd" --display-driver wayland "\$@"
+      leaf_pm_run_godot_wayland_runtime "\$_leaf_pm_godot_cmd" "\$@"
       return \$?
     fi
     "\$_leaf_pm_env_bin" "\$@"
@@ -576,42 +611,118 @@ normalize_godot_weston_cleanup_script() {
   printf 'weston-cleanup-patched'
 }
 
+normalize_godot_direct_sdl2_script() {
+  file="$1"
+  if ! is_godot_script "$file"; then
+    printf 'not-godot'
+    return 0
+  fi
+  if grep -q 'LEAF_PM_GODOT_DIRECT_SDL2=1' "$file" 2>/dev/null; then
+    printf 'godot-direct-sdl2-already'
+    return 0
+  fi
+  if ! grep -Eq '"\$GAMEDIR/runtime/\$runtime".*--main-pack' "$file" 2>/dev/null; then
+    printf 'godot-direct-sdl2-missing'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  awk '
+    index($0, "\"$GAMEDIR/runtime/$runtime\"") > 0 &&
+    index($0, "--main-pack") > 0 &&
+    index($0, "leaf_pm_run_godot_sdl2_runtime") == 0 {
+      indent = $0
+      sub(/[^[:space:]].*$/, "", indent)
+      cmd = substr($0, length(indent) + 1)
+      patched = cmd
+      sub(/"\$GAMEDIR\/runtime\/\$runtime"/,
+          "leaf_pm_run_godot_sdl2_runtime \"$GAMEDIR/runtime/$runtime\"",
+          patched)
+      print indent "# LEAF_PM_GODOT_DIRECT_SDL2=1"
+      print indent "if declare -f leaf_pm_run_godot_sdl2_runtime >/dev/null 2>&1; then"
+      print indent "  " patched
+      print indent "else"
+      print indent "  " cmd
+      print indent "fi"
+      changed = 1
+      next
+    }
+    { print }
+    END {
+      if (!changed) {
+        exit 2
+      }
+    }
+  ' "$file" >"$tmp"
+  rc=$?
+  if [ "$rc" -eq 2 ]; then
+    rm -f "$tmp"
+    printf 'godot-direct-sdl2-missing'
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$tmp"
+    printf 'godot-direct-sdl2-error'
+    return 0
+  fi
+  mv "$tmp" "$file"
+  chmod 755 "$file" 2>/dev/null || true
+  printf 'godot-direct-sdl2-patched'
+}
+
 runtime_compat_gothic_machismo_gles_script() {
   file="$1"
   if ! is_gothic_machismo_script "$file"; then
     printf 'not-gothic-machismo'
     return 0
   fi
-  if grep -Eq 'LEAF_PM_(RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES|MINA_GLES)=1' "$file" 2>/dev/null; then
+  if grep -q 'LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES_VERSION=3' "$file" 2>/dev/null &&
+     { grep -Eq '^[[:space:]]*GOTHIC_BACKEND="\$GOTHIC_BACKEND"[[:space:]]*\\[[:space:]]*$' "$file" 2>/dev/null ||
+       ! grep -Eq '^[[:space:]]*.*(^|[[:space:]])env[[:space:]]*\\[[:space:]]*$' "$file" 2>/dev/null; }; then
     printf 'runtime-compat-gothic-machismo-gles-already'
     return 0
   fi
 
   tmp="$file.tmp.$$"
   awk '
+    NR == FNR {
+      if ($0 ~ /LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES_VERSION=3/) {
+        has_block = 1
+      }
+      if ($0 ~ /^[[:space:]]*GOTHIC_BACKEND="\$GOTHIC_BACKEND"[[:space:]]*\\[[:space:]]*$/) {
+        has_env_forward = 1
+      }
+      next
+    }
     function insert_block() {
       print ""
       print "# LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES=1"
+      print "# LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES_VERSION=3"
       print "# MLP1 stock Vulkan lacks Wayland WSI for Gothic/Machismo ports; avoid the raw 720x960 direct-display fallback."
-      print "if [ \"${CFW_NAME:-}\" = \"Leaf\" ]; then"
-      print "  export GOTHIC_BACKEND=\"${GOTHIC_BACKEND:-gles}\""
-      print "fi"
+      print "# PortMaster-mlp1 only patches installed MLP1 port scripts; pre-set GOTHIC_BACKEND to override."
+      print "export GOTHIC_BACKEND=\"${GOTHIC_BACKEND:-gles}\""
       inserted = 1
     }
     {
       print
-      if (!inserted && $0 ~ /^[[:space:]]*get_controls([[:space:]]|$)/) {
+      if (!has_block && !inserted && $0 ~ /^[[:space:]]*get_controls([[:space:]]|$)/) {
         insert_block()
-      } else if (!inserted && $0 ~ /source[[:space:]].*control[.]txt/) {
+      } else if (!has_block && !inserted && $0 ~ /source[[:space:]].*control[.]txt/) {
         insert_block()
+      }
+      if (!has_env_forward && !forwarded && $0 ~ /^[[:space:]]*.*(^|[[:space:]])env[[:space:]]*\\[[:space:]]*$/) {
+        indent = $0
+        sub(/[^[:space:]].*$/, "", indent)
+        print indent "GOTHIC_BACKEND=\"$GOTHIC_BACKEND\" \\"
+        forwarded = 1
       }
     }
     END {
-      if (!inserted) {
+      if (!has_block && !inserted) {
         insert_block()
       }
     }
-  ' "$file" >"$tmp"
+  ' "$file" "$file" >"$tmp"
   mv "$tmp" "$file"
   chmod 755 "$file" 2>/dev/null || true
   printf 'runtime-compat-gothic-machismo-gles-patched'
@@ -693,6 +804,9 @@ already=0
 errors=0
 godot_patched=0
 godot_already=0
+godot_direct_sdl2_patched=0
+godot_direct_sdl2_already=0
+godot_direct_sdl2_missing=0
 weston_cleanup_patched=0
 weston_cleanup_already=0
 weston_cleanup_missing=0
@@ -725,6 +839,12 @@ while IFS= read -r -d '' file; do
     weston-cleanup-patched) weston_cleanup_patched=$((weston_cleanup_patched + 1)) ;;
     weston-cleanup-already) weston_cleanup_already=$((weston_cleanup_already + 1)) ;;
     weston-cleanup-missing) weston_cleanup_missing=$((weston_cleanup_missing + 1)) ;;
+  esac
+
+  case "$(normalize_godot_direct_sdl2_script "$file")" in
+    godot-direct-sdl2-patched) godot_direct_sdl2_patched=$((godot_direct_sdl2_patched + 1)) ;;
+    godot-direct-sdl2-already) godot_direct_sdl2_already=$((godot_direct_sdl2_already + 1)) ;;
+    godot-direct-sdl2-missing) godot_direct_sdl2_missing=$((godot_direct_sdl2_missing + 1)) ;;
   esac
 
   while IFS= read -r runtime_compat_action; do
@@ -811,6 +931,9 @@ cat >"$tmp_json" <<EOF
   "port_path_scripts_already_patched": $port_paths_already,
   "godot_wayland_scripts_patched": $godot_patched,
   "godot_wayland_scripts_already_patched": $godot_already,
+  "godot_direct_sdl2_scripts_patched": $godot_direct_sdl2_patched,
+  "godot_direct_sdl2_scripts_already_patched": $godot_direct_sdl2_already,
+  "godot_direct_sdl2_scripts_missing": $godot_direct_sdl2_missing,
   "godot_weston_cleanup_scripts_patched": $weston_cleanup_patched,
   "godot_weston_cleanup_scripts_already_patched": $weston_cleanup_already,
   "godot_weston_cleanup_scripts_missing_cleanup": $weston_cleanup_missing,
@@ -823,4 +946,4 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched godot_patched=$godot_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched report=$report_tsv"

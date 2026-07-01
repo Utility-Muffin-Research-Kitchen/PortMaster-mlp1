@@ -136,6 +136,23 @@ from removing runtime files that belong to Leaf's real compositor. Older
 `LEAF_PM_EGL_GLES_SHIM=1` script patches are still recognized through a hook
 alias.
 
+Some ports, such as Songo #5, launch a custom Godot/SDL2 runtime directly
+instead of using Westonpack. The scanner wraps those direct
+`"$GAMEDIR/runtime/$runtime" --main-pack ...` commands with
+`leaf_pm_run_godot_sdl2_runtime`, while keeping the original command as a
+fallback. That helper applies the same SD-managed Mali/EGL/Wayland environment
+and, when the port did not provide its own window sizing flags, adds
+`--resolution 960x720`. It intentionally does not add Godot fullscreen (`-f`),
+because that path fills the MLP1's native portrait `720x960` KMS framebuffer and
+can mangle landscape content.
+
+For Gothic/Machismo launchers such as Mina the Hollower, the scanner patches a
+small runtime compatibility block that defaults `GOTHIC_BACKEND=gles` on
+Leaf/MLP1. The block does not depend on `CFW_NAME`, because direct Jawaka
+launches and source-built local installs may not inherit the PortMaster GUI
+environment. It also forwards `GOTHIC_BACKEND` through the final `env` launcher
+so `sudo`-based setups do not scrub it.
+
 The Godot hook also prefers an SD-installed aarch64 Mali userspace bundle when
 `$USERDATA_PATH/portmaster/compat/mali/aarch64/libmali.so.1` is present. This
 bundle is built from the pinned `tsukumijima/libmali-rockchip`

@@ -246,12 +246,24 @@ guards Westonpack cleanup calls for those Godot launchers, because cleaning up a
 nested compositor that was never started can disturb Leaf's real Wayland
 runtime.
 
+The scanner also handles direct Godot/SDL2 launchers such as Songo #5. Those
+ports do not call Westonpack, so the scanner wraps their direct
+`"$GAMEDIR/runtime/$runtime" --main-pack ...` command with the same SD-managed
+Mali/EGL/Wayland environment. If the port did not already specify a window mode
+or resolution, the helper adds `--resolution 960x720`; it deliberately avoids
+`-f`, which uses the MLP1's native portrait KMS framebuffer and mangles
+landscape content.
+
 The scanner also owns narrow runtime compatibility rules for installed launch
 scripts. The current non-Godot rule targets Gothic/Machismo launchers on Leaf
 and defaults `GOTHIC_BACKEND=gles`. Leaf stock Vulkan currently exposes only
 the direct-display path for that runtime, which sees the MLP1 panel as
 `720x960` and can rotate games such as Mina the Hollower. The GLES path uses
-the active Wayland surface and keeps the game at `960x720`.
+the active Wayland surface and keeps the game at `960x720`. The generated block
+does not depend on `CFW_NAME`, because direct Jawaka port launches and
+source-built local installs may not inherit the PortMaster GUI environment. It
+also forwards `GOTHIC_BACKEND` through the final `env` launcher so `sudo`-based
+setups do not scrub it.
 
 MLP1 stock ships a 64-bit `g13p0` Mali userspace blob that can fault under some
 Godot 4 content. `make package-mlp1` therefore builds a small aarch64 Mali
