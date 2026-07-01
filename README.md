@@ -279,6 +279,12 @@ upstream PortMaster scripts resolve `XDG_DATA_HOME`, `PORTMASTER_CONTROLFOLDER`,
 and common quoted or unquoted `GAMEDIR=/$directory/ports/...` paths to the
 active SD-managed PortMaster tree instead of `/roms/ports` on the stock rootfs.
 
+Libretro-style PortMaster launchers, such as 2048, are normalized in the same
+pass. Upstream scripts usually hardcode firmware-specific RetroArch locations
+like `/usr/bin/retroarch`; the scanner rewrites those `retroarch -L ...` launch
+lines to `leaf_pm_run_retroarch -L ...`, which uses Leaf's SD-managed
+`$LEAF_PM_RETROARCH_BIN` and config path.
+
 The same scan patches installed aarch64 Godot 4.3 shell launchers with a
 Leaf-only Wayland block. MLP1 already has Leaf's Weston compositor running, so
 patched Godot scripts bypass PortMaster's nested Westonpack launch path and run

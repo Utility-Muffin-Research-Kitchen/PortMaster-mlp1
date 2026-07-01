@@ -185,7 +185,14 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "  _leaf_pm_data_dir=\"%s\"\n"
         "fi\n"
         "export LEAF_PM_DATA_DIR=\"$_leaf_pm_data_dir\"\n"
+        "export PLATFORM=\"${PLATFORM:-mlp1}\"\n"
+        "if [ -z \"${SDCARD_PATH:-}\" ]; then\n"
+        "  case \"$LEAF_PM_DATA_DIR\" in\n"
+        "    */.userdata/*/portmaster) export SDCARD_PATH=\"${LEAF_PM_DATA_DIR%%%%/.userdata/*}\" ;;\n"
+        "  esac\n"
+        "fi\n"
         "export PORTMASTER_CONTROLFOLDER=\"${PORTMASTER_CONTROLFOLDER:-$_leaf_pm_controlfolder}\"\n"
+        "export PORTMASTER_LEAF_DEVICE_INFO=\"${PORTMASTER_LEAF_DEVICE_INFO:-1}\"\n"
         "export HOME=\"$LEAF_PM_DATA_DIR\"\n"
         "export XDG_DATA_HOME=\"$LEAF_PM_DATA_DIR\"\n"
         "export HM_TOOLS_DIR=\"${HM_TOOLS_DIR:-$LEAF_PM_DATA_DIR}\"\n"
@@ -204,7 +211,45 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "  export directory=\"${_leaf_pm_roms_dir#/}\"\n"
         "fi\n"
         "export HM_PORTS_DIR=\"${HM_PORTS_DIR:-$_leaf_pm_ports_dir}\"\n"
-        "export HM_SCRIPTS_DIR=\"${HM_SCRIPTS_DIR:-$HM_PORTS_DIR}\"\n"
+        "export HM_SCRIPTS_DIR=\"${HM_SCRIPTS_DIR:-$HM_PORTS_DIR}\"\n",
+        ctx->portmaster_dir,
+        ctx->data_dir) > 0;
+
+    ok = ok && fputs(
+        "\n"
+        "_leaf_pm_system_dir=\"${UMRK_PLATFORM_PATH:-}\"\n"
+        "if [ -z \"$_leaf_pm_system_dir\" ] && [ -n \"${SDCARD_PATH:-}\" ]; then\n"
+        "  _leaf_pm_system_dir=\"${SDCARD_PATH%/}/.system/leaf/platforms/${PLATFORM:-mlp1}\"\n"
+        "fi\n"
+        "_leaf_pm_internal_dir=\"\"\n"
+        "if [ -n \"${SDCARD_PATH:-}\" ]; then\n"
+        "  _leaf_pm_internal_dir=\"${SDCARD_PATH%/}/.umrk/${PLATFORM:-mlp1}\"\n"
+        "fi\n"
+        "export LEAF_PM_RETROARCH_BIN=\"${LEAF_PM_RETROARCH_BIN:-${UMRK_RETROARCH_BIN:-${JAWAKA_RETROARCH_BIN:-}}}\"\n"
+        "if [ -z \"$LEAF_PM_RETROARCH_BIN\" ] && [ -x \"$_leaf_pm_system_dir/bin/retroarch\" ]; then\n"
+        "  export LEAF_PM_RETROARCH_BIN=\"$_leaf_pm_system_dir/bin/retroarch\"\n"
+        "fi\n"
+        "export LEAF_PM_RETROARCH_CONFIG=\"${LEAF_PM_RETROARCH_CONFIG:-${UMRK_RETROARCH_CONFIG:-${JAWAKA_RETROARCH_CONFIG:-}}}\"\n"
+        "if [ -z \"$LEAF_PM_RETROARCH_CONFIG\" ] && [ -f \"$_leaf_pm_internal_dir/retroarch/retroarch.cfg\" ]; then\n"
+        "  export LEAF_PM_RETROARCH_CONFIG=\"$_leaf_pm_internal_dir/retroarch/retroarch.cfg\"\n"
+        "elif [ -z \"$LEAF_PM_RETROARCH_CONFIG\" ] && [ -f \"$_leaf_pm_system_dir/defaults/retroarch.cfg\" ]; then\n"
+        "  export LEAF_PM_RETROARCH_CONFIG=\"$_leaf_pm_system_dir/defaults/retroarch.cfg\"\n"
+        "fi\n"
+        "leaf_pm_run_retroarch() {\n"
+        "  _leaf_pm_ra_bin=\"${LEAF_PM_RETROARCH_BIN:-}\"\n"
+        "  if [ -z \"$_leaf_pm_ra_bin\" ]; then\n"
+        "    _leaf_pm_ra_bin=\"$(command -v retroarch 2>/dev/null || true)\"\n"
+        "  fi\n"
+        "  if [ -z \"$_leaf_pm_ra_bin\" ] || [ ! -x \"$_leaf_pm_ra_bin\" ]; then\n"
+        "    echo \"Leaf PortMaster: RetroArch binary missing\" >&2\n"
+        "    return 127\n"
+        "  fi\n"
+        "  if [ -n \"${LEAF_PM_RETROARCH_CONFIG:-}\" ] && [ -f \"$LEAF_PM_RETROARCH_CONFIG\" ]; then\n"
+        "    \"$_leaf_pm_ra_bin\" --config \"$LEAF_PM_RETROARCH_CONFIG\" \"$@\"\n"
+        "  else\n"
+        "    \"$_leaf_pm_ra_bin\" \"$@\"\n"
+        "  fi\n"
+        "}\n"
         "export LEAF_PM_TOOLS_DIR=\"${LEAF_PM_TOOLS_DIR:-$LEAF_PM_DATA_DIR/compat/tools/aarch64/bin}\"\n"
         "if [ -d \"$LEAF_PM_TOOLS_DIR\" ]; then\n"
         "  case \":${PATH:-}:\" in\n"
@@ -212,7 +257,10 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "    *) export PATH=\"$LEAF_PM_TOOLS_DIR:${PATH:-/usr/bin:/usr/sbin:/bin:/sbin}\" ;;\n"
         "  esac\n"
         "fi\n"
-        "\n"
+        "\n",
+        fp) >= 0;
+
+    ok = ok && fputs(
         "export LEAF_PM_RUNTIME_DIR=\"${LEAF_PM_RUNTIME_DIR:-$LEAF_PM_DATA_DIR/runtime}\"\n"
         "if [ -x \"$LEAF_PM_RUNTIME_DIR/bin/python3\" ]; then\n"
         "  _leaf_pm_python_shim_dir=\"/tmp/leaf-portmaster-python\"\n"
@@ -243,8 +291,7 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "  fi\n"
         "fi\n"
         "\n",
-        ctx->portmaster_dir,
-        ctx->data_dir) > 0;
+        fp) >= 0;
 
     ok = ok && fputs(
         "export LEAF_PM_EGL_SHIM_DIR=\"${LEAF_PM_EGL_SHIM_DIR:-$LEAF_PM_DATA_DIR/compat/egl/aarch64}\"\n"
@@ -404,7 +451,7 @@ int pm_controller_layout_sync_hook(const pm_context *ctx, char *err, size_t err_
         "  }\n"
         "fi\n"
         "\n"
-        "unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_python_shim_dir\n",
+        "unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir\n",
         fp) >= 0;
 
     if (fclose(fp) != 0 || !ok) {

@@ -138,6 +138,12 @@ quoted or unquoted `GAMEDIR=/$directory/ports/<game>` assignments to prefer
 This keeps the runtime on SD and avoids writing compatibility state to
 eMMC/rootfs.
 
+The generated hook also exposes `LEAF_PM_RETROARCH_BIN` and
+`LEAF_PM_RETROARCH_CONFIG` for libretro-style ports. Installed launchers with
+upstream `retroarch -L ...` commands are rewritten to call
+`leaf_pm_run_retroarch -L ...`, so ports such as 2048 use Leaf's SD-card
+RetroArch binary instead of firmware-specific paths like `/usr/bin/retroarch`.
+
 For aarch64 Godot 4.3 ports, the scanner also patches installed Godot shell
 launchers with a small `LEAF_PM_GODOT_WAYLAND=1` block. That block calls a hook
 function which intercepts only `env $weston_dir/westonwrap.sh ...` invocations

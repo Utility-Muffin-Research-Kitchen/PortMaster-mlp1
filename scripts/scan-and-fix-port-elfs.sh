@@ -88,7 +88,14 @@ else
   _leaf_pm_data_dir="$data_dir"
 fi
 export LEAF_PM_DATA_DIR="\$_leaf_pm_data_dir"
+export PLATFORM="\${PLATFORM:-$platform}"
+if [ -z "\${SDCARD_PATH:-}" ]; then
+  case "\$LEAF_PM_DATA_DIR" in
+    */.userdata/*/portmaster) export SDCARD_PATH="\${LEAF_PM_DATA_DIR%%/.userdata/*}" ;;
+  esac
+fi
 export PORTMASTER_CONTROLFOLDER="\${PORTMASTER_CONTROLFOLDER:-\$_leaf_pm_controlfolder}"
+export PORTMASTER_LEAF_DEVICE_INFO="\${PORTMASTER_LEAF_DEVICE_INFO:-1}"
 export HOME="\$LEAF_PM_DATA_DIR"
 export XDG_DATA_HOME="\$LEAF_PM_DATA_DIR"
 export HM_TOOLS_DIR="\${HM_TOOLS_DIR:-\$LEAF_PM_DATA_DIR}"
@@ -108,6 +115,41 @@ if [ -n "\$_leaf_pm_roms_dir" ] &&
 fi
 export HM_PORTS_DIR="\${HM_PORTS_DIR:-\$_leaf_pm_ports_dir}"
 export HM_SCRIPTS_DIR="\${HM_SCRIPTS_DIR:-\$HM_PORTS_DIR}"
+
+_leaf_pm_system_dir="\${UMRK_PLATFORM_PATH:-}"
+if [ -z "\$_leaf_pm_system_dir" ] && [ -n "\${SDCARD_PATH:-}" ]; then
+  _leaf_pm_system_dir="\${SDCARD_PATH%/}/.system/leaf/platforms/\${PLATFORM:-mlp1}"
+fi
+_leaf_pm_internal_dir=""
+if [ -n "\${SDCARD_PATH:-}" ]; then
+  _leaf_pm_internal_dir="\${SDCARD_PATH%/}/.umrk/\${PLATFORM:-mlp1}"
+fi
+export LEAF_PM_RETROARCH_BIN="\${LEAF_PM_RETROARCH_BIN:-\${UMRK_RETROARCH_BIN:-\${JAWAKA_RETROARCH_BIN:-}}}"
+if [ -z "\$LEAF_PM_RETROARCH_BIN" ] && [ -x "\$_leaf_pm_system_dir/bin/retroarch" ]; then
+  export LEAF_PM_RETROARCH_BIN="\$_leaf_pm_system_dir/bin/retroarch"
+fi
+export LEAF_PM_RETROARCH_CONFIG="\${LEAF_PM_RETROARCH_CONFIG:-\${UMRK_RETROARCH_CONFIG:-\${JAWAKA_RETROARCH_CONFIG:-}}}"
+if [ -z "\$LEAF_PM_RETROARCH_CONFIG" ] && [ -f "\$_leaf_pm_internal_dir/retroarch/retroarch.cfg" ]; then
+  export LEAF_PM_RETROARCH_CONFIG="\$_leaf_pm_internal_dir/retroarch/retroarch.cfg"
+elif [ -z "\$LEAF_PM_RETROARCH_CONFIG" ] && [ -f "\$_leaf_pm_system_dir/defaults/retroarch.cfg" ]; then
+  export LEAF_PM_RETROARCH_CONFIG="\$_leaf_pm_system_dir/defaults/retroarch.cfg"
+fi
+leaf_pm_run_retroarch() {
+  _leaf_pm_ra_bin="\${LEAF_PM_RETROARCH_BIN:-}"
+  if [ -z "\$_leaf_pm_ra_bin" ]; then
+    _leaf_pm_ra_bin="\$(command -v retroarch 2>/dev/null || true)"
+  fi
+  if [ -z "\$_leaf_pm_ra_bin" ] || [ ! -x "\$_leaf_pm_ra_bin" ]; then
+    echo "Leaf PortMaster: RetroArch binary missing" >&2
+    return 127
+  fi
+  if [ -n "\${LEAF_PM_RETROARCH_CONFIG:-}" ] && [ -f "\$LEAF_PM_RETROARCH_CONFIG" ]; then
+    "\$_leaf_pm_ra_bin" --config "\$LEAF_PM_RETROARCH_CONFIG" "\$@"
+  else
+    "\$_leaf_pm_ra_bin" "\$@"
+  fi
+}
+
 export LEAF_PM_TOOLS_DIR="\${LEAF_PM_TOOLS_DIR:-\$LEAF_PM_DATA_DIR/compat/tools/aarch64/bin}"
 if [ -d "\$LEAF_PM_TOOLS_DIR" ]; then
   case ":\${PATH:-}:" in
@@ -295,7 +337,7 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
   }
 fi
 
-unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_ports_dir _leaf_pm_python_shim_dir
+unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir
 EOF
   mv "$tmp" "$hook_path"
   chmod 755 "$hook_path" 2>/dev/null || true
@@ -458,7 +500,30 @@ normalize_port_env_script() {
     *) printf 'not-shell'; return 0 ;;
   esac
   if grep -q 'LEAF_PM_PORT_ENV=1' "$file" 2>/dev/null; then
-    printf 'port-env-already'
+    if grep -q 'PORTMASTER_LEAF_DEVICE_INFO' "$file" 2>/dev/null; then
+      printf 'port-env-already'
+      return 0
+    fi
+    tmp="$file.tmp.$$"
+    awk '
+      {
+        print
+        if (!inserted && $0 ~ /^# LEAF_PM_PORT_ENV=1$/) {
+          print "export PLATFORM=\"${PLATFORM:-mlp1}\""
+          print "export PORTMASTER_LEAF_DEVICE_INFO=\"${PORTMASTER_LEAF_DEVICE_INFO:-1}\""
+          inserted = 1
+        }
+      }
+      END {
+        if (!inserted) {
+          print "export PLATFORM=\"${PLATFORM:-mlp1}\""
+          print "export PORTMASTER_LEAF_DEVICE_INFO=\"${PORTMASTER_LEAF_DEVICE_INFO:-1}\""
+        }
+      }
+    ' "$file" >"$tmp"
+    mv "$tmp" "$file"
+    chmod 755 "$file" 2>/dev/null || true
+    printf 'port-env-patched'
     return 0
   fi
 
@@ -468,6 +533,8 @@ normalize_port_env_script() {
       print ""
       print "# LEAF_PM_PORT_ENV=1"
       print "_leaf_pm_platform=\"${PLATFORM:-mlp1}\""
+      print "export PLATFORM=\"${PLATFORM:-$_leaf_pm_platform}\""
+      print "export PORTMASTER_LEAF_DEVICE_INFO=\"${PORTMASTER_LEAF_DEVICE_INFO:-1}\""
       print "if [ -z \"${XDG_DATA_HOME:-}\" ] || [ ! -d \"$XDG_DATA_HOME/PortMaster\" ]; then"
       print "  for _leaf_pm_sd in \"${SDCARD_PATH:-}\" \"${JAWAKA_SDCARD_ROOT:-}\" /media/sdcard1 /mnt/sdcard; do"
       print "    [ -n \"$_leaf_pm_sd\" ] || continue"
@@ -535,6 +602,49 @@ normalize_port_paths_script() {
   mv "$tmp" "$file"
   chmod 755 "$file" 2>/dev/null || true
   printf 'port-paths-patched'
+}
+
+normalize_libretro_retroarch_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) printf 'not-shell'; return 0 ;;
+  esac
+  if grep -q 'leaf_pm_run_retroarch' "$file" 2>/dev/null; then
+    printf 'libretro-retroarch-already'
+    return 0
+  fi
+  if ! grep -Eq 'retroarch([^[:alnum:]_]|$).*([[:space:]]|^)-L([[:space:]]|$)' "$file" 2>/dev/null; then
+    printf 'libretro-retroarch-missing'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  awk '
+    {
+      line = $0
+      if (line ~ /retroarch/ && line ~ /(^|[[:space:]])-L([[:space:]]|$)/) {
+        gsub(/"?[$][{]?raloc[}]?\/retroarch"?[[:space:]]+[$][{]?raconf[}]?[[:space:]]+/, "leaf_pm_run_retroarch ", line)
+        gsub(/"?[$][{]?raloc[}]?\/retroarch"?[[:space:]]+/, "leaf_pm_run_retroarch ", line)
+        gsub(/"?\/[^"[:space:]]*\/retroarch"?[[:space:]]+[$][{]?raconf[}]?[[:space:]]+/, "leaf_pm_run_retroarch ", line)
+        gsub(/^[[:space:]]*retroarch[[:space:]]+[$][{]?raconf[}]?[[:space:]]+/, "leaf_pm_run_retroarch ", line)
+        gsub(/^[[:space:]]*retroarch[[:space:]]+/, "leaf_pm_run_retroarch ", line)
+        gsub(/[[:space:]]+[$][{]?raconf[}]?[[:space:]]+/, " ", line)
+        if (line != $0) {
+          changed = 1
+        }
+      }
+      print line
+    }
+    END { exit changed ? 0 : 1 }
+  ' "$file" >"$tmp" || {
+    rm -f "$tmp"
+    printf 'libretro-retroarch-missing'
+    return 0
+  }
+  mv "$tmp" "$file"
+  chmod 755 "$file" 2>/dev/null || true
+  printf 'libretro-retroarch-patched'
 }
 
 normalize_godot_wayland_script() {
@@ -828,6 +938,9 @@ port_env_patched=0
 port_env_already=0
 port_paths_patched=0
 port_paths_already=0
+libretro_retroarch_patched=0
+libretro_retroarch_already=0
+libretro_retroarch_missing=0
 runtime_compat_gothic_machismo_gles_patched=0
 runtime_compat_gothic_machismo_gles_already=0
 
@@ -842,6 +955,12 @@ while IFS= read -r -d '' file; do
   case "$(normalize_port_paths_script "$file")" in
     port-paths-patched) port_paths_patched=$((port_paths_patched + 1)) ;;
     port-paths-already) port_paths_already=$((port_paths_already + 1)) ;;
+  esac
+
+  case "$(normalize_libretro_retroarch_script "$file")" in
+    libretro-retroarch-patched) libretro_retroarch_patched=$((libretro_retroarch_patched + 1)) ;;
+    libretro-retroarch-already) libretro_retroarch_already=$((libretro_retroarch_already + 1)) ;;
+    libretro-retroarch-missing) libretro_retroarch_missing=$((libretro_retroarch_missing + 1)) ;;
   esac
 
   case "$(normalize_godot_wayland_script "$file")" in
@@ -943,6 +1062,9 @@ cat >"$tmp_json" <<EOF
   "port_env_scripts_already_patched": $port_env_already,
   "port_path_scripts_patched": $port_paths_patched,
   "port_path_scripts_already_patched": $port_paths_already,
+  "libretro_retroarch_scripts_patched": $libretro_retroarch_patched,
+  "libretro_retroarch_scripts_already_patched": $libretro_retroarch_already,
+  "libretro_retroarch_scripts_missing": $libretro_retroarch_missing,
   "godot_wayland_scripts_patched": $godot_patched,
   "godot_wayland_scripts_already_patched": $godot_already,
   "godot_direct_sdl2_scripts_patched": $godot_direct_sdl2_patched,
@@ -960,4 +1082,4 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched report=$report_tsv"
