@@ -19,6 +19,22 @@ from the locked `PortMaster.zip`, but it does not close the dynamic 32-bit
 PortMaster game-port gap. That requires the separate Leaf armhf userspace pack
 and per-port smoke testing.
 
+## Native tool payload
+
+Some PortMaster patch scripts depend on host-style helper tools that stock MLP1
+firmware does not provide. The MLP1 pak currently source-builds and ships:
+
+- `rsync` 3.2.7 for aarch64, installed at
+  `$USERDATA_PATH/portmaster/compat/tools/aarch64/bin/rsync`
+- `zip` 3.0 for aarch64, installed at
+  `$USERDATA_PATH/portmaster/compat/tools/aarch64/bin/zip`
+
+The generated PortMaster hook prepends that directory to `PATH` for port
+launchers that source upstream `control.txt`. The binaries are built with the
+MLP1 Buildroot toolchain and depend only on the stock aarch64 libc/loader.
+Tool licenses are included in the pak under `LICENSES/rsync/` and
+`LICENSES/zip/`.
+
 ## Initial armhf pack
 
 `make build-armhf-compat` builds the compatibility pack from Debian Bookworm
@@ -48,7 +64,10 @@ The pack installs under `$USERDATA_PATH/portmaster/compat/armhf` and includes:
 defaults used by gmloader-style ports: `PULSE_SERVER=unix:/tmp/pulse-socket`,
 `PULSE_CLIENTCONFIG=$LEAF_PM_ARMHF_ROOT/etc/pulse/client.conf`,
 `ALSOFT_DRIVERS=pulse`, and
-`ALSOFT_CONF=$LEAF_PM_ARMHF_ROOT/etc/openal/alsoft.conf`.
+`ALSOFT_CONF=$LEAF_PM_ARMHF_ROOT/etc/openal/alsoft.conf`. The generated Leaf
+hook and armhf wrappers also default SDL's GLES loader to
+`SDL_VIDEO_GL_DRIVER=libGLESv2.so`, which is required by gmloader ports such as
+AM2R on MLP1.
 
 The Mali deb, inner blob, hook library, and license text are pinned by URL,
 size, and SHA-256 in the generated manifest. The blob is not built from source

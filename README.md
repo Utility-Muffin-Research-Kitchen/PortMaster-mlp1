@@ -10,8 +10,9 @@ Current scope:
 - MLP1 only.
 - Stable upstream PortMaster only.
 - Small online manager package.
-- Upstream PortMaster, runtime bundles, and armhf compatibility packs are
-  downloaded or published as generated release assets, not committed to git.
+- Upstream PortMaster, runtime bundles, armhf compatibility packs, and native
+  helper tools are downloaded, generated, or published as release assets, not
+  committed to git.
 
 ## Build
 
@@ -69,6 +70,7 @@ Managed PortMaster state lives under:
 ```text
 $USERDATA_PATH/portmaster/PortMaster
 $USERDATA_PATH/portmaster/runtime
+$USERDATA_PATH/portmaster/compat
 $USERDATA_PATH/portmaster/.leaf
 ```
 
@@ -92,6 +94,10 @@ Installed port scripts also source the Leaf PortMaster hook from upstream
 temporary `/tmp/leaf-portmaster-python/python3` shim so PortMaster helper calls
 such as `harbourmaster runtime_check` can download and verify game runtimes
 without exporting Python runtime variables into every launched game.
+
+The same hook prepends `$USERDATA_PATH/portmaster/compat/tools/aarch64/bin` to
+`PATH`. The MLP1 pak source-builds and bundles pinned aarch64 helpers there so
+port patch scripts can use common tools without writing to the stock rootfs.
 
 On launch it sources:
 
@@ -196,6 +202,10 @@ packaged loader and library path without writing to the stock rootfs. It also
 includes a managed current `bin/box86`; wrapped port-bundled `box86` binaries
 prefer this managed copy when present.
 
+The generated Leaf hook and armhf executable wrappers default SDL's GLES loader
+to `SDL_VIDEO_GL_DRIVER=libGLESv2.so`. This lets gmloader ports locate the
+Rockchip Mali GLES library on MLP1 without per-port launch-script edits.
+
 The Mali stack is the armhf `libmali-bifrost-g52-g13p0-wayland-gbm` deb from
 the `home:amazingfate:libmali-rockchip` OBS repository, pinned by package
 URL, size, and SHA-256 in `scripts/build-armhf-compat-pack.sh`. The generated
@@ -225,6 +235,39 @@ manually to force the older exhaustive walk of every file under `Roms/PORTS`.
 The wrapper also stores a cheap top-level `Roms/PORTS` stamp so repeated
 PortMaster open/close cycles skip port repair, artwork sync, and Jawaka rescan
 when no ports changed.
+
+## Native Compatibility Tools
+
+The MLP1 package builds a small aarch64 native tool payload with the MLP1
+Buildroot toolchain:
+
+```sh
+make build-aarch64-tools
+```
+
+Output:
+
+```text
+build/mlp1/compat/tools/aarch64/bin/rsync
+build/mlp1/compat/tools/aarch64/bin/zip
+build/mlp1/compat/tools/aarch64/manifest.json
+```
+
+The payload currently includes:
+
+- `rsync` 3.2.7, built from locked upstream source with bundled zlib and popt,
+  ACL/xattr/iconv/compression extras disabled, and only the device libc as a
+  runtime dependency.
+- `zip` 3.0, built from locked Info-ZIP source with only the device libc as a
+  runtime dependency.
+
+Install and repair copy these tools to:
+
+```text
+$USERDATA_PATH/portmaster/compat/tools/aarch64/bin
+```
+
+The pak carries tool licenses under `LICENSES/rsync/` and `LICENSES/zip/`.
 
 Dynamic armhf executables that require `/lib/ld-linux-armhf.so.3` are moved to
 `.leaf-armhf/` beside the original file and replaced with a shell wrapper that

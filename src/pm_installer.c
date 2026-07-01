@@ -314,7 +314,11 @@ static int write_manifest(const pm_context *ctx, const pm_patch_record *patches,
             "  },\n"
             "  \"runtimes\": {},\n"
             "  \"compat\": {\n"
-            "    \"egl_gles_shim\": \"compat/egl/aarch64/libEGL.so.1\"\n"
+            "    \"egl_gles_shim\": \"compat/egl/aarch64/libEGL.so.1\",\n"
+            "    \"native_tools\": {\n"
+            "      \"rsync\": \"compat/tools/aarch64/bin/rsync\",\n"
+            "      \"zip\": \"compat/tools/aarch64/bin/zip\"\n"
+            "    }\n"
             "  },\n"
             "  \"ports_scan\": {\n"
             "    \"schema\": 1,\n"
@@ -498,6 +502,8 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
 {
     const char *egl_files[] = { "libEGL.so.1", "libEGL.so" };
     const char *mali_files[] = { "libmali.so.1", "libmali-hook.so.1" };
+    const char *tools_bin_files[] = { "rsync", "zip" };
+    const char *tools_meta_files[] = { "manifest.json" };
 
     if (copy_compat_asset_set(ctx,
                               "compat/egl",
@@ -518,6 +524,30 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               "aarch64",
                               mali_files,
                               sizeof(mali_files) / sizeof(mali_files[0]),
+                              err,
+                              err_size) != 0) {
+        return -1;
+    }
+
+    if (copy_compat_asset_set(ctx,
+                              "compat/tools",
+                              "aarch64/bin",
+                              "compat/tools",
+                              "aarch64/bin",
+                              tools_bin_files,
+                              sizeof(tools_bin_files) / sizeof(tools_bin_files[0]),
+                              err,
+                              err_size) != 0) {
+        return -1;
+    }
+
+    if (copy_compat_asset_set(ctx,
+                              "compat/tools",
+                              "aarch64",
+                              "compat/tools",
+                              "aarch64",
+                              tools_meta_files,
+                              sizeof(tools_meta_files) / sizeof(tools_meta_files[0]),
                               err,
                               err_size) != 0) {
         return -1;

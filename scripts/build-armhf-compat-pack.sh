@@ -301,6 +301,7 @@ printf '%s\n' '/usr/lib/arm-linux-gnueabihf/mali' >"$ROOTFS/etc/ld.so.conf.d/00-
 cat >"$ROOTFS/etc/profile.d/mali-priority.sh" <<'SH'
 export MALI_SCHED_RT_THREAD_PRIORITY=95
 export SDL_VIDEO_EGL_DRIVER=libEGL.so
+export SDL_VIDEO_GL_DRIVER=libGLESv2.so
 SH
 cat >"$MALI_LIB_DIR/pkgconfig/mali.pc" <<'PC'
 prefix=/usr
@@ -496,6 +497,7 @@ export LIBGL_DRIVERS_PATH="${LIBGL_DRIVERS_PATH:-$ROOT/usr/lib/arm-linux-gnueabi
 export __EGL_VENDOR_LIBRARY_DIRS="${__EGL_VENDOR_LIBRARY_DIRS:-$ROOT/usr/share/glvnd/egl_vendor.d}"
 export LD_LIBRARY_PATH="$LIB_PATH"
 export SDL_VIDEO_EGL_DRIVER="${SDL_VIDEO_EGL_DRIVER:-libEGL.so}"
+export SDL_VIDEO_GL_DRIVER="${SDL_VIDEO_GL_DRIVER:-libGLESv2.so}"
 export MALI_SCHED_RT_THREAD_PRIORITY="${MALI_SCHED_RT_THREAD_PRIORITY:-95}"
 export PULSE_SERVER="${PULSE_SERVER:-unix:/tmp/pulse-socket}"
 export PULSE_CLIENTCONFIG="${PULSE_CLIENTCONFIG:-$ROOT/etc/pulse/client.conf}"

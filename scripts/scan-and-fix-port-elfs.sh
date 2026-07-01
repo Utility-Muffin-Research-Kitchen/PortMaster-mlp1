@@ -108,6 +108,13 @@ if [ -n "\$_leaf_pm_roms_dir" ] &&
 fi
 export HM_PORTS_DIR="\${HM_PORTS_DIR:-\$_leaf_pm_ports_dir}"
 export HM_SCRIPTS_DIR="\${HM_SCRIPTS_DIR:-\$HM_PORTS_DIR}"
+export LEAF_PM_TOOLS_DIR="\${LEAF_PM_TOOLS_DIR:-\$LEAF_PM_DATA_DIR/compat/tools/aarch64/bin}"
+if [ -d "\$LEAF_PM_TOOLS_DIR" ]; then
+  case ":\${PATH:-}:" in
+    *:"\$LEAF_PM_TOOLS_DIR":*) ;;
+    *) export PATH="\$LEAF_PM_TOOLS_DIR:\${PATH:-/usr/bin:/usr/sbin:/bin:/sbin}" ;;
+  esac
+fi
 
 export LEAF_PM_EGL_SHIM_DIR="\${LEAF_PM_EGL_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/egl/aarch64}"
 export LEAF_PM_MALI_AARCH64_DIR="\${LEAF_PM_MALI_AARCH64_DIR:-\$LEAF_PM_DATA_DIR/compat/mali/aarch64}"
@@ -275,6 +282,10 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
   export LEAF_PM_ARMHF_LOADER="\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3"
   export LEAF_PM_ARMHF_RUN="\$LEAF_PM_ARMHF_ROOT/bin/leaf-armhf-run"
   export LEAF_PM_ARMHF_LIB_PATH="\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/mali:\$LEAF_PM_ARMHF_ROOT/lib/arm-linux-gnueabihf:\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf:\$LEAF_PM_ARMHF_ROOT/usr/lib/arm-linux-gnueabihf/pulseaudio:\$LEAF_PM_ARMHF_ROOT/lib:\$LEAF_PM_ARMHF_ROOT/usr/lib"
+  export LEAF_PM_ARMHF_SDL_VIDEO_EGL_DRIVER="\${LEAF_PM_ARMHF_SDL_VIDEO_EGL_DRIVER:-libEGL.so}"
+  export LEAF_PM_ARMHF_SDL_VIDEO_GL_DRIVER="\${LEAF_PM_ARMHF_SDL_VIDEO_GL_DRIVER:-libGLESv2.so}"
+  export SDL_VIDEO_EGL_DRIVER="\${SDL_VIDEO_EGL_DRIVER:-\$LEAF_PM_ARMHF_SDL_VIDEO_EGL_DRIVER}"
+  export SDL_VIDEO_GL_DRIVER="\${SDL_VIDEO_GL_DRIVER:-\$LEAF_PM_ARMHF_SDL_VIDEO_GL_DRIVER}"
   if [ -x "\$LEAF_PM_ARMHF_ROOT/bin/box86" ]; then
     export LEAF_PM_BOX86="\$LEAF_PM_ARMHF_ROOT/bin/box86"
   fi
@@ -378,7 +389,7 @@ write_armhf_wrapper() {
   cat >"$tmp" <<EOF
 #!/bin/sh
 # LEAF_PM_ARMHF_WRAPPER=1
-# LEAF_PM_ARMHF_WRAPPER_VERSION=2
+# LEAF_PM_ARMHF_WRAPPER_VERSION=3
 set -eu
 
 self_dir="\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)"
@@ -407,6 +418,9 @@ fi
 if [ -z "\${LEAF_PM_BOX86:-}" ]; then
   LEAF_PM_BOX86="\${LEAF_PM_ARMHF_ROOT:-\$userdata/portmaster/compat/armhf}/bin/box86"
 fi
+
+export SDL_VIDEO_EGL_DRIVER="\${SDL_VIDEO_EGL_DRIVER:-\${LEAF_PM_ARMHF_SDL_VIDEO_EGL_DRIVER:-libEGL.so}}"
+export SDL_VIDEO_GL_DRIVER="\${SDL_VIDEO_GL_DRIVER:-\${LEAF_PM_ARMHF_SDL_VIDEO_GL_DRIVER:-libGLESv2.so}}"
 
 if [ "$base" = "box86" ] && [ -x "\$LEAF_PM_BOX86" ]; then
   exec "\$LEAF_PM_ARMHF_RUN" "\$LEAF_PM_BOX86" "\$@"
@@ -775,7 +789,7 @@ normalize_armhf_executable() {
   mkdir -p "$(dirname "$original")"
   if [ -f "$original" ]; then
     if head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER=1' &&
-       ! head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER_VERSION=2'; then
+       ! head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER_VERSION=3'; then
       write_armhf_wrapper "$file" "$original"
       printf 'rewrapped'
       return 0
@@ -867,7 +881,7 @@ while IFS= read -r -d '' file; do
       original="$(wrapper_path_for "$file")"
       if [ "$compat_available" -eq 1 ] &&
          [ -f "$original" ] &&
-         ! head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER_VERSION=2'; then
+         ! head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER_VERSION=3'; then
         write_armhf_wrapper "$file" "$original"
         wrapped=$((wrapped + 1))
         action="rewrapped"

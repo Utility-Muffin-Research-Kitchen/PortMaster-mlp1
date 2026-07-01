@@ -28,3 +28,18 @@ must carry the same upstream Debian copyright/EULA text at:
 ```text
 LICENSES/mali/libmali-rockchip-debian-copyright
 ```
+
+The same pak includes source-built aarch64 helper tools for PortMaster patch
+scripts. They are built from locked upstream sources with the MLP1 Buildroot
+toolchain and installed to:
+
+```text
+$USERDATA_PATH/portmaster/compat/tools/aarch64/bin
+```
+
+The package must carry the rsync GPL license and Info-ZIP license at:
+
+```text
+LICENSES/rsync/COPYING
+LICENSES/zip/LICENSE
+```
