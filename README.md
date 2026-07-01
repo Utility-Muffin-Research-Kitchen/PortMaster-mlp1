@@ -219,9 +219,9 @@ On PortMaster launch, and again after the upstream GUI exits, the manager runs:
 scripts/scan-and-fix-port-elfs.sh
 ```
 
-That scanner writes `$USERDATA_PATH/portmaster/PortMaster/leaf-armhf-env.sh`,
-ensures upstream `control.txt` sources it, and records installed armhf port
-ELFs in:
+That scanner calls `scripts/write-leaf-runtime-hook.sh` to refresh
+`$USERDATA_PATH/portmaster/PortMaster/leaf-armhf-env.sh`, ensures upstream
+`control.txt` sources it, and records installed armhf port ELFs in:
 
 ```text
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.json

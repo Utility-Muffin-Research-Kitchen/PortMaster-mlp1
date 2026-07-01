@@ -103,7 +103,7 @@ The manager refreshes armhf support before upstream PortMaster launches and
 again after upstream PortMaster exits:
 
 - repatch upstream PortMaster
-- write `PortMaster/leaf-armhf-env.sh`
+- refresh `PortMaster/leaf-armhf-env.sh` through `scripts/write-leaf-runtime-hook.sh`
 - source that hook from upstream `control.txt`
 - scan `$ROMS_PATH/PORTS` for 32-bit ARM ELFs using ELF headers, not `file` or
   `readelf`, because those tools are not present on stock MLP1 firmware
