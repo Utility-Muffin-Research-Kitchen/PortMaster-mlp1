@@ -105,7 +105,10 @@ On launch it sources:
 $SDCARD_PATH/.system/leaf/platforms/$PLATFORM/launcher/env.sh
 ```
 
-when present.
+when present. `SDCARD_PATH` may be supplied by Leaf/Jawaka, inferred from the
+pak's own `Apps/<platform>/PortMaster.pak` location, or resolved from a single
+Leaf-marked SD mount. If the SD root cannot be resolved unambiguously, launch
+fails instead of guessing a mount path.
 
 Useful smoke commands from a staged pak:
 

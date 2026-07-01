@@ -2,32 +2,16 @@
 set -euo pipefail
 
 platform="${PLATFORM:-mlp1}"
-sdcard_path="${SDCARD_PATH:-}"
-if [ -z "$sdcard_path" ]; then
-  for candidate in /mnt/sdcard /media/sdcard1; do
-    if [ -f "$candidate/.system/leaf/platforms/$platform/enabled" ]; then
-      sdcard_path="$candidate"
-      break
-    fi
-  done
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+resolver="$script_dir/resolve-sdcard-root.sh"
+if [ ! -f "$resolver" ]; then
+  echo "leaf armhf scan: SD resolver missing: $resolver" >&2
+  exit 1
 fi
-if [ -z "$sdcard_path" ]; then
-  for candidate in /mnt/sdcard /media/sdcard1; do
-    if [ -d "$candidate/.userdata/$platform/portmaster" ]; then
-      sdcard_path="$candidate"
-      break
-    fi
-  done
+if ! sdcard_path="$(PLATFORM="$platform" "$resolver" "$script_dir/.." 2>&1)"; then
+  echo "leaf armhf scan: SD root error: $sdcard_path" >&2
+  exit 1
 fi
-if [ -z "$sdcard_path" ]; then
-  for candidate in /mnt/sdcard /media/sdcard1; do
-    if [ -d "$candidate/Roms" ]; then
-      sdcard_path="$candidate"
-      break
-    fi
-  done
-fi
-sdcard_path="${sdcard_path:-/mnt/sdcard}"
 
 userdata_path="${USERDATA_PATH:-$sdcard_path/.userdata/$platform}"
 data_dir="${PORTMASTER_MLP1_DATA_DIR:-$userdata_path/portmaster}"
@@ -70,7 +54,6 @@ if [ -f "$compat_root/lib/ld-linux-armhf.so.3" ] &&
 fi
 
 write_leaf_hook() {
-  script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
   hook_writer="$script_dir/write-leaf-runtime-hook.sh"
   if [ ! -f "$hook_writer" ]; then
     log "hook writer missing: $hook_writer"
@@ -187,11 +170,13 @@ if [ -z "\${LEAF_PM_ARMHF_RUN:-}" ] || [ -z "\${LEAF_PM_BOX86:-}" ]; then
   platform="\${PLATFORM:-mlp1}"
   sdcard="\${SDCARD_PATH:-}"
   if [ -z "\$sdcard" ]; then
-    if [ -d /media/sdcard1/.userdata ]; then
-      sdcard="/media/sdcard1"
-    else
-      sdcard="/mnt/sdcard"
-    fi
+    case "\$self_dir" in
+      */Roms/PORTS|*/Roms/PORTS/*) sdcard="\${self_dir%%/Roms/PORTS*}" ;;
+    esac
+  fi
+  if [ -z "\$sdcard" ]; then
+    echo "Leaf PortMaster: cannot resolve SD root; set SDCARD_PATH" >&2
+    exit 127
   fi
   userdata="\${USERDATA_PATH:-\$sdcard/.userdata/\$platform}"
 fi
@@ -243,24 +228,59 @@ normalize_port_env_script() {
     *) printf 'not-shell'; return 0 ;;
   esac
   if grep -q 'LEAF_PM_PORT_ENV=1' "$file" 2>/dev/null; then
-    if grep -q 'PORTMASTER_LEAF_DEVICE_INFO' "$file" 2>/dev/null; then
+    if grep -q 'LEAF_PM_PORT_ENV_VERSION=2' "$file" 2>/dev/null &&
+       grep -q 'PORTMASTER_LEAF_DEVICE_INFO' "$file" 2>/dev/null; then
       printf 'port-env-already'
       return 0
     fi
     tmp="$file.tmp.$$"
     awk '
+      function insert_block() {
+        print "# LEAF_PM_PORT_ENV=1"
+        print "# LEAF_PM_PORT_ENV_VERSION=2"
+        print "_leaf_pm_platform=\"${PLATFORM:-mlp1}\""
+        print "export PLATFORM=\"${PLATFORM:-$_leaf_pm_platform}\""
+        print "export PORTMASTER_LEAF_DEVICE_INFO=\"${PORTMASTER_LEAF_DEVICE_INFO:-1}\""
+        print "if [ -z \"${XDG_DATA_HOME:-}\" ] || [ ! -d \"$XDG_DATA_HOME/PortMaster\" ]; then"
+        print "  _leaf_pm_script_dir=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\""
+        print "  _leaf_pm_script_sd=\"\""
+        print "  case \"$_leaf_pm_script_dir\" in"
+        print "    */Roms/PORTS|*/Roms/PORTS/*) _leaf_pm_script_sd=\"${_leaf_pm_script_dir%%/Roms/PORTS*}\" ;;"
+        print "  esac"
+        print "  for _leaf_pm_sd in \"${SDCARD_PATH:-}\" \"${JAWAKA_SDCARD_ROOT:-}\" \"$_leaf_pm_script_sd\"; do"
+        print "    [ -n \"$_leaf_pm_sd\" ] || continue"
+        print "    _leaf_pm_userdata=\"${USERDATA_PATH:-$_leaf_pm_sd/.userdata/$_leaf_pm_platform}\""
+        print "    if [ -d \"$_leaf_pm_userdata/portmaster/PortMaster\" ]; then"
+        print "      export SDCARD_PATH=\"${SDCARD_PATH:-$_leaf_pm_sd}\""
+        print "      export USERDATA_PATH=\"$_leaf_pm_userdata\""
+        print "      export ROMS_PATH=\"${ROMS_PATH:-$SDCARD_PATH/Roms}\""
+        print "      export IMAGES_PATH=\"${IMAGES_PATH:-$SDCARD_PATH/Images}\""
+        print "      export XDG_DATA_HOME=\"$_leaf_pm_userdata/portmaster\""
+        print "      export PORTMASTER_CONTROLFOLDER=\"$_leaf_pm_userdata/portmaster/PortMaster\""
+        print "      break"
+        print "    fi"
+        print "  done"
+        print "fi"
+        print "unset _leaf_pm_sd _leaf_pm_userdata _leaf_pm_platform _leaf_pm_script_dir _leaf_pm_script_sd"
+        inserted = 1
+      }
       {
-        print
         if (!inserted && $0 ~ /^# LEAF_PM_PORT_ENV=1$/) {
-          print "export PLATFORM=\"${PLATFORM:-mlp1}\""
-          print "export PORTMASTER_LEAF_DEVICE_INFO=\"${PORTMASTER_LEAF_DEVICE_INFO:-1}\""
-          inserted = 1
+          insert_block()
+          skipping = 1
+          next
         }
+        if (skipping) {
+          if ($0 ~ /^unset _leaf_pm_sd _leaf_pm_userdata _leaf_pm_platform/) {
+            skipping = 0
+          }
+          next
+        }
+        print
       }
       END {
         if (!inserted) {
-          print "export PLATFORM=\"${PLATFORM:-mlp1}\""
-          print "export PORTMASTER_LEAF_DEVICE_INFO=\"${PORTMASTER_LEAF_DEVICE_INFO:-1}\""
+          insert_block()
         }
       }
     ' "$file" >"$tmp"
@@ -275,11 +295,17 @@ normalize_port_env_script() {
     function insert_block() {
       print ""
       print "# LEAF_PM_PORT_ENV=1"
+      print "# LEAF_PM_PORT_ENV_VERSION=2"
       print "_leaf_pm_platform=\"${PLATFORM:-mlp1}\""
       print "export PLATFORM=\"${PLATFORM:-$_leaf_pm_platform}\""
       print "export PORTMASTER_LEAF_DEVICE_INFO=\"${PORTMASTER_LEAF_DEVICE_INFO:-1}\""
       print "if [ -z \"${XDG_DATA_HOME:-}\" ] || [ ! -d \"$XDG_DATA_HOME/PortMaster\" ]; then"
-      print "  for _leaf_pm_sd in \"${SDCARD_PATH:-}\" \"${JAWAKA_SDCARD_ROOT:-}\" /media/sdcard1 /mnt/sdcard; do"
+      print "  _leaf_pm_script_dir=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\""
+      print "  _leaf_pm_script_sd=\"\""
+      print "  case \"$_leaf_pm_script_dir\" in"
+      print "    */Roms/PORTS|*/Roms/PORTS/*) _leaf_pm_script_sd=\"${_leaf_pm_script_dir%%/Roms/PORTS*}\" ;;"
+      print "  esac"
+      print "  for _leaf_pm_sd in \"${SDCARD_PATH:-}\" \"${JAWAKA_SDCARD_ROOT:-}\" \"$_leaf_pm_script_sd\"; do"
       print "    [ -n \"$_leaf_pm_sd\" ] || continue"
       print "    _leaf_pm_userdata=\"${USERDATA_PATH:-$_leaf_pm_sd/.userdata/$_leaf_pm_platform}\""
       print "    if [ -d \"$_leaf_pm_userdata/portmaster/PortMaster\" ]; then"
@@ -293,7 +319,7 @@ normalize_port_env_script() {
       print "    fi"
       print "  done"
       print "fi"
-      print "unset _leaf_pm_sd _leaf_pm_userdata _leaf_pm_platform"
+      print "unset _leaf_pm_sd _leaf_pm_userdata _leaf_pm_platform _leaf_pm_script_dir _leaf_pm_script_sd"
       inserted = 1
     }
     {

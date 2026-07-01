@@ -2,24 +2,16 @@
 set -euo pipefail
 
 platform="${PLATFORM:-mlp1}"
-sdcard_path="${SDCARD_PATH:-}"
-if [ -z "$sdcard_path" ]; then
-  for candidate in /mnt/sdcard /media/sdcard1; do
-    if [ -f "$candidate/.system/leaf/platforms/$platform/enabled" ]; then
-      sdcard_path="$candidate"
-      break
-    fi
-  done
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+resolver="$script_dir/resolve-sdcard-root.sh"
+if [ ! -f "$resolver" ]; then
+  echo "Leaf PortMaster SD resolver missing: $resolver" >&2
+  exit 1
 fi
-if [ -z "$sdcard_path" ]; then
-  for candidate in /mnt/sdcard /media/sdcard1; do
-    if [ -d "$candidate/.userdata/$platform/portmaster" ]; then
-      sdcard_path="$candidate"
-      break
-    fi
-  done
+if ! sdcard_path="$(PLATFORM="$platform" "$resolver" "$script_dir/.." 2>&1)"; then
+  echo "Leaf PortMaster SD root error: $sdcard_path" >&2
+  exit 1
 fi
-sdcard_path="${sdcard_path:-/mnt/sdcard}"
 
 userdata_path="${USERDATA_PATH:-$sdcard_path/.userdata/$platform}"
 data_dir="${PORTMASTER_MLP1_DATA_DIR:-$userdata_path/portmaster}"

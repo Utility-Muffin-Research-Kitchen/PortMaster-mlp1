@@ -62,6 +62,121 @@ static int dir_from_argv0(char *out, size_t out_size, const char *argv0)
     return pm_copy(out, out_size, candidate);
 }
 
+static bool path_ends_with(const char *path, const char *suffix)
+{
+    if (!path || !suffix) {
+        return false;
+    }
+    size_t path_len = strlen(path);
+    size_t suffix_len = strlen(suffix);
+    return path_len >= suffix_len &&
+           strcmp(path + path_len - suffix_len, suffix) == 0;
+}
+
+static int parent_dir(char *out, size_t out_size, const char *path)
+{
+    char tmp[PM_PATH_MAX];
+    if (pm_copy(tmp, sizeof(tmp), path) != 0) {
+        return -1;
+    }
+    return pm_copy(out, out_size, dirname(tmp));
+}
+
+static bool basename_equals(const char *path, const char *name)
+{
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    return strcmp(base, name) == 0;
+}
+
+static bool has_leaf_sd_marker(const char *root, const char *platform)
+{
+    char marker[PM_PATH_MAX];
+    char launcher[PM_PATH_MAX];
+    if (!root || !platform) {
+        return false;
+    }
+    return (pm_format(marker, sizeof(marker), "%s/.system/leaf/platforms/%s/enabled",
+                      root, platform) == 0 &&
+            pm_file_exists(marker)) ||
+           (pm_format(launcher, sizeof(launcher),
+                      "%s/.system/leaf/platforms/%s/launcher/bin/loong_pangu",
+                      root, platform) == 0 &&
+            pm_file_exists(launcher));
+}
+
+static int sdcard_from_pak_dir(char *out, size_t out_size, const char *pak_dir)
+{
+    if (!pak_dir || !path_ends_with(pak_dir, ".pak")) {
+        return -1;
+    }
+
+    char platform_dir[PM_PATH_MAX];
+    char apps_dir[PM_PATH_MAX];
+    char root[PM_PATH_MAX];
+    if (parent_dir(platform_dir, sizeof(platform_dir), pak_dir) != 0 ||
+        parent_dir(apps_dir, sizeof(apps_dir), platform_dir) != 0 ||
+        parent_dir(root, sizeof(root), apps_dir) != 0 ||
+        !basename_equals(apps_dir, "Apps") ||
+        !pm_dir_exists(root)) {
+        return -1;
+    }
+    return pm_copy(out, out_size, root);
+}
+
+static int resolve_sdcard_path(pm_context *ctx, char *err, size_t err_size)
+{
+    const char *explicit_sd = getenv("SDCARD_PATH");
+    if (explicit_sd && explicit_sd[0]) {
+        if (!pm_dir_exists(explicit_sd)) {
+            if (err && err_size > 0) {
+                snprintf(err, err_size, "SDCARD_PATH is not a directory: %s", explicit_sd);
+            }
+            return -1;
+        }
+        return pm_copy(ctx->sdcard_path, sizeof(ctx->sdcard_path), explicit_sd);
+    }
+
+    const char *jawaka_sd = getenv("JAWAKA_SDCARD_ROOT");
+    if (jawaka_sd && jawaka_sd[0]) {
+        if (!pm_dir_exists(jawaka_sd)) {
+            if (err && err_size > 0) {
+                snprintf(err, err_size, "JAWAKA_SDCARD_ROOT is not a directory: %s", jawaka_sd);
+            }
+            return -1;
+        }
+        return pm_copy(ctx->sdcard_path, sizeof(ctx->sdcard_path), jawaka_sd);
+    }
+
+    if (sdcard_from_pak_dir(ctx->sdcard_path, sizeof(ctx->sdcard_path),
+                            ctx->pak_dir) == 0) {
+        return 0;
+    }
+
+    const char *candidates[] = { "/mnt/sdcard", "/media/sdcard1", NULL };
+    const char *match = NULL;
+    int match_count = 0;
+    for (size_t i = 0; candidates[i]; i++) {
+        if (!pm_dir_exists(candidates[i]) ||
+            !has_leaf_sd_marker(candidates[i], ctx->platform)) {
+            continue;
+        }
+        match = candidates[i];
+        match_count++;
+    }
+
+    if (match_count == 1) {
+        return pm_copy(ctx->sdcard_path, sizeof(ctx->sdcard_path), match);
+    }
+    if (err && err_size > 0) {
+        snprintf(err, err_size, "%s",
+                 match_count > 1
+                     ? "ambiguous Leaf SD root; set SDCARD_PATH explicitly"
+                     : "cannot resolve Leaf SD root; set SDCARD_PATH");
+    }
+    return -1;
+}
+
 int pm_context_init(pm_context *ctx, const char *argv0, char *err, size_t err_size)
 {
     if (!ctx) {
@@ -80,7 +195,9 @@ int pm_context_init(pm_context *ctx, const char *argv0, char *err, size_t err_si
     }
 
     pm_copy(ctx->platform, sizeof(ctx->platform), pm_env("PLATFORM", "mlp1"));
-    pm_copy(ctx->sdcard_path, sizeof(ctx->sdcard_path), pm_env("SDCARD_PATH", "/mnt/sdcard"));
+    if (resolve_sdcard_path(ctx, err, err_size) != 0) {
+        return -1;
+    }
 
     const char *userdata = getenv("USERDATA_PATH");
     if (userdata && userdata[0]) {

@@ -198,9 +198,12 @@ PortMaster scripts that re-export `$sdl_controllerconfig` see the selected
 layout.
 
 On MLP1, `/mnt/sdcard` and `/media/sdcard1` may both exist, but they are not
-safe to treat as interchangeable. The scanner prefers the Leaf-marked SD path
-and the generated hook derives `LEAF_PM_ARMHF_ROOT` from the active
-`controlfolder` at launch time. This keeps wrapped ports working after reboot
+safe to treat as interchangeable. PortMaster-mlp1 uses explicit
+`SDCARD_PATH`/`JAWAKA_SDCARD_ROOT`, the pak's own `Apps/<platform>` location,
+or one uniquely Leaf-marked SD root. If those checks cannot identify a single
+root, the launcher, scanner, and hook writer fail instead of guessing. The
+generated hook still derives `LEAF_PM_ARMHF_ROOT` from the active
+`controlfolder` at launch time, which keeps wrapped ports working after reboot
 when PortMaster was previously scanned through the other SD alias.
 
 The upstream PortMaster GUI filters available ports through HarbourMaster's
