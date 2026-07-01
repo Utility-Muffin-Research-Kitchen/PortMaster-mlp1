@@ -181,6 +181,15 @@ launches and source-built local installs may not inherit the PortMaster GUI
 environment. It also forwards `GOTHIC_BACKEND` through the final `env` launcher
 so `sudo`-based setups do not scrub it.
 
+For Ship of Harkinian, the scanner patches the installed launcher with a
+launch-time `LEAF_PM_RUNTIME_COMPAT_SOH_DISPLAY=1` helper. The helper keeps all
+writes inside the SD-installed port directory, copies an already-generated
+`baseroms/oot*.o2r` artifact to the root path that the upstream launcher checks,
+and normalizes `shipofharkinian.json` plus `imgui.ini` to MLP1's 960x720
+landscape window size. It runs before `otr_check` so the port does not repeat a
+completed patch step, and again after upstream `imgui_reset` so the final window
+state wins.
+
 For BennuGD/`bgdi` ports such as Streets of Rage Remake, the scanner patches
 direct `bgdi` launch lines to call `leaf_pm_run_armhf_sdl2_fullscreen` when the
 armhf fullscreen shim is installed. The hook passes the shim through

@@ -229,6 +229,16 @@ is_gothic_machismo_script() {
     grep -Eq 'GOTHIC_BACKEND|GOTHIC_SHADER_DIR|libgothic_patches' "$file" 2>/dev/null
 }
 
+is_ship_of_harkinian_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) return 1 ;;
+  esac
+  grep -Eq 'soh[.]elf|shipofharkinian[.]json|oot[-]?mq[.]o2r|oot[.]o2r' "$file" 2>/dev/null &&
+    grep -Eq 'GAMEDIR=.*[/]soh|Ship of Harkinian' "$file" 2>/dev/null
+}
+
 normalize_port_env_script() {
   file="$1"
   case "$file" in
@@ -629,6 +639,250 @@ runtime_compat_gothic_machismo_gles_script() {
   printf 'runtime-compat-gothic-machismo-gles-patched'
 }
 
+runtime_compat_soh_display_script() {
+  file="$1"
+  if ! is_ship_of_harkinian_script "$file"; then
+    printf 'not-soh'
+    return 0
+  fi
+  if grep -q 'LEAF_PM_RUNTIME_COMPAT_SOH_DISPLAY_VERSION=1' "$file" 2>/dev/null; then
+    printf 'runtime-compat-soh-display-already'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  block="$file.leaf-soh-display.$$"
+  cat >"$block" <<'LEAF_PM_SOH_DISPLAY_BLOCK'
+
+# LEAF_PM_RUNTIME_COMPAT_SOH_DISPLAY=1
+# LEAF_PM_RUNTIME_COMPAT_SOH_DISPLAY_VERSION=1
+# Normalize Ship of Harkinian's window state for MLP1's 960x720 landscape UI.
+leaf_pm_soh_configure_mlp1_display() {
+    [ "${LEAF_PM_SOH_DISPLAY_NORMALIZE:-1}" != "0" ] || return 0
+    [ -n "${GAMEDIR:-}" ] || return 0
+
+    _leaf_pm_soh_w="${DISPLAY_WIDTH:-960}"
+    _leaf_pm_soh_h="${DISPLAY_HEIGHT:-720}"
+    case "$_leaf_pm_soh_w" in *[!0-9]*|"") _leaf_pm_soh_w=960 ;; esac
+    case "$_leaf_pm_soh_h" in *[!0-9]*|"") _leaf_pm_soh_h=720 ;; esac
+
+    if [ -d "$GAMEDIR/baseroms" ]; then
+        for _leaf_pm_soh_o2r in oot.o2r oot-mq.o2r; do
+            if [ ! -f "$GAMEDIR/$_leaf_pm_soh_o2r" ] && [ -f "$GAMEDIR/baseroms/$_leaf_pm_soh_o2r" ]; then
+                cp -f "$GAMEDIR/baseroms/$_leaf_pm_soh_o2r" "$GAMEDIR/$_leaf_pm_soh_o2r" 2>/dev/null || true
+            fi
+        done
+    fi
+
+    _leaf_pm_soh_python="$(command -v python3 2>/dev/null || true)"
+    if [ -z "$_leaf_pm_soh_python" ]; then
+        echo "Leaf PortMaster: python3 unavailable; skipping SoH display normalization" >&2
+        unset _leaf_pm_soh_w _leaf_pm_soh_h _leaf_pm_soh_o2r _leaf_pm_soh_python
+        return 0
+    fi
+
+    if ! LEAF_PM_SOH_GAME_DIR="$GAMEDIR" LEAF_PM_SOH_WIDTH="$_leaf_pm_soh_w" LEAF_PM_SOH_HEIGHT="$_leaf_pm_soh_h" "$_leaf_pm_soh_python" <<'LEAF_PM_SOH_CONFIG'
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+
+def positive_int(name, fallback):
+    try:
+        value = int(os.environ.get(name, "") or fallback)
+    except ValueError:
+        return fallback
+    return value if value > 0 else fallback
+
+
+def atomic_write(path, text):
+    tmp = path.with_name(path.name + ".leaf-tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
+game_dir = Path(os.environ.get("LEAF_PM_SOH_GAME_DIR", "."))
+width = positive_int("LEAF_PM_SOH_WIDTH", 960)
+height = positive_int("LEAF_PM_SOH_HEIGHT", 720)
+
+config_path = game_dir / "shipofharkinian.json"
+data = None
+if config_path.exists():
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print("Leaf PortMaster: could not parse {}: {}".format(config_path, exc), file=sys.stderr)
+else:
+    data = {}
+
+if isinstance(data, dict):
+    cvars = data.setdefault("CVars", {})
+    if not isinstance(cvars, dict):
+        cvars = {}
+        data["CVars"] = cvars
+    settings = cvars.setdefault("gSettings", {})
+    if not isinstance(settings, dict):
+        settings = {}
+        cvars["gSettings"] = settings
+    settings["SdlWindowedFullscreen"] = 1
+
+    window = data.setdefault("Window", {})
+    if not isinstance(window, dict):
+        window = {}
+        data["Window"] = window
+    fullscreen = window.setdefault("Fullscreen", {})
+    if not isinstance(fullscreen, dict):
+        fullscreen = {}
+        window["Fullscreen"] = fullscreen
+    window["Width"] = width
+    window["Height"] = height
+    fullscreen["Enabled"] = 1
+    fullscreen["Width"] = width
+    fullscreen["Height"] = height
+    atomic_write(config_path, json.dumps(data, indent=4) + "\n")
+
+imgui_path = game_dir / "imgui.ini"
+try:
+    lines = imgui_path.read_text(encoding="utf-8").splitlines() if imgui_path.exists() else []
+except Exception as exc:
+    print("Leaf PortMaster: could not read {}: {}".format(imgui_path, exc), file=sys.stderr)
+    lines = []
+
+main_headers = ("[Window][Main Game]", "[Window][Main - Deck]")
+
+
+def normalize_window_section(header, section):
+    rest = []
+    for line in section[1:]:
+        if line.startswith("Pos=") or line.startswith("Size="):
+            continue
+        rest.append(line)
+    return [header, "Pos=0,0", "Size={},{}".format(width, height)] + rest
+
+
+def default_window_section(header):
+    rest = ["Collapsed=0"]
+    if header == "[Window][Main Game]":
+        rest.append("DockId=0x4C2ED000")
+    return [header, "Pos=0,0", "Size={},{}".format(width, height)] + rest
+
+
+out = []
+seen = set()
+has_dockspace = False
+i = 0
+while i < len(lines):
+    line = lines[i]
+    if line in main_headers:
+        section = [line]
+        i += 1
+        while i < len(lines) and not lines[i].startswith("["):
+            section.append(lines[i])
+            i += 1
+        out.extend(normalize_window_section(line, section))
+        seen.add(line)
+        continue
+    if line.startswith("DockSpace "):
+        has_dockspace = True
+        line = re.sub(r" Pos=[0-9]+,[0-9]+", " Pos=0,0", line)
+        if " Pos=" not in line:
+            line += " Pos=0,0"
+        line = re.sub(r" Size=[0-9]+,[0-9]+", " Size={},{}".format(width, height), line)
+        if " Size=" not in line:
+            line += " Size={},{}".format(width, height)
+    out.append(line)
+    i += 1
+
+for header in main_headers:
+    if header not in seen:
+        if out and out[-1] != "":
+            out.append("")
+        out.extend(default_window_section(header))
+
+if not has_dockspace:
+    if out and out[-1] != "":
+        out.append("")
+    if "[Docking][Data]" not in out:
+        out.append("[Docking][Data]")
+    out.append(
+        "DockSpace ID=0x4C2ED000 Window=0xD2FD9B6B Pos=0,0 "
+        "Size={},{} CentralNode=1 NoTabBar=1 Selected=0x360E12CF".format(width, height)
+    )
+
+atomic_write(imgui_path, "\n".join(out).rstrip() + "\n")
+LEAF_PM_SOH_CONFIG
+    then
+        echo "Leaf PortMaster: SoH display normalization failed" >&2
+    fi
+
+    unset _leaf_pm_soh_w _leaf_pm_soh_h _leaf_pm_soh_o2r _leaf_pm_soh_python
+}
+LEAF_PM_SOH_DISPLAY_BLOCK
+
+  if awk '
+    NR == FNR {
+      block[++block_n] = $0
+      next
+    }
+    function insert_block(i) {
+      for (i = 1; i <= block_n; i++) {
+        print block[i]
+      }
+      inserted = 1
+      changed = 1
+    }
+    function print_call(indent) {
+      print indent "leaf_pm_soh_configure_mlp1_display"
+      pre_called = 1
+      changed = 1
+    }
+    {
+      if (!inserted && $0 ~ /^[[:space:]]*# --------------------- END FUNCTIONS ---------------------/) {
+        insert_block()
+      } else if (!inserted && $0 ~ /^[[:space:]]*# Perform functions/) {
+        insert_block()
+      }
+      if (!pre_called && $0 ~ /^[[:space:]]*otr_check([[:space:]]|$)/) {
+        indent = $0
+        sub(/[^[:space:]].*$/, "", indent)
+        print_call(indent)
+      } else if (!pre_called && $0 ~ /^[[:space:]]*# Run the game/) {
+        print_call("")
+      }
+      print
+      if (!post_called && $0 ~ /^[[:space:]]*imgui_reset([[:space:]]|$)/) {
+        indent = $0
+        sub(/[^[:space:]].*$/, "", indent)
+        print indent "leaf_pm_soh_configure_mlp1_display"
+        post_called = 1
+        changed = 1
+      }
+    }
+    END {
+      if (!inserted || !pre_called || !changed) {
+        exit 2
+      }
+    }
+  ' "$block" "$file" >"$tmp"; then
+    rm -f "$block"
+    mv "$tmp" "$file"
+    chmod 755 "$file" 2>/dev/null || true
+    printf 'runtime-compat-soh-display-patched'
+    return 0
+  else
+    rc=$?
+  fi
+
+  rm -f "$tmp" "$block"
+  if [ "$rc" -eq 2 ]; then
+    printf 'runtime-compat-soh-display-missing-anchor'
+    return 0
+  fi
+  printf 'runtime-compat-soh-display-error'
+}
+
 script_has_bgdi_launch() {
   file="$1"
   awk '
@@ -721,6 +975,10 @@ apply_runtime_compat_rules_script() {
     runtime_compat_gothic_machismo_gles_script "$file"
     printf '\n'
   fi
+  if is_ship_of_harkinian_script "$file"; then
+    runtime_compat_soh_display_script "$file"
+    printf '\n'
+  fi
 }
 
 find_shell_script_candidates() {
@@ -801,6 +1059,10 @@ libretro_retroarch_already=0
 libretro_retroarch_missing=0
 runtime_compat_gothic_machismo_gles_patched=0
 runtime_compat_gothic_machismo_gles_already=0
+runtime_compat_soh_display_patched=0
+runtime_compat_soh_display_already=0
+runtime_compat_soh_display_missing_anchor=0
+runtime_compat_soh_display_errors=0
 bgdi_sdl2_fullscreen_patched=0
 bgdi_sdl2_fullscreen_already=0
 bgdi_sdl2_fullscreen_missing_shim=0
@@ -849,6 +1111,20 @@ while IFS= read -r -d '' file; do
         ;;
       runtime-compat-gothic-machismo-gles-already)
         runtime_compat_gothic_machismo_gles_already=$((runtime_compat_gothic_machismo_gles_already + 1))
+        ;;
+      runtime-compat-soh-display-patched)
+        runtime_compat_soh_display_patched=$((runtime_compat_soh_display_patched + 1))
+        ;;
+      runtime-compat-soh-display-already)
+        runtime_compat_soh_display_already=$((runtime_compat_soh_display_already + 1))
+        ;;
+      runtime-compat-soh-display-missing-anchor)
+        runtime_compat_soh_display_missing_anchor=$((runtime_compat_soh_display_missing_anchor + 1))
+        errors=$((errors + 1))
+        ;;
+      runtime-compat-soh-display-error)
+        runtime_compat_soh_display_errors=$((runtime_compat_soh_display_errors + 1))
+        errors=$((errors + 1))
         ;;
     esac
   done < <(apply_runtime_compat_rules_script "$file")
@@ -949,6 +1225,10 @@ cat >"$tmp_json" <<EOF
   "godot_weston_cleanup_scripts_missing_cleanup": $weston_cleanup_missing,
   "runtime_compat_gothic_machismo_gles_scripts_patched": $runtime_compat_gothic_machismo_gles_patched,
   "runtime_compat_gothic_machismo_gles_scripts_already_patched": $runtime_compat_gothic_machismo_gles_already,
+  "runtime_compat_soh_display_scripts_patched": $runtime_compat_soh_display_patched,
+  "runtime_compat_soh_display_scripts_already_patched": $runtime_compat_soh_display_already,
+  "runtime_compat_soh_display_scripts_missing_anchor": $runtime_compat_soh_display_missing_anchor,
+  "runtime_compat_soh_display_script_errors": $runtime_compat_soh_display_errors,
   "bgdi_sdl2_fullscreen_scripts_patched": $bgdi_sdl2_fullscreen_patched,
   "bgdi_sdl2_fullscreen_scripts_already_patched": $bgdi_sdl2_fullscreen_already,
   "bgdi_sdl2_fullscreen_scripts_missing_shim": $bgdi_sdl2_fullscreen_missing_shim,
@@ -960,4 +1240,4 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched bgdi_sdl2_fullscreen_patched=$bgdi_sdl2_fullscreen_patched bgdi_sdl2_fullscreen_missing_shim=$bgdi_sdl2_fullscreen_missing_shim report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched bgdi_sdl2_fullscreen_patched=$bgdi_sdl2_fullscreen_patched bgdi_sdl2_fullscreen_missing_shim=$bgdi_sdl2_fullscreen_missing_shim report=$report_tsv"
