@@ -192,3 +192,278 @@ int pm_sha256_file_hex(const char *path, char out_hex[65], char *err, size_t err
     return 0;
 }
 
+int pm_sha256_buffer_hex(const void *data, size_t size, char out_hex[65],
+                         char *err, size_t err_size)
+{
+    if (out_hex) {
+        out_hex[0] = '\0';
+    }
+    if (err && err_size > 0) {
+        err[0] = '\0';
+    }
+    if (!out_hex || (!data && size > 0)) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "%s", "missing SHA-256 buffer input");
+        }
+        return -1;
+    }
+
+    pm_sha256_ctx ctx;
+    init(&ctx);
+    if (size > 0) {
+        update(&ctx, (const unsigned char *)data, size);
+    }
+    unsigned char digest[32];
+    final(&ctx, digest);
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 32; i++) {
+        out_hex[i * 2] = hex[digest[i] >> 4u];
+        out_hex[i * 2 + 1] = hex[digest[i] & 0x0fu];
+    }
+    out_hex[64] = '\0';
+    return 0;
+}
+
+typedef struct {
+    uint32_t state[4];
+    uint64_t bit_count;
+    unsigned char buffer[64];
+} pm_md5_ctx;
+
+static uint32_t rotl32(uint32_t x, unsigned n)
+{
+    return (x << n) | (x >> (32u - n));
+}
+
+static uint32_t load_le32(const unsigned char *p)
+{
+    return ((uint32_t)p[0]) |
+           ((uint32_t)p[1] << 8u) |
+           ((uint32_t)p[2] << 16u) |
+           ((uint32_t)p[3] << 24u);
+}
+
+static void store_le32(unsigned char *p, uint32_t v)
+{
+    p[0] = (unsigned char)v;
+    p[1] = (unsigned char)(v >> 8u);
+    p[2] = (unsigned char)(v >> 16u);
+    p[3] = (unsigned char)(v >> 24u);
+}
+
+static void store_le64(unsigned char *p, uint64_t v)
+{
+    for (int i = 0; i < 8; i++) {
+        p[i] = (unsigned char)v;
+        v >>= 8u;
+    }
+}
+
+#define PM_MD5_F(x, y, z) (((x) & (y)) | (~(x) & (z)))
+#define PM_MD5_G(x, y, z) (((x) & (z)) | ((y) & ~(z)))
+#define PM_MD5_H(x, y, z) ((x) ^ (y) ^ (z))
+#define PM_MD5_I(x, y, z) ((y) ^ ((x) | ~(z)))
+#define PM_MD5_STEP(f, a, b, c, d, x, t, s) \
+    do { \
+        (a) += f((b), (c), (d)) + (x) + (uint32_t)(t); \
+        (a) = rotl32((a), (s)); \
+        (a) += (b); \
+    } while (0)
+
+static void md5_transform(pm_md5_ctx *ctx, const unsigned char block[64])
+{
+    uint32_t a = ctx->state[0];
+    uint32_t b = ctx->state[1];
+    uint32_t c = ctx->state[2];
+    uint32_t d = ctx->state[3];
+    uint32_t x[16];
+
+    for (int i = 0; i < 16; i++) {
+        x[i] = load_le32(block + (i * 4));
+    }
+
+    PM_MD5_STEP(PM_MD5_F, a, b, c, d, x[ 0], 0xd76aa478u,  7);
+    PM_MD5_STEP(PM_MD5_F, d, a, b, c, x[ 1], 0xe8c7b756u, 12);
+    PM_MD5_STEP(PM_MD5_F, c, d, a, b, x[ 2], 0x242070dbu, 17);
+    PM_MD5_STEP(PM_MD5_F, b, c, d, a, x[ 3], 0xc1bdceeeu, 22);
+    PM_MD5_STEP(PM_MD5_F, a, b, c, d, x[ 4], 0xf57c0fafu,  7);
+    PM_MD5_STEP(PM_MD5_F, d, a, b, c, x[ 5], 0x4787c62au, 12);
+    PM_MD5_STEP(PM_MD5_F, c, d, a, b, x[ 6], 0xa8304613u, 17);
+    PM_MD5_STEP(PM_MD5_F, b, c, d, a, x[ 7], 0xfd469501u, 22);
+    PM_MD5_STEP(PM_MD5_F, a, b, c, d, x[ 8], 0x698098d8u,  7);
+    PM_MD5_STEP(PM_MD5_F, d, a, b, c, x[ 9], 0x8b44f7afu, 12);
+    PM_MD5_STEP(PM_MD5_F, c, d, a, b, x[10], 0xffff5bb1u, 17);
+    PM_MD5_STEP(PM_MD5_F, b, c, d, a, x[11], 0x895cd7beu, 22);
+    PM_MD5_STEP(PM_MD5_F, a, b, c, d, x[12], 0x6b901122u,  7);
+    PM_MD5_STEP(PM_MD5_F, d, a, b, c, x[13], 0xfd987193u, 12);
+    PM_MD5_STEP(PM_MD5_F, c, d, a, b, x[14], 0xa679438eu, 17);
+    PM_MD5_STEP(PM_MD5_F, b, c, d, a, x[15], 0x49b40821u, 22);
+
+    PM_MD5_STEP(PM_MD5_G, a, b, c, d, x[ 1], 0xf61e2562u,  5);
+    PM_MD5_STEP(PM_MD5_G, d, a, b, c, x[ 6], 0xc040b340u,  9);
+    PM_MD5_STEP(PM_MD5_G, c, d, a, b, x[11], 0x265e5a51u, 14);
+    PM_MD5_STEP(PM_MD5_G, b, c, d, a, x[ 0], 0xe9b6c7aau, 20);
+    PM_MD5_STEP(PM_MD5_G, a, b, c, d, x[ 5], 0xd62f105du,  5);
+    PM_MD5_STEP(PM_MD5_G, d, a, b, c, x[10], 0x02441453u,  9);
+    PM_MD5_STEP(PM_MD5_G, c, d, a, b, x[15], 0xd8a1e681u, 14);
+    PM_MD5_STEP(PM_MD5_G, b, c, d, a, x[ 4], 0xe7d3fbc8u, 20);
+    PM_MD5_STEP(PM_MD5_G, a, b, c, d, x[ 9], 0x21e1cde6u,  5);
+    PM_MD5_STEP(PM_MD5_G, d, a, b, c, x[14], 0xc33707d6u,  9);
+    PM_MD5_STEP(PM_MD5_G, c, d, a, b, x[ 3], 0xf4d50d87u, 14);
+    PM_MD5_STEP(PM_MD5_G, b, c, d, a, x[ 8], 0x455a14edu, 20);
+    PM_MD5_STEP(PM_MD5_G, a, b, c, d, x[13], 0xa9e3e905u,  5);
+    PM_MD5_STEP(PM_MD5_G, d, a, b, c, x[ 2], 0xfcefa3f8u,  9);
+    PM_MD5_STEP(PM_MD5_G, c, d, a, b, x[ 7], 0x676f02d9u, 14);
+    PM_MD5_STEP(PM_MD5_G, b, c, d, a, x[12], 0x8d2a4c8au, 20);
+
+    PM_MD5_STEP(PM_MD5_H, a, b, c, d, x[ 5], 0xfffa3942u,  4);
+    PM_MD5_STEP(PM_MD5_H, d, a, b, c, x[ 8], 0x8771f681u, 11);
+    PM_MD5_STEP(PM_MD5_H, c, d, a, b, x[11], 0x6d9d6122u, 16);
+    PM_MD5_STEP(PM_MD5_H, b, c, d, a, x[14], 0xfde5380cu, 23);
+    PM_MD5_STEP(PM_MD5_H, a, b, c, d, x[ 1], 0xa4beea44u,  4);
+    PM_MD5_STEP(PM_MD5_H, d, a, b, c, x[ 4], 0x4bdecfa9u, 11);
+    PM_MD5_STEP(PM_MD5_H, c, d, a, b, x[ 7], 0xf6bb4b60u, 16);
+    PM_MD5_STEP(PM_MD5_H, b, c, d, a, x[10], 0xbebfbc70u, 23);
+    PM_MD5_STEP(PM_MD5_H, a, b, c, d, x[13], 0x289b7ec6u,  4);
+    PM_MD5_STEP(PM_MD5_H, d, a, b, c, x[ 0], 0xeaa127fau, 11);
+    PM_MD5_STEP(PM_MD5_H, c, d, a, b, x[ 3], 0xd4ef3085u, 16);
+    PM_MD5_STEP(PM_MD5_H, b, c, d, a, x[ 6], 0x04881d05u, 23);
+    PM_MD5_STEP(PM_MD5_H, a, b, c, d, x[ 9], 0xd9d4d039u,  4);
+    PM_MD5_STEP(PM_MD5_H, d, a, b, c, x[12], 0xe6db99e5u, 11);
+    PM_MD5_STEP(PM_MD5_H, c, d, a, b, x[15], 0x1fa27cf8u, 16);
+    PM_MD5_STEP(PM_MD5_H, b, c, d, a, x[ 2], 0xc4ac5665u, 23);
+
+    PM_MD5_STEP(PM_MD5_I, a, b, c, d, x[ 0], 0xf4292244u,  6);
+    PM_MD5_STEP(PM_MD5_I, d, a, b, c, x[ 7], 0x432aff97u, 10);
+    PM_MD5_STEP(PM_MD5_I, c, d, a, b, x[14], 0xab9423a7u, 15);
+    PM_MD5_STEP(PM_MD5_I, b, c, d, a, x[ 5], 0xfc93a039u, 21);
+    PM_MD5_STEP(PM_MD5_I, a, b, c, d, x[12], 0x655b59c3u,  6);
+    PM_MD5_STEP(PM_MD5_I, d, a, b, c, x[ 3], 0x8f0ccc92u, 10);
+    PM_MD5_STEP(PM_MD5_I, c, d, a, b, x[10], 0xffeff47du, 15);
+    PM_MD5_STEP(PM_MD5_I, b, c, d, a, x[ 1], 0x85845dd1u, 21);
+    PM_MD5_STEP(PM_MD5_I, a, b, c, d, x[ 8], 0x6fa87e4fu,  6);
+    PM_MD5_STEP(PM_MD5_I, d, a, b, c, x[15], 0xfe2ce6e0u, 10);
+    PM_MD5_STEP(PM_MD5_I, c, d, a, b, x[ 6], 0xa3014314u, 15);
+    PM_MD5_STEP(PM_MD5_I, b, c, d, a, x[13], 0x4e0811a1u, 21);
+    PM_MD5_STEP(PM_MD5_I, a, b, c, d, x[ 4], 0xf7537e82u,  6);
+    PM_MD5_STEP(PM_MD5_I, d, a, b, c, x[11], 0xbd3af235u, 10);
+    PM_MD5_STEP(PM_MD5_I, c, d, a, b, x[ 2], 0x2ad7d2bbu, 15);
+    PM_MD5_STEP(PM_MD5_I, b, c, d, a, x[ 9], 0xeb86d391u, 21);
+
+    ctx->state[0] += a;
+    ctx->state[1] += b;
+    ctx->state[2] += c;
+    ctx->state[3] += d;
+}
+
+static void md5_init(pm_md5_ctx *ctx)
+{
+    ctx->state[0] = 0x67452301u;
+    ctx->state[1] = 0xefcdab89u;
+    ctx->state[2] = 0x98badcfeu;
+    ctx->state[3] = 0x10325476u;
+    ctx->bit_count = 0;
+    memset(ctx->buffer, 0, sizeof(ctx->buffer));
+}
+
+static void md5_update(pm_md5_ctx *ctx, const unsigned char *data, size_t len)
+{
+    size_t used = (size_t)((ctx->bit_count >> 3u) & 63u);
+    ctx->bit_count += (uint64_t)len * 8u;
+    if (used > 0) {
+        size_t free_space = 64u - used;
+        if (len < free_space) {
+            memcpy(ctx->buffer + used, data, len);
+            return;
+        }
+        memcpy(ctx->buffer + used, data, free_space);
+        md5_transform(ctx, ctx->buffer);
+        data += free_space;
+        len -= free_space;
+    }
+    while (len >= 64u) {
+        md5_transform(ctx, data);
+        data += 64u;
+        len -= 64u;
+    }
+    if (len > 0) {
+        memcpy(ctx->buffer, data, len);
+    }
+}
+
+static void md5_final(pm_md5_ctx *ctx, unsigned char digest[16])
+{
+    unsigned char pad[64];
+    memset(pad, 0, sizeof(pad));
+    pad[0] = 0x80u;
+    unsigned char len_le[8];
+    store_le64(len_le, ctx->bit_count);
+    size_t used = (size_t)((ctx->bit_count >> 3u) & 63u);
+    size_t pad_len = (used < 56u) ? (56u - used) : (120u - used);
+    md5_update(ctx, pad, pad_len);
+    md5_update(ctx, len_le, sizeof(len_le));
+    for (int i = 0; i < 4; i++) {
+        store_le32(digest + (i * 4), ctx->state[i]);
+    }
+}
+
+int pm_md5_file_hex(const char *path, char out_hex[33], char *err, size_t err_size)
+{
+    if (out_hex) {
+        out_hex[0] = '\0';
+    }
+    if (err && err_size > 0) {
+        err[0] = '\0';
+    }
+    if (!path || !out_hex) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "%s", "missing MD5 input");
+        }
+        return -1;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "cannot open %s", path);
+        }
+        return -1;
+    }
+
+    pm_md5_ctx ctx;
+    md5_init(&ctx);
+    unsigned char buf[32768];
+    while (1) {
+        size_t got = fread(buf, 1, sizeof(buf), fp);
+        if (got > 0) {
+            md5_update(&ctx, buf, got);
+        }
+        if (got < sizeof(buf)) {
+            if (ferror(fp)) {
+                fclose(fp);
+                if (err && err_size > 0) {
+                    snprintf(err, err_size, "cannot read %s", path);
+                }
+                return -1;
+            }
+            break;
+        }
+    }
+    fclose(fp);
+
+    unsigned char digest[16];
+    md5_final(&ctx, digest);
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 16; i++) {
+        out_hex[i * 2] = hex[digest[i] >> 4u];
+        out_hex[i * 2 + 1] = hex[digest[i] & 0x0fu];
+    }
+    out_hex[32] = '\0';
+    return 0;
+}
+
+#undef PM_MD5_F
+#undef PM_MD5_G
+#undef PM_MD5_H
+#undef PM_MD5_I
+#undef PM_MD5_STEP

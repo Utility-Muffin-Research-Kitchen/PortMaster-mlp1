@@ -10,6 +10,7 @@
 #include "pm_downloader.h"
 #include "pm_installer.h"
 #include "pm_launcher.h"
+#include "pm_update.h"
 #include "pm_ui.h"
 
 #include <stdio.h>
@@ -105,6 +106,56 @@ int main(int argc, char **argv)
             return 1;
         }
         puts("PortMaster patches applied and manifest written");
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--check-portmaster-update") == 0) {
+        pm_portmaster_update_status status;
+        char err[512];
+        if (pm_portmaster_check_update(&ctx, &status, err, sizeof(err)) != 0) {
+            fprintf(stderr, "update check failed: %s\n", err);
+            return 1;
+        }
+        char summary[1024];
+        pm_portmaster_update_summary(&status, summary, sizeof(summary));
+        puts(summary);
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--check-portmaster-update-cached") == 0) {
+        pm_portmaster_update_status status;
+        char err[512];
+        if (pm_portmaster_check_update_cached(&ctx, &status, err, sizeof(err)) != 0) {
+            fprintf(stderr, "cached update check failed: %s\n", err);
+            return 1;
+        }
+        char summary[1024];
+        pm_portmaster_update_summary(&status, summary, sizeof(summary));
+        puts(summary);
+        printf("Source: %s\n", status.from_cache ? "cache" : "network");
+        printf("Prompt: %s\n", pm_portmaster_should_prompt_update(&ctx, &status) ? "yes" : "no");
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--update-portmaster") == 0) {
+        pm_portmaster_update_status status;
+        char err[512];
+        if (pm_portmaster_check_update(&ctx, &status, err, sizeof(err)) != 0) {
+            fprintf(stderr, "update check failed: %s\n", err);
+            return 1;
+        }
+        if (!status.update_available) {
+            puts("PortMaster is already on the latest stable GUI release.");
+            return 0;
+        }
+        if (pm_portmaster_apply_update(&ctx, &status, err, sizeof(err)) != 0) {
+            char state_err[256];
+            (void)pm_portmaster_record_update_failed(&ctx, &status, err,
+                                                     state_err, sizeof(state_err));
+            fprintf(stderr, "update failed: %s\n", err);
+            return 1;
+        }
+        printf("PortMaster updated to %s\n", status.source.tag);
         return 0;
     }
 

@@ -10,12 +10,14 @@ typedef struct {
     const char *dest_path;
     uint64_t expected_size;
     const char *expected_sha256;
+    const char *expected_md5;
     bool allow_http;
 } pm_download_spec;
 
 bool pm_download_url_allowed(const char *url, bool allow_http);
 int pm_download_partial_path(const char *dest_path, char *out, size_t out_size);
 int pm_download_file(const pm_download_spec *spec, char *err, size_t err_size);
+int pm_download_text(const char *url, size_t max_bytes, bool allow_http,
+                     char **out_text, char *err, size_t err_size);
 
 #endif /* PM_DOWNLOADER_H */
-

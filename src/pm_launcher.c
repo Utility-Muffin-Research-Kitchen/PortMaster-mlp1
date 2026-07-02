@@ -345,6 +345,10 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     char armhf_root[PM_PATH_MAX];
     bool has_armhf = pm_armhf_compat_available(ctx, armhf_root, sizeof(armhf_root));
     const char *controller_config = pm_controller_layout_gui_sdl_config();
+    bool allow_upstream_self_update = pm_env_truthy("LEAF_PM_ALLOW_UPSTREAM_SELF_UPDATE");
+    if (allow_upstream_self_update) {
+        fprintf(stderr, "PortMaster warning: upstream GUI self-update is enabled by developer override\n");
+    }
 
     pm_env_override env[] = {
         { "HOME", ctx->data_dir },
@@ -359,6 +363,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "HM_SCRIPTS_DIR", ctx->ports_dir },
         { "PORTMASTER_CONTROLFOLDER", ctx->portmaster_dir },
         { "PORTMASTER_LEAF_DEVICE_INFO", "1" },
+        { "LEAF_PM_DISABLE_SELF_UPDATE", allow_upstream_self_update ? "0" : "1" },
         { "CFW_NAME", "Leaf" },
         { "DEVICE_NAME", "Miniloong Pocket 1" },
         { "DEVICE_CPU", "RK3566" },
@@ -385,6 +390,12 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
 
     char *argv[] = { "bash", "./PortMaster.sh", NULL };
     int rc = pm_run_argv_env_in_dir(ctx->portmaster_dir, argv, env, err, err_size);
+
+    char repair_err[512];
+    if (pm_repatch_portmaster(ctx, repair_err, sizeof(repair_err)) != 0) {
+        fprintf(stderr, "PortMaster post-exit repair warning: %s\n",
+                repair_err[0] ? repair_err : "unknown error");
+    }
 
     uint64_t ports_stamp_after = 0;
     bool have_ports_stamp_after = pm_ports_tree_stamp(ctx, &ports_stamp_after);

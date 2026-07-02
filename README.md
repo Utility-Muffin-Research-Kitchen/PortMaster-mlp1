@@ -42,6 +42,7 @@ to the production Leaf store catalog:
 ```sh
 make local-pakrat-feed
 make pakrat-local-smoke
+make update-failure-fixtures
 ```
 
 `make local-pakrat-feed` writes a local-only catalog and artifacts under:
@@ -54,6 +55,8 @@ build/local-pakrat-feed
 Jawaka's Pak Rat helper to install `org.umrk.portmaster` into a temp SD root,
 and verifies the installed pak. When the generated UI runtime artifact exists,
 the staged test package's runtime lock is rewritten to the local feed too.
+`make update-failure-fixtures` exercises the manager-owned GUI update failure
+paths against a temporary SD/userdata root.
 
 ## Runtime Layout
 
@@ -116,10 +119,53 @@ Useful smoke commands from a staged pak:
 ./launch.sh --doctor-text
 ./launch.sh --install-portmaster
 ./launch.sh --repatch-portmaster
+./launch.sh --check-portmaster-update
+./launch.sh --check-portmaster-update-cached
+./launch.sh --update-portmaster
 ./launch.sh --install-ui-runtime
 ./launch.sh --install-runtime-archive /path/to/portmaster-runtime.7z
 ./launch.sh --launch-portmaster
 ```
+
+## PortMaster GUI Updates
+
+Leaf disables upstream PortMaster GUI self-update prompts during managed
+launches with `LEAF_PM_DISABLE_SELF_UPDATE=1`. This does not use upstream
+`--no-check`, so normal HarbourMaster source/catalog refreshes still run inside
+the GUI.
+
+Use the manager's `Check GUI Update` action, or `--check-portmaster-update`, to
+poll the stable upstream GUI release metadata. If a newer stable release is
+available, `--update-portmaster` or the UI action downloads `PortMaster.zip`,
+verifies the upstream MD5, records a SHA-256 in the Leaf manifest, applies the
+Leaf patch set in staging, backs up the current install, and promotes the
+patched tree. If promotion succeeds but a post-promote step fails, the manager
+restores the previous install before returning an error. Set
+`LEAF_PM_ALLOW_UPSTREAM_SELF_UPDATE=1` only for developer debugging of the raw
+upstream path.
+
+Before promotion, the staged tree is structurally validated for the expected
+Leaf markers in `PortMaster.sh`, `pugwash`, `control.txt`, `device_info.txt`,
+and HarbourMaster `hardware.py`.
+
+The UI also performs a cached/due update check before `Launch PortMaster`.
+Manager-owned update state lives at:
+
+```text
+$USERDATA_PATH/portmaster/.leaf/gui-update-state.json
+```
+
+Update attempts are appended to:
+
+```text
+$USERDATA_PATH/portmaster/.leaf/logs/update.log
+```
+
+Successful checks are cached for 24 hours. Use
+`LEAF_PM_FORCE_UPDATE_CHECK=1` to force a fresh metadata poll, or
+`LEAF_PM_SKIP_UPDATE_CHECK=1` to skip the manager-owned prelaunch check.
+Failed candidates are suppressed for the same upstream version only while the
+manager version and Leaf patch-set fingerprint are unchanged.
 
 ## UI Runtime Work
 

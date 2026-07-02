@@ -1,0 +1,15 @@
+--- pugwash
++++ pugwash
+@@ -2077,7 +2077,11 @@
+         pm = PortMasterGUI()
+         pm.hm = None
+
+-        if not harbourmaster.HM_TESTING and not config['no-check']:
++        leaf_disable_self_update = os.environ.get('LEAF_PM_DISABLE_SELF_UPDATE', '')
++        if not harbourmaster.HM_TESTING and leaf_disable_self_update not in ('', '0', 'false', 'False', 'no', 'NO'):
++            logger.info("Leaf manager disabled PortMaster GUI self-update checks.")
++
++        elif not harbourmaster.HM_TESTING and not config['no-check']:
+             if portmaster_check_update(pm, config, temp_dir):
+                 pm.quit()
+                 return 0

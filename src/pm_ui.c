@@ -8,6 +8,7 @@
 #include "pm_doctor.h"
 #include "pm_installer.h"
 #include "pm_launcher.h"
+#include "pm_update.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -16,6 +17,7 @@ typedef enum {
     PM_ACTION_STATUS = 0,
     PM_ACTION_INSTALL,
     PM_ACTION_INSTALL_UI_RUNTIME,
+    PM_ACTION_CHECK_UPDATE,
     PM_ACTION_LAUNCH,
     PM_ACTION_CONTROLLER_LAYOUT,
     PM_ACTION_REPATCH,
@@ -38,6 +40,21 @@ static void show_message(const char *message)
     };
     cat_confirm_result result = {0};
     (void)cat_confirmation(&opts, &result);
+}
+
+static bool confirm_message(const char *message, const char *confirm_label)
+{
+    cat_footer_item footer[] = {
+        { .button = CAT_BTN_B, .label = "Later", .is_confirm = false },
+        { .button = CAT_BTN_A, .label = confirm_label ? confirm_label : "OK", .is_confirm = true },
+    };
+    cat_message_opts opts = {
+        .message = message,
+        .footer = footer,
+        .footer_count = 2,
+    };
+    cat_confirm_result result = {0};
+    return cat_confirmation(&opts, &result) == CAT_OK && result.confirmed;
 }
 
 static void show_status(pm_context *ctx)
@@ -125,6 +142,95 @@ static void show_install(pm_context *ctx)
 
 typedef struct {
     pm_context *ctx;
+    pm_portmaster_update_status status;
+    char err[512];
+} pm_update_job;
+
+static int update_check_worker(void *userdata)
+{
+    pm_update_job *job = (pm_update_job *)userdata;
+    job->err[0] = '\0';
+    memset(&job->status, 0, sizeof(job->status));
+    return pm_portmaster_check_update(job->ctx, &job->status, job->err, sizeof(job->err));
+}
+
+static int update_check_cached_worker(void *userdata)
+{
+    pm_update_job *job = (pm_update_job *)userdata;
+    job->err[0] = '\0';
+    memset(&job->status, 0, sizeof(job->status));
+    return pm_portmaster_check_update_cached(job->ctx, &job->status, job->err, sizeof(job->err));
+}
+
+static int update_apply_worker(void *userdata)
+{
+    pm_update_job *job = (pm_update_job *)userdata;
+    job->err[0] = '\0';
+    return pm_portmaster_apply_update(job->ctx, &job->status, job->err, sizeof(job->err));
+}
+
+static void show_check_update(pm_context *ctx)
+{
+    if (!pm_dir_exists(ctx->portmaster_dir)) {
+        show_message("PortMaster is not installed yet.\n\nInstall PortMaster before checking for GUI updates.");
+        return;
+    }
+
+    pm_update_job job = { .ctx = ctx };
+    cat_process_opts check_opts = {
+        .message = "Checking PortMaster GUI update\n\nFetching stable release metadata.",
+        .show_progress = false,
+        .interrupt_button = CAT_BTN_NONE,
+    };
+    int rc = cat_process_message(&check_opts, update_check_worker, &job);
+    if (rc != 0) {
+        char msg[1024];
+        snprintf(msg, sizeof(msg), "PortMaster update check failed.\n\n%s",
+                 job.err[0] ? job.err : "Unknown error");
+        show_message(msg);
+        return;
+    }
+
+    char summary[1024];
+    pm_portmaster_update_summary(&job.status, summary, sizeof(summary));
+    if (!job.status.update_available) {
+        show_message(summary);
+        return;
+    }
+
+    char prompt[1400];
+    snprintf(prompt, sizeof(prompt), "%s\n\nUpdate now?", summary);
+    if (!confirm_message(prompt, "Update")) {
+        char state_err[256];
+        (void)pm_portmaster_record_update_declined(ctx, &job.status,
+                                                   state_err, sizeof(state_err));
+        return;
+    }
+
+    cat_process_opts apply_opts = {
+        .message = "Updating PortMaster\n\nDownloading, verifying, patching, and promoting the managed GUI.",
+        .show_progress = false,
+        .interrupt_button = CAT_BTN_NONE,
+    };
+    rc = cat_process_message(&apply_opts, update_apply_worker, &job);
+    if (rc == 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "PortMaster updated to %s.", job.status.source.tag);
+        show_message(msg);
+    } else {
+        char state_err[256];
+        (void)pm_portmaster_record_update_failed(ctx, &job.status,
+                                                 job.err[0] ? job.err : "Unknown error",
+                                                 state_err, sizeof(state_err));
+        char msg[1024];
+        snprintf(msg, sizeof(msg), "PortMaster update failed.\n\n%s",
+                 job.err[0] ? job.err : "Unknown error");
+        show_message(msg);
+    }
+}
+
+typedef struct {
+    pm_context *ctx;
     char err[512];
     pm_artwork_sync_result artwork;
 } pm_repatch_job;
@@ -193,6 +299,50 @@ static void show_launch(pm_context *ctx)
                  script);
         show_message(msg);
         return;
+    }
+
+    pm_update_job update_job = { .ctx = ctx };
+    cat_process_opts check_opts = {
+        .message = "Checking PortMaster GUI update",
+        .show_progress = false,
+        .interrupt_button = CAT_BTN_NONE,
+    };
+    int update_rc = cat_process_message(&check_opts, update_check_cached_worker, &update_job);
+    if (update_rc == 0 &&
+        pm_portmaster_should_prompt_update(ctx, &update_job.status)) {
+        char summary[1024];
+        char prompt[1400];
+        pm_portmaster_update_summary(&update_job.status, summary, sizeof(summary));
+        snprintf(prompt, sizeof(prompt), "%s\n\nUpdate before launch?", summary);
+        if (confirm_message(prompt, "Update")) {
+            cat_process_opts apply_opts = {
+                .message = "Updating PortMaster\n\nDownloading, verifying, patching, and promoting the managed GUI.",
+                .show_progress = false,
+                .interrupt_button = CAT_BTN_NONE,
+            };
+            int apply_rc = cat_process_message(&apply_opts, update_apply_worker, &update_job);
+            if (apply_rc == 0) {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "PortMaster updated to %s.\n\nLaunching now.",
+                         update_job.status.source.tag);
+                show_message(msg);
+            } else {
+                char state_err[256];
+                (void)pm_portmaster_record_update_failed(ctx, &update_job.status,
+                                                         update_job.err[0] ? update_job.err : "Unknown error",
+                                                         state_err, sizeof(state_err));
+                char msg[1024];
+                snprintf(msg, sizeof(msg),
+                         "PortMaster update failed.\n\n%s\n\nLaunching the current working version.",
+                         update_job.err[0] ? update_job.err : "Unknown error");
+                show_message(msg);
+            }
+        } else {
+            char state_err[256];
+            (void)pm_portmaster_record_update_declined(ctx, &update_job.status,
+                                                       state_err, sizeof(state_err));
+        }
     }
 
     pm_launch_job job = { .ctx = ctx };
@@ -310,6 +460,7 @@ static pm_action menu(pm_context *ctx)
         { .label = "Doctor / Status", .trailing_text = ctx->lock_loaded ? "locked" : "lock missing" },
         { .label = "Install PortMaster", .trailing_text = "Phase 1" },
         { .label = "Install UI Runtime", .trailing_text = has_runtime ? "installed" : "required" },
+        { .label = "Check GUI Update", .trailing_text = "stable" },
         { .label = "Launch PortMaster", .trailing_text = pm_dir_exists(ctx->portmaster_dir) ? "ready" : "not installed" },
         { .label = "Controller Layout", .trailing_text = pm_controller_layout_label(layout) },
         { .label = "Repair / Repatch", .trailing_text = pm_dir_exists(ctx->portmaster_dir) ? "ready" : "not installed" },
@@ -322,6 +473,7 @@ static pm_action menu(pm_context *ctx)
         PM_ACTION_STATUS,
         PM_ACTION_INSTALL,
         PM_ACTION_INSTALL_UI_RUNTIME,
+        PM_ACTION_CHECK_UPDATE,
         PM_ACTION_LAUNCH,
         PM_ACTION_CONTROLLER_LAYOUT,
         PM_ACTION_REPATCH,
@@ -362,6 +514,9 @@ void pm_ui_run(pm_context *ctx)
                 break;
             case PM_ACTION_INSTALL_UI_RUNTIME:
                 show_install_ui_runtime(ctx);
+                break;
+            case PM_ACTION_CHECK_UPDATE:
+                show_check_update(ctx);
                 break;
             case PM_ACTION_LAUNCH:
                 show_launch(ctx);

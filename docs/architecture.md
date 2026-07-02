@@ -8,7 +8,10 @@ The manager owns:
 - downloading and verifying stable upstream PortMaster assets
 - applying Leaf/MLP1 patches and generated overlays
 - launching upstream PortMaster with Leaf paths and a managed Python runtime
-- verifying/repatching after upstream self-updates
+- disabling upstream GUI self-update prompts during managed launches
+- polling and applying stable PortMaster GUI updates through the manager
+- recording GUI update state and attempts under `.leaf/`
+- verifying/repatching after launch and after upstream exits
 - runtime and armhf compatibility pack status
 - doctor/log screens
 
