@@ -236,7 +236,9 @@ Normal launch uses a fast scan: installed `.sh` launchers plus likely binary
 and library locations are checked, while large asset trees are skipped. The
 scanner keeps an incremental manifest keyed by its internal `RULESET_VERSION`,
 scan mode, compatibility-pack availability, SDL shim availability, and
-`Roms/PORTS` path; unchanged files are skipped on warm runs. Set
+`Roms/PORTS` path; unchanged files are skipped on warm runs. Manifest v2 also
+records generic SDL2 fullscreen tags, so replacing only a port binary can still
+invalidate the related script decision. Set
 `LEAF_PM_SCAN_NO_CACHE=1` to ignore the old manifest and write a fresh one, or
 set `LEAF_PM_FULL_PORT_SCAN=1` when running
 `scripts/scan-and-fix-port-elfs.sh` manually to force the older exhaustive walk
@@ -311,6 +313,17 @@ Mali/EGL/Wayland environment. If the port did not already specify a window mode
 or resolution, the helper adds `--resolution 960x720`; it deliberately avoids
 `-f`, which uses the MLP1's native portrait KMS framebuffer and mangles
 landscape content.
+
+Generic SDL2 fullscreen is handled separately from Godot. The scanner tags
+installed aarch64 and armhf port ELFs that link `libSDL2-2.0.so`, then injects a
+script-wide `LEAF_PM_SDL2_FULLSCREEN_ENV=1` block into the owning launcher. The
+generated hook preloads `compat/sdl2/aarch64/leaf-sdl2-fullscreen.so` for native
+aarch64 games and passes the armhf shim through `LEAF_PM_ARMHF_PRELOAD` for
+`leaf-armhf-run`. This covers ports such as SDLPoP whose final game command is
+inside a pipeline rather than a simple regex-friendly launch line. Opt out with
+`LEAF_PM_SDL_FORCE_FULLSCREEN=0`, with
+`$USERDATA_PATH/portmaster/sdl2-fullscreen-optout.txt`, or with the repo-side
+opt-out list for known special cases such as Ship of Harkinian.
 
 The scanner also owns narrow runtime compatibility rules for installed launch
 scripts. The current non-Godot rule targets Gothic/Machismo launchers on Leaf

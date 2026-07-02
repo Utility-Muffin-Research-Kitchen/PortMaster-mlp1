@@ -60,8 +60,7 @@ The pack installs under `$USERDATA_PATH/portmaster/compat/armhf` and includes:
 - `bin/leaf-armhf-run`, a non-root loader wrapper
 - `bin/leaf-armhf-smoke`, a tiny dynamic armhf smoke binary
 - `bin/leaf-sdl2-fullscreen.so`, an armhf SDL2 preload shim built from Leaf
-  source for low-resolution BennuGD/`bgdi` ports that need Weston fullscreen
-  desktop scaling
+  source for SDL2 ports that need MLP1 fullscreen desktop scaling
 
 `bin/leaf-armhf-run` also exports the Leaf PulseAudio socket and OpenAL Soft
 defaults used by gmloader-style ports: `PULSE_SERVER=unix:/tmp/pulse-socket`,
@@ -120,9 +119,12 @@ tree entry changed. When a scan is needed, `scan-and-fix-port-elfs.sh` uses
 size, mtime, and path. The manifest key includes the script's internal
 `RULESET_VERSION`, scan mode, compat availability, SDL fullscreen shim
 availability, and `ports_dir`, so changing those inputs naturally forces a cold
-scan. `LEAF_PM_SCAN_NO_CACHE=1` ignores the existing manifest but writes a fresh
-one; `LEAF_PM_FULL_PORT_SCAN=1` disables manifest reads and writes for an
-exhaustive diagnostic scan.
+scan. Manifest format v2 also records per-ELF SDL2 fullscreen tags and the
+per-script SDL2 tag used when a launcher was patched or skipped; this prevents a
+binary-only port update from leaving an unchanged `.sh` cached as non-SDL2.
+`LEAF_PM_SCAN_NO_CACHE=1` ignores the existing manifest but writes a fresh one;
+`LEAF_PM_FULL_PORT_SCAN=1` disables manifest reads and writes for an exhaustive
+diagnostic scan.
 
 The hook exports `DEVICE_HAS_ARMHF=Y` plus `LEAF_PM_ARMHF_RUN`,
 `LEAF_PM_ARMHF_LOADER`, `LEAF_PM_ARMHF_LIB_PATH`, and `LEAF_PM_BOX86` when the
@@ -201,23 +203,49 @@ landscape window size. It runs before `otr_check` so the port does not repeat a
 completed patch step, and again after upstream `imgui_reset` so the final window
 state wins.
 
-For native aarch64 SDL2 ports with fixed-size windows, PortMaster-mlp1 packages
-`compat/sdl2/aarch64/leaf-sdl2-fullscreen.so`. The installer copies it to
-`$USERDATA_PATH/portmaster/compat/sdl2/aarch64`, and the generated hook exposes
-`leaf_pm_run_aarch64_sdl2_fullscreen` to preload it for selected ports. VVVVVV is
-patched through that helper so its SDL window is forced to MLP1's 960x720
-fullscreen desktop size. The scanner reports
-`runtime_compat_vvvvvv_sdl2_fullscreen_scripts_missing_shim` when an older Pak is
-installed without the native shim.
+For SDL2 ports with fixed-size or windowed launch defaults, PortMaster-mlp1
+packages a preload shim built from `compat/sdl2/leaf-sdl2-fullscreen.c`. The
+aarch64 copy lives at
+`$USERDATA_PATH/portmaster/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so`; the
+armhf copy lives at
+`$USERDATA_PATH/portmaster/compat/armhf/bin/leaf-sdl2-fullscreen.so`. The
+scanner now detects SDL2-linked aarch64 and armhf ELF candidates generically by
+ELF header plus `libSDL2-2.0.so` string, tags the owning port, and injects a
+script-wide `LEAF_PM_SDL2_FULLSCREEN_ENV=1` block into launchers for tagged
+ports. The block calls `leaf_pm_enable_sdl2_fullscreen_env "<port>"
+"<arch-csv>"` after `get_controls` when possible, otherwise after
+`control.txt` is sourced.
 
-For BennuGD/`bgdi` ports such as Streets of Rage Remake, the scanner patches
-direct `bgdi` launch lines to call `leaf_pm_run_armhf_sdl2_fullscreen` when the
-armhf fullscreen shim is installed. The hook passes the shim through
-`LEAF_PM_ARMHF_PRELOAD`, and `leaf-armhf-run` converts that to `LD_PRELOAD` only
-for the final armhf loader exec. This avoids leaking a 32-bit preload into
-native aarch64 helpers such as `gptokeyb`, `pidof`, or `kill`. The scanner skips
-the patch and reports `bgdi_sdl2_fullscreen_scripts_missing_shim` when an older
-armhf pack is installed.
+The hook exports `LEAF_PM_SDL_FORCE_FULLSCREEN=1` and 960x720 target dimensions
+from `DISPLAY_WIDTH`/`DISPLAY_HEIGHT`. Native aarch64 ports receive the shim via
+deduped `LD_PRELOAD`. Armhf ports receive it through `LEAF_PM_ARMHF_PRELOAD`,
+and `leaf-armhf-run` converts that to `LD_PRELOAD` only for the final armhf
+loader exec. This keeps the 32-bit shim away from native helpers such as
+`gptokeyb`, `pidof`, or `kill`. Older VVVVVV and `bgdi` launchers that were
+already patched through `leaf_pm_run_aarch64_sdl2_fullscreen` or
+`leaf_pm_run_armhf_sdl2_fullscreen` remain supported; the old helpers dedupe
+their preload path when the new script-wide block is also present.
+
+Opt-outs are available at three levels:
+
+- set `LEAF_PM_SDL_FORCE_FULLSCREEN=0` before launch
+- add the port directory name to
+  `$USERDATA_PATH/portmaster/sdl2-fullscreen-optout.txt`
+- add a repo-side case to `is_sdl2_fullscreen_optout_port`
+
+Godot launchers continue to use the dedicated Godot resolution path rather than
+generic SDL fullscreen. Ship of Harkinian is initially kept on its existing
+JSON/imgui display normalization path, because it links SDL2 but has more
+specific display state to maintain. Fast scan covers common one-level,
+`bin/`, `lib/`, and `libs/` binaries; use `LEAF_PM_FULL_PORT_SCAN=1` for a
+diagnostic scan when a port's main binary sits deeper in its tree.
+
+The scan JSON reports generic SDL2 coverage through
+`sdl2_fullscreen_ports_aarch64`, `sdl2_fullscreen_ports_armhf`,
+`sdl2_fullscreen_ports_both`, and the
+`sdl2_fullscreen_env_scripts_*` counters for patched, already patched,
+non-SDL2, no-`GAMEDIR`, missing-shim, opt-out, missing-anchor, and error
+outcomes.
 
 The Godot hook also prefers an SD-installed aarch64 Mali userspace bundle when
 `$USERDATA_PATH/portmaster/compat/mali/aarch64/libmali.so.1` is present. This

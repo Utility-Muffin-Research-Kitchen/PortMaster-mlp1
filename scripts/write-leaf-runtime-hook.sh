@@ -274,6 +274,44 @@ export DEVICE_HAS_AARCH64="\${DEVICE_HAS_AARCH64:-Y}"
 
 export LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM="\${LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM:-\$LEAF_PM_DATA_DIR/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so}"
 
+leaf_pm_enable_sdl2_fullscreen_env() {
+  _leaf_pm_sdl2_port="\${1:-}"
+  _leaf_pm_sdl2_arches=",\${2:-},"
+  [ "\${LEAF_PM_SDL_FORCE_FULLSCREEN:-}" = "0" ] && return 0
+
+  if [ -n "\$_leaf_pm_sdl2_port" ] && [ -f "\$LEAF_PM_DATA_DIR/sdl2-fullscreen-optout.txt" ]; then
+    while IFS= read -r _leaf_pm_sdl2_optout; do
+      [ "\$_leaf_pm_sdl2_optout" = "\$_leaf_pm_sdl2_port" ] && return 0
+    done <"\$LEAF_PM_DATA_DIR/sdl2-fullscreen-optout.txt"
+  fi
+
+  export LEAF_PM_SDL_FORCE_FULLSCREEN=1
+  export LEAF_PM_SDL_FULLSCREEN_WIDTH="\${LEAF_PM_SDL_FULLSCREEN_WIDTH:-\${DISPLAY_WIDTH:-960}}"
+  export LEAF_PM_SDL_FULLSCREEN_HEIGHT="\${LEAF_PM_SDL_FULLSCREEN_HEIGHT:-\${DISPLAY_HEIGHT:-720}}"
+
+  case "\$_leaf_pm_sdl2_arches" in
+    *,aarch64,*)
+      if [ -f "\$LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM" ]; then
+        case ":\${LD_PRELOAD:-}:" in
+          *:"\$LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM":*) ;;
+          *) export LD_PRELOAD="\$LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM\${LD_PRELOAD:+:\$LD_PRELOAD}" ;;
+        esac
+      fi
+      ;;
+  esac
+
+  case "\$_leaf_pm_sdl2_arches" in
+    *,armhf,*)
+      if [ -n "\${LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM:-}" ] && [ -f "\$LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM" ]; then
+        case ":\${LEAF_PM_ARMHF_PRELOAD:-}:" in
+          *:"\$LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM":*) ;;
+          *) export LEAF_PM_ARMHF_PRELOAD="\$LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM\${LEAF_PM_ARMHF_PRELOAD:+:\$LEAF_PM_ARMHF_PRELOAD}" ;;
+        esac
+      fi
+      ;;
+  esac
+}
+
 leaf_pm_run_aarch64_sdl2_fullscreen() {
   [ "\$#" -gt 0 ] || return 127
   _leaf_pm_aarch64_sdl2_cmd="\$1"
@@ -282,10 +320,15 @@ leaf_pm_run_aarch64_sdl2_fullscreen() {
     "\$_leaf_pm_aarch64_sdl2_cmd" "\$@"
     return \$?
   fi
+  _leaf_pm_aarch64_sdl2_preload="\${LD_PRELOAD:-}"
+  case ":\$_leaf_pm_aarch64_sdl2_preload:" in
+    *:"\$LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM":*) ;;
+    *) _leaf_pm_aarch64_sdl2_preload="\$LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM\${_leaf_pm_aarch64_sdl2_preload:+:\$_leaf_pm_aarch64_sdl2_preload}" ;;
+  esac
   LEAF_PM_SDL_FORCE_FULLSCREEN=1 \
   LEAF_PM_SDL_FULLSCREEN_WIDTH="\${LEAF_PM_SDL_FULLSCREEN_WIDTH:-\${DISPLAY_WIDTH:-960}}" \
   LEAF_PM_SDL_FULLSCREEN_HEIGHT="\${LEAF_PM_SDL_FULLSCREEN_HEIGHT:-\${DISPLAY_HEIGHT:-720}}" \
-  LD_PRELOAD="\$LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM\${LD_PRELOAD:+:\$LD_PRELOAD}" \
+  LD_PRELOAD="\$_leaf_pm_aarch64_sdl2_preload" \
     "\$_leaf_pm_aarch64_sdl2_cmd" "\$@"
 }
 
@@ -316,15 +359,20 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
       "\$_leaf_pm_armhf_sdl2_cmd" "\$@"
       return \$?
     fi
+    _leaf_pm_armhf_sdl2_preload="\${LEAF_PM_ARMHF_PRELOAD:-}"
+    case ":\$_leaf_pm_armhf_sdl2_preload:" in
+      *:"\$LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM":*) ;;
+      *) _leaf_pm_armhf_sdl2_preload="\$LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM\${_leaf_pm_armhf_sdl2_preload:+:\$_leaf_pm_armhf_sdl2_preload}" ;;
+    esac
     LEAF_PM_SDL_FORCE_FULLSCREEN=1 \
     LEAF_PM_SDL_FULLSCREEN_WIDTH="\${LEAF_PM_SDL_FULLSCREEN_WIDTH:-\${DISPLAY_WIDTH:-960}}" \
     LEAF_PM_SDL_FULLSCREEN_HEIGHT="\${LEAF_PM_SDL_FULLSCREEN_HEIGHT:-\${DISPLAY_HEIGHT:-720}}" \
-    LEAF_PM_ARMHF_PRELOAD="\$LEAF_PM_ARMHF_SDL2_FULLSCREEN_SHIM\${LEAF_PM_ARMHF_PRELOAD:+:\$LEAF_PM_ARMHF_PRELOAD}" \
+    LEAF_PM_ARMHF_PRELOAD="\$_leaf_pm_armhf_sdl2_preload" \
       "\$_leaf_pm_armhf_sdl2_cmd" "\$@"
   }
 fi
 
-unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_aarch64_sdl2_cmd _leaf_pm_armhf_sdl2_cmd
+unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_sdl2_port _leaf_pm_sdl2_arches _leaf_pm_sdl2_optout _leaf_pm_aarch64_sdl2_cmd _leaf_pm_aarch64_sdl2_preload _leaf_pm_armhf_sdl2_cmd _leaf_pm_armhf_sdl2_preload
 EOF
 
 chmod 755 "$tmp"
