@@ -48,13 +48,25 @@ static int leaf_target_height(void)
 static void leaf_resolve_symbols(void)
 {
     if (!real_SDL_CreateWindow) {
-        real_SDL_CreateWindow = dlsym(RTLD_NEXT, "SDL_CreateWindow");
+        union {
+            void *object;
+            SDL_Window *(*function)(const char *, int, int, int, int, Uint32);
+        } symbol = { dlsym(RTLD_NEXT, "SDL_CreateWindow") };
+        real_SDL_CreateWindow = symbol.function;
     }
     if (!real_SDL_SetWindowFullscreen) {
-        real_SDL_SetWindowFullscreen = dlsym(RTLD_NEXT, "SDL_SetWindowFullscreen");
+        union {
+            void *object;
+            int (*function)(SDL_Window *, Uint32);
+        } symbol = { dlsym(RTLD_NEXT, "SDL_SetWindowFullscreen") };
+        real_SDL_SetWindowFullscreen = symbol.function;
     }
     if (!real_SDL_SetWindowSize) {
-        real_SDL_SetWindowSize = dlsym(RTLD_NEXT, "SDL_SetWindowSize");
+        union {
+            void *object;
+            void (*function)(SDL_Window *, int, int);
+        } symbol = { dlsym(RTLD_NEXT, "SDL_SetWindowSize") };
+        real_SDL_SetWindowSize = symbol.function;
     }
 }
 

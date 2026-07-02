@@ -315,6 +315,7 @@ static int write_manifest(const pm_context *ctx, const pm_patch_record *patches,
             "  \"runtimes\": {},\n"
             "  \"compat\": {\n"
             "    \"egl_gles_shim\": \"compat/egl/aarch64/libEGL.so.1\",\n"
+            "    \"aarch64_sdl2_fullscreen_shim\": \"compat/sdl2/aarch64/leaf-sdl2-fullscreen.so\",\n"
             "    \"native_tools\": {\n"
             "      \"rsync\": \"compat/tools/aarch64/bin/rsync\",\n"
             "      \"zip\": \"compat/tools/aarch64/bin/zip\"\n"
@@ -502,6 +503,7 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
 {
     const char *egl_files[] = { "libEGL.so.1", "libEGL.so" };
     const char *mali_files[] = { "libmali.so.1", "libmali-hook.so.1" };
+    const char *sdl2_files[] = { "leaf-sdl2-fullscreen.so", "manifest.json" };
     const char *tools_bin_files[] = { "rsync", "zip" };
     const char *tools_meta_files[] = { "manifest.json" };
 
@@ -524,6 +526,18 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               "aarch64",
                               mali_files,
                               sizeof(mali_files) / sizeof(mali_files[0]),
+                              err,
+                              err_size) != 0) {
+        return -1;
+    }
+
+    if (copy_compat_asset_set(ctx,
+                              "compat/sdl2",
+                              "aarch64",
+                              "compat/sdl2",
+                              "aarch64",
+                              sdl2_files,
+                              sizeof(sdl2_files) / sizeof(sdl2_files[0]),
                               err,
                               err_size) != 0) {
         return -1;

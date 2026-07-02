@@ -60,6 +60,12 @@ if [ "$compat_available" -eq 1 ] &&
   sdl2_fullscreen_available=1
   chmod 755 "$sdl2_fullscreen_shim" 2>/dev/null || true
 fi
+aarch64_sdl2_fullscreen_shim="$data_dir/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so"
+aarch64_sdl2_fullscreen_available=0
+if [ -f "$aarch64_sdl2_fullscreen_shim" ]; then
+  aarch64_sdl2_fullscreen_available=1
+  chmod 755 "$aarch64_sdl2_fullscreen_shim" 2>/dev/null || true
+fi
 
 write_leaf_hook() {
   hook_writer="$script_dir/write-leaf-runtime-hook.sh"
@@ -237,6 +243,16 @@ is_ship_of_harkinian_script() {
   esac
   grep -Eq 'soh[.]elf|shipofharkinian[.]json|oot[-]?mq[.]o2r|oot[.]o2r' "$file" 2>/dev/null &&
     grep -Eq 'GAMEDIR=.*[/]soh|Ship of Harkinian' "$file" 2>/dev/null
+}
+
+is_vvvvvv_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) return 1 ;;
+  esac
+  grep -Eq 'PORTMASTER: vvvvvv[.]zip|BINARY=VVVVVV|[/]VVVVVV' "$file" 2>/dev/null &&
+    grep -Eq 'GAMEDIR=.*[/]VVVVVV|VVVVVV[.]sh' "$file" 2>/dev/null
 }
 
 normalize_port_env_script() {
@@ -883,6 +899,68 @@ LEAF_PM_SOH_DISPLAY_BLOCK
   printf 'runtime-compat-soh-display-error'
 }
 
+runtime_compat_vvvvvv_sdl2_fullscreen_script() {
+  file="$1"
+  if ! is_vvvvvv_script "$file"; then
+    printf 'not-vvvvvv'
+    return 0
+  fi
+  if grep -q 'LEAF_PM_RUNTIME_COMPAT_VVVVVV_SDL2_FULLSCREEN_VERSION=1' "$file" 2>/dev/null; then
+    printf 'runtime-compat-vvvvvv-sdl2-fullscreen-already'
+    return 0
+  fi
+  if [ "$aarch64_sdl2_fullscreen_available" -ne 1 ]; then
+    printf 'runtime-compat-vvvvvv-sdl2-fullscreen-missing-shim'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  if awk '
+    function vvvvvv_launch(line, trimmed) {
+      trimmed = line
+      sub(/^[[:space:]]+/, "", trimmed)
+      if (trimmed ~ /^#/) {
+        return 0
+      }
+      return trimmed ~ /^("\$GAMEDIR\/\$BINARY"|\$GAMEDIR\/\$BINARY|"\$GAMEDIR\/VVVVVV"|\$GAMEDIR\/VVVVVV|\.\/VVVVVV)([[:space:]]|$)/
+    }
+    !changed && vvvvvv_launch($0) {
+      indent = $0
+      sub(/[^[:space:]].*$/, "", indent)
+      cmd = substr($0, length(indent) + 1)
+      print indent "# LEAF_PM_RUNTIME_COMPAT_VVVVVV_SDL2_FULLSCREEN=1"
+      print indent "# LEAF_PM_RUNTIME_COMPAT_VVVVVV_SDL2_FULLSCREEN_VERSION=1"
+      print indent "if declare -f leaf_pm_run_aarch64_sdl2_fullscreen >/dev/null 2>&1; then"
+      print indent "  leaf_pm_run_aarch64_sdl2_fullscreen " cmd
+      print indent "else"
+      print indent "  " cmd
+      print indent "fi"
+      changed = 1
+      next
+    }
+    { print }
+    END {
+      if (!changed) {
+        exit 2
+      }
+    }
+  ' "$file" >"$tmp"; then
+    mv "$tmp" "$file"
+    chmod 755 "$file" 2>/dev/null || true
+    printf 'runtime-compat-vvvvvv-sdl2-fullscreen-patched'
+    return 0
+  else
+    rc=$?
+  fi
+
+  rm -f "$tmp"
+  if [ "$rc" -eq 2 ]; then
+    printf 'runtime-compat-vvvvvv-sdl2-fullscreen-missing-launch'
+    return 0
+  fi
+  printf 'runtime-compat-vvvvvv-sdl2-fullscreen-error'
+}
+
 script_has_bgdi_launch() {
   file="$1"
   awk '
@@ -979,6 +1057,10 @@ apply_runtime_compat_rules_script() {
     runtime_compat_soh_display_script "$file"
     printf '\n'
   fi
+  if is_vvvvvv_script "$file"; then
+    runtime_compat_vvvvvv_sdl2_fullscreen_script "$file"
+    printf '\n'
+  fi
 }
 
 find_shell_script_candidates() {
@@ -1063,6 +1145,11 @@ runtime_compat_soh_display_patched=0
 runtime_compat_soh_display_already=0
 runtime_compat_soh_display_missing_anchor=0
 runtime_compat_soh_display_errors=0
+runtime_compat_vvvvvv_sdl2_fullscreen_patched=0
+runtime_compat_vvvvvv_sdl2_fullscreen_already=0
+runtime_compat_vvvvvv_sdl2_fullscreen_missing_shim=0
+runtime_compat_vvvvvv_sdl2_fullscreen_missing_launch=0
+runtime_compat_vvvvvv_sdl2_fullscreen_errors=0
 bgdi_sdl2_fullscreen_patched=0
 bgdi_sdl2_fullscreen_already=0
 bgdi_sdl2_fullscreen_missing_shim=0
@@ -1124,6 +1211,23 @@ while IFS= read -r -d '' file; do
         ;;
       runtime-compat-soh-display-error)
         runtime_compat_soh_display_errors=$((runtime_compat_soh_display_errors + 1))
+        errors=$((errors + 1))
+        ;;
+      runtime-compat-vvvvvv-sdl2-fullscreen-patched)
+        runtime_compat_vvvvvv_sdl2_fullscreen_patched=$((runtime_compat_vvvvvv_sdl2_fullscreen_patched + 1))
+        ;;
+      runtime-compat-vvvvvv-sdl2-fullscreen-already)
+        runtime_compat_vvvvvv_sdl2_fullscreen_already=$((runtime_compat_vvvvvv_sdl2_fullscreen_already + 1))
+        ;;
+      runtime-compat-vvvvvv-sdl2-fullscreen-missing-shim)
+        runtime_compat_vvvvvv_sdl2_fullscreen_missing_shim=$((runtime_compat_vvvvvv_sdl2_fullscreen_missing_shim + 1))
+        ;;
+      runtime-compat-vvvvvv-sdl2-fullscreen-missing-launch)
+        runtime_compat_vvvvvv_sdl2_fullscreen_missing_launch=$((runtime_compat_vvvvvv_sdl2_fullscreen_missing_launch + 1))
+        errors=$((errors + 1))
+        ;;
+      runtime-compat-vvvvvv-sdl2-fullscreen-error)
+        runtime_compat_vvvvvv_sdl2_fullscreen_errors=$((runtime_compat_vvvvvv_sdl2_fullscreen_errors + 1))
         errors=$((errors + 1))
         ;;
     esac
@@ -1200,6 +1304,8 @@ cat >"$tmp_json" <<EOF
   "compat_available": $([ "$compat_available" -eq 1 ] && printf 'true' || printf 'false'),
   "sdl2_fullscreen_shim": "$(json_escape "$sdl2_fullscreen_shim")",
   "sdl2_fullscreen_available": $([ "$sdl2_fullscreen_available" -eq 1 ] && printf 'true' || printf 'false'),
+  "aarch64_sdl2_fullscreen_shim": "$(json_escape "$aarch64_sdl2_fullscreen_shim")",
+  "aarch64_sdl2_fullscreen_available": $([ "$aarch64_sdl2_fullscreen_available" -eq 1 ] && printf 'true' || printf 'false'),
   "hook": "$(json_escape "$hook_path")",
   "records_tsv": "$(json_escape "$report_tsv")",
   "armhf_elfs_seen": $seen,
@@ -1229,6 +1335,11 @@ cat >"$tmp_json" <<EOF
   "runtime_compat_soh_display_scripts_already_patched": $runtime_compat_soh_display_already,
   "runtime_compat_soh_display_scripts_missing_anchor": $runtime_compat_soh_display_missing_anchor,
   "runtime_compat_soh_display_script_errors": $runtime_compat_soh_display_errors,
+  "runtime_compat_vvvvvv_sdl2_fullscreen_scripts_patched": $runtime_compat_vvvvvv_sdl2_fullscreen_patched,
+  "runtime_compat_vvvvvv_sdl2_fullscreen_scripts_already_patched": $runtime_compat_vvvvvv_sdl2_fullscreen_already,
+  "runtime_compat_vvvvvv_sdl2_fullscreen_scripts_missing_shim": $runtime_compat_vvvvvv_sdl2_fullscreen_missing_shim,
+  "runtime_compat_vvvvvv_sdl2_fullscreen_scripts_missing_launch": $runtime_compat_vvvvvv_sdl2_fullscreen_missing_launch,
+  "runtime_compat_vvvvvv_sdl2_fullscreen_script_errors": $runtime_compat_vvvvvv_sdl2_fullscreen_errors,
   "bgdi_sdl2_fullscreen_scripts_patched": $bgdi_sdl2_fullscreen_patched,
   "bgdi_sdl2_fullscreen_scripts_already_patched": $bgdi_sdl2_fullscreen_already,
   "bgdi_sdl2_fullscreen_scripts_missing_shim": $bgdi_sdl2_fullscreen_missing_shim,
@@ -1240,4 +1351,4 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched bgdi_sdl2_fullscreen_patched=$bgdi_sdl2_fullscreen_patched bgdi_sdl2_fullscreen_missing_shim=$bgdi_sdl2_fullscreen_missing_shim report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_vvvvvv_sdl2_fullscreen_patched=$runtime_compat_vvvvvv_sdl2_fullscreen_patched bgdi_sdl2_fullscreen_patched=$bgdi_sdl2_fullscreen_patched bgdi_sdl2_fullscreen_missing_shim=$bgdi_sdl2_fullscreen_missing_shim report=$report_tsv"

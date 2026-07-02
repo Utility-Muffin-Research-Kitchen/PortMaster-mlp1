@@ -475,7 +475,7 @@ arm-linux-gnueabihf-gcc -O2 -Wl,--as-needed \
   -o "$ROOTFS/bin/leaf-armhf-smoke" "$WORK_DIR/leaf-armhf-smoke.c"
 
 arm-linux-gnueabihf-gcc -shared -fPIC -O2 -Wall -Wextra -Wl,--as-needed \
-  -o "$ROOTFS/bin/leaf-sdl2-fullscreen.so" "$ROOT/compat/armhf/leaf-sdl2-fullscreen.c" \
+  -o "$ROOTFS/bin/leaf-sdl2-fullscreen.so" "$ROOT/compat/sdl2/leaf-sdl2-fullscreen.c" \
   -ldl
 
 cat >"$ROOTFS/bin/leaf-armhf-run" <<'SH'

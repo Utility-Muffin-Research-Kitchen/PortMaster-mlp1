@@ -190,6 +190,15 @@ landscape window size. It runs before `otr_check` so the port does not repeat a
 completed patch step, and again after upstream `imgui_reset` so the final window
 state wins.
 
+For native aarch64 SDL2 ports with fixed-size windows, PortMaster-mlp1 packages
+`compat/sdl2/aarch64/leaf-sdl2-fullscreen.so`. The installer copies it to
+`$USERDATA_PATH/portmaster/compat/sdl2/aarch64`, and the generated hook exposes
+`leaf_pm_run_aarch64_sdl2_fullscreen` to preload it for selected ports. VVVVVV is
+patched through that helper so its SDL window is forced to MLP1's 960x720
+fullscreen desktop size. The scanner reports
+`runtime_compat_vvvvvv_sdl2_fullscreen_scripts_missing_shim` when an older Pak is
+installed without the native shim.
+
 For BennuGD/`bgdi` ports such as Streets of Rage Remake, the scanner patches
 direct `bgdi` launch lines to call `leaf_pm_run_armhf_sdl2_fullscreen` when the
 armhf fullscreen shim is installed. The hook passes the shim through
