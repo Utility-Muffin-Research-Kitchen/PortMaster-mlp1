@@ -203,6 +203,23 @@ landscape window size. It runs before `otr_check` so the port does not repeat a
 completed patch step, and again after upstream `imgui_reset` so the final window
 state wins.
 
+For Love 11.5 ports, the scanner detects installed launchers that run a `love`
+binary or reference `liblove-11.5.so` and patches them with
+`LEAF_PM_RUNTIME_COMPAT_LOVE_11_5_LIBS=1`. The block appends upstream
+PortMaster's SD-installed `runtimes/love_11.5/libs.aarch64` directory to
+`LD_LIBRARY_PATH`, preserving any port-local `libs` directory first. This covers
+ports whose bundled Love launcher omits one of the shared libraries already
+provided by the upstream PortMaster runtime, such as `libmodplug.so.1`, without
+copying files to eMMC/rootfs or adding a Leaf-specific binary payload.
+
+The scanner also normalizes a generic unsafe shell pattern where launchers
+lowercase an entire absolute file path before `mv`. On case-sensitive paths such
+as `Roms/PORTS`, that can turn the directory component into a nonexistent
+`roms/ports` path. The rewrite keeps the original directory and lowercases only
+the basename. On vfat, where case-only renames can fail with `File exists`, it
+renames through a temporary sibling path first and restores the source if the
+second rename fails.
+
 For SDL2 ports with fixed-size or windowed launch defaults, PortMaster-mlp1
 packages a preload shim built from `compat/sdl2/leaf-sdl2-fullscreen.c`. The
 aarch64 copy lives at

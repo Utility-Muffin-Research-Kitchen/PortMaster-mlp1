@@ -382,6 +382,14 @@ source-built local installs may not inherit the PortMaster GUI environment. It
 also forwards `GOTHIC_BACKEND` through the final `env` launcher so `sudo`-based
 setups do not scrub it.
 
+Love 11.5 launchers receive a generic runtime-library normalization block. If a
+port runs a bundled `love` binary but ships only part of the Love library set,
+the scanner appends upstream PortMaster's SD-installed
+`runtimes/love_11.5/libs.aarch64` directory to `LD_LIBRARY_PATH`, after any
+port-local library path. This lets ports keep their own bundled libraries while
+falling back to the hash-pinned upstream Love runtime for libraries such as
+`libmodplug.so.1`.
+
 MLP1 stock ships a 64-bit `g13p0` Mali userspace blob that can fault under some
 Godot 4 content. `make package-mlp1` therefore builds a small aarch64 Mali
 compat bundle from the pinned `tsukumijima/libmali-rockchip` `g24p0`

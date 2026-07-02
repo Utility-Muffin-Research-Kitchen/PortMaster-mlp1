@@ -21,7 +21,7 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=2
+RULESET_VERSION=5
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -315,6 +315,15 @@ is_ship_of_harkinian_script() {
   esac
   grep -Eq 'soh[.]elf|shipofharkinian[.]json|oot[-]?mq[.]o2r|oot[.]o2r' "$file" 2>/dev/null &&
     grep -Eq 'GAMEDIR=.*[/]soh|Ship of Harkinian' "$file" 2>/dev/null
+}
+
+is_love_runtime_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) return 1 ;;
+  esac
+  grep -Eq '(^|[[:space:];|&])(\./)?love([[:space:];|&]|$)|[$][{]?GAMEDIR[}]?/love|liblove-11[.]5[.]so|love_11[.]5' "$file" 2>/dev/null
 }
 
 is_sdl2_fullscreen_optout_port() {
@@ -1129,6 +1138,173 @@ LEAF_PM_SOH_DISPLAY_BLOCK
   printf 'runtime-compat-soh-display-error'
 }
 
+runtime_compat_love_11_5_libs_script() {
+  file="$1"
+  if ! is_love_runtime_script "$file"; then
+    printf 'not-love-runtime'
+    return 0
+  fi
+  if grep -q 'LEAF_PM_RUNTIME_COMPAT_LOVE_11_5_LIBS_VERSION=1' "$file" 2>/dev/null; then
+    printf 'runtime-compat-love-11-5-libs-already'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  if awk '
+    NR == FNR {
+      if ($0 ~ /^[[:space:]]*export[[:space:]]+LD_LIBRARY_PATH=/) {
+        has_ld_library_path = 1
+      }
+      if ($0 ~ /^[[:space:]]*get_controls([[:space:]]|$)/ ||
+          $0 ~ /source[[:space:]].*control[.]txt/) {
+        has_control_anchor = 1
+      }
+      next
+    }
+    function insert_block() {
+      print ""
+      print "# LEAF_PM_RUNTIME_COMPAT_LOVE_11_5_LIBS=1"
+      print "# LEAF_PM_RUNTIME_COMPAT_LOVE_11_5_LIBS_VERSION=1"
+      print "_leaf_pm_love_control=\"${PORTMASTER_CONTROLFOLDER:-${controlfolder:-}}\""
+      print "_leaf_pm_love_libs=\"\""
+      print "if [ -n \"$_leaf_pm_love_control\" ]; then"
+      print "  _leaf_pm_love_libs=\"$_leaf_pm_love_control/runtimes/love_11.5/libs.aarch64\""
+      print "fi"
+      print "if [ -d \"$_leaf_pm_love_libs\" ]; then"
+      print "  case \":${LD_LIBRARY_PATH:-}:\" in"
+      print "    *:\"$_leaf_pm_love_libs\":*) ;;"
+      print "    *) export LD_LIBRARY_PATH=\"${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$_leaf_pm_love_libs\" ;;"
+      print "  esac"
+      print "fi"
+      print "unset _leaf_pm_love_control _leaf_pm_love_libs"
+      inserted = 1
+      changed = 1
+    }
+    function is_love_launch(line) {
+      return line ~ /^[[:space:]]*(env[[:space:]].*)?(\.\/)?love([[:space:]]|$)/
+    }
+    {
+      if (!inserted && !has_ld_library_path && !has_control_anchor && is_love_launch($0)) {
+        insert_block()
+      }
+      print
+      if (!inserted && has_ld_library_path && $0 ~ /^[[:space:]]*export[[:space:]]+LD_LIBRARY_PATH=/) {
+        insert_block()
+      } else if (!inserted && !has_ld_library_path && $0 ~ /^[[:space:]]*get_controls([[:space:]]|$)/) {
+        insert_block()
+      } else if (!inserted && !has_ld_library_path && $0 ~ /source[[:space:]].*control[.]txt/) {
+        insert_block()
+      }
+    }
+    END {
+      if (!inserted || !changed) {
+        exit 2
+      }
+    }
+  ' "$file" "$file" >"$tmp"; then
+    mv "$tmp" "$file"
+    chmod 755 "$file" 2>/dev/null || true
+    printf 'runtime-compat-love-11-5-libs-patched'
+    return 0
+  else
+    rc=$?
+  fi
+
+  rm -f "$tmp"
+  if [ "$rc" -eq 2 ]; then
+    printf 'runtime-compat-love-11-5-libs-missing-anchor'
+    return 0
+  fi
+  printf 'runtime-compat-love-11-5-libs-error'
+}
+
+normalize_lowercase_path_moves_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) return 0 ;;
+  esac
+  if grep -q 'LEAF_PM_LOWERCASE_BASENAME_MOVE_VERSION=3' "$file" 2>/dev/null; then
+    printf 'lowercase-path-move-already'
+    return 0
+  fi
+  if ! grep -F 'lowercase_file=$(echo "$file" | tr' "$file" >/dev/null 2>&1 &&
+     ! grep -Eq 'LEAF_PM_LOWERCASE_BASENAME_MOVE_VERSION=[12]' "$file" 2>/dev/null; then
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  if awk '
+    {
+      if (skip_lowercase_if) {
+        if ($0 ~ /^[[:space:]]*fi[[:space:]]*$/) {
+          skip_lowercase_if = 0
+        }
+        next
+      }
+      line = $0
+      if (index(line, "lowercase_file=$(echo \"$file\" | tr") > 0 &&
+          index(line, "[:upper:]") > 0 &&
+          index(line, "[:lower:]") > 0) {
+        indent = $0
+        sub(/[^[:space:]].*$/, "", indent)
+        print indent "# LEAF_PM_LOWERCASE_BASENAME_MOVE=1"
+        print indent "# LEAF_PM_LOWERCASE_BASENAME_MOVE_VERSION=3"
+        print indent "lowercase_file=\"$(dirname \"$file\")/$(basename \"$file\" | tr \"[:upper:]\" \"[:lower:]\")\""
+        changed = 1
+        next
+      }
+      if (line ~ /# LEAF_PM_LOWERCASE_BASENAME_MOVE_VERSION=[12]/) {
+        sub(/LEAF_PM_LOWERCASE_BASENAME_MOVE_VERSION=[12]/, "LEAF_PM_LOWERCASE_BASENAME_MOVE_VERSION=3", line)
+        print line
+        changed = 1
+        next
+      }
+      if (index(line, "if [ \"$file\" != \"$lowercase_file\" ]; then") > 0 ||
+          index(line, "if [ \"$file\" != \"$lowercase_file\" ] && [ ! -e \"$lowercase_file\" ]; then") > 0) {
+        indent = $0
+        sub(/[^[:space:]].*$/, "", indent)
+        print indent "if [ \"$file\" != \"$lowercase_file\" ]; then"
+        print indent "    if [ -e \"$lowercase_file\" ]; then"
+        print indent "        :"
+        print indent "    else"
+        print indent "        _leaf_pm_lowercase_tmp=\"$(dirname \"$file\")/.leaf-lowercase-$(basename \"$file\").$$\""
+        print indent "        while [ -e \"$_leaf_pm_lowercase_tmp\" ]; do"
+        print indent "            _leaf_pm_lowercase_tmp=\"${_leaf_pm_lowercase_tmp}.x\""
+        print indent "        done"
+        print indent "        if mv \"$file\" \"$_leaf_pm_lowercase_tmp\"; then"
+        print indent "            mv \"$_leaf_pm_lowercase_tmp\" \"$lowercase_file\" || mv \"$_leaf_pm_lowercase_tmp\" \"$file\""
+        print indent "        fi"
+        print indent "        unset _leaf_pm_lowercase_tmp"
+        print indent "    fi"
+        print indent "fi"
+        skip_lowercase_if = 1
+        changed = 1
+        next
+      }
+      print
+    }
+    END {
+      if (!changed) {
+        exit 2
+      }
+    }
+  ' "$file" >"$tmp"; then
+    mv "$tmp" "$file"
+    chmod 755 "$file" 2>/dev/null || true
+    printf 'lowercase-path-move-patched'
+    return 0
+  else
+    rc=$?
+  fi
+
+  rm -f "$tmp"
+  if [ "$rc" -eq 2 ]; then
+    return 0
+  fi
+  printf 'lowercase-path-move-error'
+}
+
 apply_runtime_compat_rules_script() {
   file="$1"
   case "$file" in
@@ -1136,12 +1312,18 @@ apply_runtime_compat_rules_script() {
     *) return 0 ;;
   esac
 
+  normalize_lowercase_path_moves_script "$file"
+  printf '\n'
   if is_gothic_machismo_script "$file"; then
     runtime_compat_gothic_machismo_gles_script "$file"
     printf '\n'
   fi
   if is_ship_of_harkinian_script "$file"; then
     runtime_compat_soh_display_script "$file"
+    printf '\n'
+  fi
+  if is_love_runtime_script "$file"; then
+    runtime_compat_love_11_5_libs_script "$file"
     printf '\n'
   fi
 }
@@ -1508,7 +1690,11 @@ script_cache_action() {
     runtime-compat-gothic-machismo-gles-already) printf 'runtime-compat-gothic-machismo-gles-already' ;;
     runtime-compat-soh-display-patched) printf 'runtime-compat-soh-display-already' ;;
     runtime-compat-soh-display-already) printf 'runtime-compat-soh-display-already' ;;
-    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|weston-cleanup-error|godot-direct-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error)
+    runtime-compat-love-11-5-libs-patched) printf 'runtime-compat-love-11-5-libs-already' ;;
+    runtime-compat-love-11-5-libs-already) printf 'runtime-compat-love-11-5-libs-already' ;;
+    lowercase-path-move-patched) printf 'lowercase-path-move-already' ;;
+    lowercase-path-move-already) printf 'lowercase-path-move-already' ;;
+    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|lowercase-path-move-error|weston-cleanup-error|godot-direct-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error)
       return 1
       ;;
     *) printf '' ;;
@@ -1564,6 +1750,30 @@ record_script_action() {
       ;;
     runtime-compat-soh-display-error)
       runtime_compat_soh_display_errors=$((runtime_compat_soh_display_errors + 1))
+      errors=$((errors + 1))
+      ;;
+    runtime-compat-love-11-5-libs-patched)
+      runtime_compat_love_11_5_libs_patched=$((runtime_compat_love_11_5_libs_patched + 1))
+      ;;
+    runtime-compat-love-11-5-libs-already)
+      runtime_compat_love_11_5_libs_already=$((runtime_compat_love_11_5_libs_already + 1))
+      ;;
+    runtime-compat-love-11-5-libs-missing-anchor)
+      runtime_compat_love_11_5_libs_missing_anchor=$((runtime_compat_love_11_5_libs_missing_anchor + 1))
+      errors=$((errors + 1))
+      ;;
+    runtime-compat-love-11-5-libs-error)
+      runtime_compat_love_11_5_libs_errors=$((runtime_compat_love_11_5_libs_errors + 1))
+      errors=$((errors + 1))
+      ;;
+    lowercase-path-move-patched)
+      lowercase_path_move_patched=$((lowercase_path_move_patched + 1))
+      ;;
+    lowercase-path-move-already)
+      lowercase_path_move_already=$((lowercase_path_move_already + 1))
+      ;;
+    lowercase-path-move-error)
+      lowercase_path_move_errors=$((lowercase_path_move_errors + 1))
       errors=$((errors + 1))
       ;;
   esac
@@ -1748,6 +1958,13 @@ runtime_compat_soh_display_patched=0
 runtime_compat_soh_display_already=0
 runtime_compat_soh_display_missing_anchor=0
 runtime_compat_soh_display_errors=0
+runtime_compat_love_11_5_libs_patched=0
+runtime_compat_love_11_5_libs_already=0
+runtime_compat_love_11_5_libs_missing_anchor=0
+runtime_compat_love_11_5_libs_errors=0
+lowercase_path_move_patched=0
+lowercase_path_move_already=0
+lowercase_path_move_errors=0
 
 while IFS= read -r -d '' file; do
   if can_use_manifest_entry "$file" "E"; then
@@ -1949,6 +2166,13 @@ cat >"$tmp_json" <<EOF
   "runtime_compat_soh_display_scripts_already_patched": $runtime_compat_soh_display_already,
   "runtime_compat_soh_display_scripts_missing_anchor": $runtime_compat_soh_display_missing_anchor,
   "runtime_compat_soh_display_script_errors": $runtime_compat_soh_display_errors,
+  "runtime_compat_love_11_5_libs_scripts_patched": $runtime_compat_love_11_5_libs_patched,
+  "runtime_compat_love_11_5_libs_scripts_already_patched": $runtime_compat_love_11_5_libs_already,
+  "runtime_compat_love_11_5_libs_scripts_missing_anchor": $runtime_compat_love_11_5_libs_missing_anchor,
+  "runtime_compat_love_11_5_libs_script_errors": $runtime_compat_love_11_5_libs_errors,
+  "lowercase_path_move_scripts_patched": $lowercase_path_move_patched,
+  "lowercase_path_move_scripts_already_patched": $lowercase_path_move_already,
+  "lowercase_path_move_script_errors": $lowercase_path_move_errors,
   "godot_egl_scripts_patched": $godot_patched,
   "godot_egl_scripts_already_patched": $godot_already,
   "errors": $errors
@@ -1960,4 +2184,4 @@ if [ "$manifest_write_enabled" -eq 1 ]; then
   mv "$manifest_tmp" "$manifest_path"
 fi
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
