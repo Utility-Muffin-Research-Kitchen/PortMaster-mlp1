@@ -21,8 +21,11 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
+RULESET_VERSION=1
+manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
+scan_no_cache="${LEAF_PM_SCAN_NO_CACHE:-0}"
 scan_mode="fast"
 if [ "$full_port_scan" = "1" ] || [ "$full_port_scan" = "true" ] || [ "$full_port_scan" = "yes" ]; then
   scan_mode="full"
@@ -38,6 +41,13 @@ json_escape() {
 shell_quote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
+
+sha_tool="none"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha_tool="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  sha_tool="shasum"
+fi
 
 mkdir -p "$leaf_dir"
 
@@ -66,6 +76,7 @@ if [ -f "$aarch64_sdl2_fullscreen_shim" ]; then
   aarch64_sdl2_fullscreen_available=1
   chmod 755 "$aarch64_sdl2_fullscreen_shim" 2>/dev/null || true
 fi
+manifest_key="$RULESET_VERSION|$scan_mode|$compat_available|$sdl2_fullscreen_available|$aarch64_sdl2_fullscreen_available|$ports_dir"
 
 write_leaf_hook() {
   hook_writer="$script_dir/write-leaf-runtime-hook.sh"
@@ -118,7 +129,12 @@ patch_control_txt() {
 }
 
 elf_header_hex() {
-  od -An -tx1 -N20 "$1" 2>/dev/null | tr -d ' \n'
+  local header
+  header="$(od -An -tx1 -N20 "$1" 2>/dev/null || true)"
+  header="${header// /}"
+  header="${header//$'\t'/}"
+  header="${header//$'\n'/}"
+  printf '%s' "$header"
 }
 
 is_armhf_elf() {
@@ -140,18 +156,45 @@ elf_kind() {
 }
 
 armhf_interpreter() {
-  file="$1"
-  grep -a -m 1 -o '/[^[:space:]]*ld-linux-armhf\.so\.3' "$file" 2>/dev/null | head -n 1 || true
+  local file="$1"
+  head -c 65536 "$file" 2>/dev/null | grep -a -m 1 -o '/[^[:space:]]*ld-linux-armhf\.so\.3' 2>/dev/null || true
 }
 
 file_sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" 2>/dev/null | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
-  else
+  local out hash
+  case "$sha_tool" in
+    sha256sum) out="$(sha256sum "$1" 2>/dev/null || true)" ;;
+    shasum) out="$(shasum -a 256 "$1" 2>/dev/null || true)" ;;
+    *) printf 'unknown'; return 0 ;;
+  esac
+  if [ -z "$out" ]; then
     printf 'unknown'
+    return 0
   fi
+  read -r hash _ <<<"$out" || true
+  printf '%s' "${hash:-unknown}"
+}
+
+wrapper_header_contains() {
+  local file="$1"
+  local needle="$2"
+  local line
+  local n=0
+  while [ "$n" -lt 4 ] && IFS= read -r line; do
+    case "$line" in
+      *"$needle"*) return 0 ;;
+    esac
+    n=$((n + 1))
+  done <"$file" 2>/dev/null
+  return 1
+}
+
+is_leaf_armhf_wrapper() {
+  wrapper_header_contains "$1" 'LEAF_PM_ARMHF_WRAPPER=1'
+}
+
+is_leaf_armhf_wrapper_v3() {
+  wrapper_header_contains "$1" 'LEAF_PM_ARMHF_WRAPPER_VERSION=3'
 }
 
 wrapper_path_for() {
@@ -1096,8 +1139,7 @@ normalize_armhf_executable() {
   original="$(wrapper_path_for "$file")"
   mkdir -p "$(dirname "$original")"
   if [ -f "$original" ]; then
-    if head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER=1' &&
-       ! head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER_VERSION=3'; then
+    if is_leaf_armhf_wrapper "$file" && ! is_leaf_armhf_wrapper_v3 "$file"; then
       write_armhf_wrapper "$file" "$original"
       printf 'rewrapped'
       return 0
@@ -1111,14 +1153,472 @@ normalize_armhf_executable() {
   printf 'wrapped'
 }
 
+is_truthy() {
+  case "$1" in
+    1|true|yes|TRUE|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+path_has_manifest_unsafe_chars() {
+  case "$1" in
+    *$'\t'*|*$'\n'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+stat_cmd=""
+stat_style="none"
+if command -v gstat >/dev/null 2>&1; then
+  stat_cmd="$(command -v gstat)"
+  stat_style="gnu"
+elif stat -c '%s' "$ports_dir" >/dev/null 2>&1; then
+  stat_cmd="stat"
+  stat_style="gnu"
+elif stat -f '%z' "$ports_dir" >/dev/null 2>&1; then
+  stat_cmd="stat"
+  stat_style="bsd"
+fi
+
+declare -A file_size=()
+declare -A file_mtime=()
+declare -A manifest_type=()
+declare -A manifest_size=()
+declare -A manifest_mtime=()
+declare -A manifest_kind=()
+declare -A manifest_interpreter=()
+declare -A manifest_sha=()
+declare -A manifest_action=()
+declare -A manifest_outcomes=()
+
+stat_one_line() {
+  local file="$1"
+  case "$stat_style" in
+    gnu) "$stat_cmd" -c $'%s\t%Y\t%n' "$file" 2>/dev/null ;;
+    bsd) "$stat_cmd" -f $'%z\t%m\t%N' "$file" 2>/dev/null ;;
+    *) return 1 ;;
+  esac
+}
+
+stat_candidate_list() {
+  local list_file="$1"
+  local out_file="$2"
+  : >"$out_file"
+  [ "$stat_style" != "none" ] || return 0
+  [ -s "$list_file" ] || return 0
+
+  if xargs -0 printf '' </dev/null >/dev/null 2>&1; then
+    case "$stat_style" in
+      gnu) xargs -0 "$stat_cmd" -c $'%s\t%Y\t%n' <"$list_file" >"$out_file" 2>/dev/null || true ;;
+      bsd) xargs -0 "$stat_cmd" -f $'%z\t%m\t%N' <"$list_file" >"$out_file" 2>/dev/null || true ;;
+    esac
+    return 0
+  fi
+
+  local file
+  while IFS= read -r -d '' file; do
+    stat_one_line "$file" >>"$out_file" || true
+  done <"$list_file"
+}
+
+load_stat_file() {
+  local stat_file="$1"
+  local line size rest mtime path tab
+  tab=$'\t'
+  while IFS= read -r line; do
+    case "$line" in
+      *"$tab"*"$tab"*) ;;
+      *) continue ;;
+    esac
+    size="${line%%${tab}*}"
+    rest="${line#*${tab}}"
+    mtime="${rest%%${tab}*}"
+    path="${rest#*${tab}}"
+    case "$size:$mtime" in
+      *[!0-9:]*|:|:*|*:|'') continue ;;
+    esac
+    file_size["$path"]="$size"
+    file_mtime["$path"]="$mtime"
+  done <"$stat_file"
+}
+
+refresh_file_stat() {
+  local file="$1"
+  local line size rest mtime path tab
+  tab=$'\t'
+  line="$(stat_one_line "$file" || true)"
+  case "$line" in
+    *"$tab"*"$tab"*) ;;
+    *) return 1 ;;
+  esac
+  size="${line%%${tab}*}"
+  rest="${line#*${tab}}"
+  mtime="${rest%%${tab}*}"
+  path="${rest#*${tab}}"
+  case "$size:$mtime" in
+    *[!0-9:]*|:|:*|*:|'') return 1 ;;
+  esac
+  file_size["$path"]="$size"
+  file_mtime["$path"]="$mtime"
+}
+
+load_manifest() {
+  local magic key_line line type size mtime kind interpreter sha action outcomes path extra tab
+  tab=$'\t'
+  [ -f "$manifest_path" ] || return 1
+  {
+    IFS= read -r magic || return 1
+    IFS= read -r key_line || return 1
+    [ "$magic" = "#leaf-armhf-scan-manifest${tab}1" ] || return 1
+    [ "$key_line" = "#key${tab}$manifest_key" ] || return 1
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      IFS=$'\t' read -r type size mtime kind interpreter sha action path extra <<<"$line"
+      if [ "$type" = "E" ]; then
+        [ -z "${extra:-}" ] || return 1
+        [ -n "$path" ] || return 1
+        case "$size:$mtime" in
+          *[!0-9:]*|:|:*|*:|'') return 1 ;;
+        esac
+        path_has_manifest_unsafe_chars "$path" && return 1
+        [ "$kind" = "-" ] && kind=""
+        [ "$interpreter" = "-" ] && interpreter=""
+        [ "$sha" = "-" ] && sha=""
+        [ "$action" = "-" ] && action=""
+        manifest_type["$path"]="E"
+        manifest_size["$path"]="$size"
+        manifest_mtime["$path"]="$mtime"
+        manifest_kind["$path"]="$kind"
+        manifest_interpreter["$path"]="$interpreter"
+        manifest_sha["$path"]="$sha"
+        manifest_action["$path"]="$action"
+        continue
+      fi
+
+      IFS=$'\t' read -r type size mtime outcomes path extra <<<"$line"
+      if [ "$type" = "S" ]; then
+        [ -z "${extra:-}" ] || return 1
+        [ -n "$path" ] || return 1
+        case "$size:$mtime" in
+          *[!0-9:]*|:|:*|*:|'') return 1 ;;
+        esac
+        path_has_manifest_unsafe_chars "$path" && return 1
+        [ "$outcomes" = "-" ] && outcomes=""
+        manifest_type["$path"]="S"
+        manifest_size["$path"]="$size"
+        manifest_mtime["$path"]="$mtime"
+        manifest_outcomes["$path"]="$outcomes"
+        continue
+      fi
+      return 1
+    done
+  } <"$manifest_path"
+}
+
+can_use_manifest_entry() {
+  local file="$1"
+  local type="$2"
+  path_has_manifest_unsafe_chars "$file" && return 1
+  [ "${manifest_type[$file]:-}" = "$type" ] || return 1
+  [ -n "${file_size[$file]+x}" ] || return 1
+  [ "${manifest_size[$file]:-}" = "${file_size[$file]}" ] || return 1
+  [ "${manifest_mtime[$file]:-}" = "${file_mtime[$file]}" ] || return 1
+}
+
+manifest_write_header() {
+  [ "$manifest_write_enabled" -eq 1 ] || return 0
+  printf '#leaf-armhf-scan-manifest\t1\n' >"$manifest_tmp"
+  printf '#key\t%s\n' "$manifest_key" >>"$manifest_tmp"
+}
+
+manifest_record_script() {
+  local file="$1"
+  local outcomes="$2"
+  local field_outcomes="$outcomes"
+  [ "$manifest_write_enabled" -eq 1 ] || return 0
+  path_has_manifest_unsafe_chars "$file" && return 0
+  [ -n "${file_size[$file]+x}" ] || return 0
+  [ -n "$field_outcomes" ] || field_outcomes="-"
+  printf 'S\t%s\t%s\t%s\t%s\n' \
+    "${file_size[$file]}" \
+    "${file_mtime[$file]}" \
+    "$field_outcomes" \
+    "$file" >>"$manifest_tmp"
+}
+
+manifest_record_elf() {
+  local file="$1"
+  local kind="$2"
+  local interpreter="$3"
+  local sha="$4"
+  local action="$5"
+  local field_kind="$kind"
+  local field_interpreter="$interpreter"
+  local field_sha="$sha"
+  local field_action="$action"
+  [ "$manifest_write_enabled" -eq 1 ] || return 0
+  path_has_manifest_unsafe_chars "$file" && return 0
+  [ -n "${file_size[$file]+x}" ] || return 0
+  [ -n "$field_kind" ] || field_kind="-"
+  [ -n "$field_interpreter" ] || field_interpreter="-"
+  [ -n "$field_sha" ] || field_sha="-"
+  [ -n "$field_action" ] || field_action="-"
+  printf 'E\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "${file_size[$file]}" \
+    "${file_mtime[$file]}" \
+    "$field_kind" \
+    "$field_interpreter" \
+    "$field_sha" \
+    "$field_action" \
+    "$file" >>"$manifest_tmp"
+}
+
+append_csv_action() {
+  local action="$1"
+  [ -n "$action" ] || return 0
+  if [ -n "$script_cache_outcomes" ]; then
+    script_cache_outcomes="$script_cache_outcomes,$action"
+  else
+    script_cache_outcomes="$action"
+  fi
+}
+
+script_cache_action() {
+  case "$1" in
+    port-env-patched) printf 'port-env-already' ;;
+    port-env-already) printf 'port-env-already' ;;
+    port-paths-patched) printf 'port-paths-already' ;;
+    port-paths-already) printf 'port-paths-already' ;;
+    libretro-retroarch-patched) printf 'libretro-retroarch-already' ;;
+    libretro-retroarch-already) printf 'libretro-retroarch-already' ;;
+    libretro-retroarch-missing) printf 'libretro-retroarch-missing' ;;
+    godot-wayland-patched) printf 'godot-wayland-already' ;;
+    godot-wayland-already) printf 'godot-wayland-already' ;;
+    weston-cleanup-patched) printf 'weston-cleanup-already' ;;
+    weston-cleanup-already) printf 'weston-cleanup-already' ;;
+    weston-cleanup-missing) printf 'weston-cleanup-missing' ;;
+    godot-direct-sdl2-patched) printf 'godot-direct-sdl2-already' ;;
+    godot-direct-sdl2-already) printf 'godot-direct-sdl2-already' ;;
+    godot-direct-sdl2-missing) printf 'godot-direct-sdl2-missing' ;;
+    runtime-compat-gothic-machismo-gles-patched) printf 'runtime-compat-gothic-machismo-gles-already' ;;
+    runtime-compat-gothic-machismo-gles-already) printf 'runtime-compat-gothic-machismo-gles-already' ;;
+    runtime-compat-soh-display-patched) printf 'runtime-compat-soh-display-already' ;;
+    runtime-compat-soh-display-already) printf 'runtime-compat-soh-display-already' ;;
+    runtime-compat-vvvvvv-sdl2-fullscreen-patched) printf 'runtime-compat-vvvvvv-sdl2-fullscreen-already' ;;
+    runtime-compat-vvvvvv-sdl2-fullscreen-already) printf 'runtime-compat-vvvvvv-sdl2-fullscreen-already' ;;
+    runtime-compat-vvvvvv-sdl2-fullscreen-missing-shim) printf 'runtime-compat-vvvvvv-sdl2-fullscreen-missing-shim' ;;
+    bgdi-sdl2-fullscreen-patched) printf 'bgdi-sdl2-fullscreen-already' ;;
+    bgdi-sdl2-fullscreen-already) printf 'bgdi-sdl2-fullscreen-already' ;;
+    bgdi-sdl2-fullscreen-missing-shim) printf 'bgdi-sdl2-fullscreen-missing-shim' ;;
+    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-vvvvvv-sdl2-fullscreen-missing-launch|runtime-compat-vvvvvv-sdl2-fullscreen-error|weston-cleanup-error|godot-direct-sdl2-error|bgdi-sdl2-fullscreen-error)
+      return 1
+      ;;
+    *) printf '' ;;
+  esac
+}
+
+record_script_action() {
+  case "$1" in
+    port-env-patched) port_env_patched=$((port_env_patched + 1)) ;;
+    port-env-already) port_env_already=$((port_env_already + 1)) ;;
+    port-paths-patched) port_paths_patched=$((port_paths_patched + 1)) ;;
+    port-paths-already) port_paths_already=$((port_paths_already + 1)) ;;
+    libretro-retroarch-patched) libretro_retroarch_patched=$((libretro_retroarch_patched + 1)) ;;
+    libretro-retroarch-already) libretro_retroarch_already=$((libretro_retroarch_already + 1)) ;;
+    libretro-retroarch-missing) libretro_retroarch_missing=$((libretro_retroarch_missing + 1)) ;;
+    godot-wayland-patched) godot_patched=$((godot_patched + 1)) ;;
+    godot-wayland-already) godot_already=$((godot_already + 1)) ;;
+    weston-cleanup-patched) weston_cleanup_patched=$((weston_cleanup_patched + 1)) ;;
+    weston-cleanup-already) weston_cleanup_already=$((weston_cleanup_already + 1)) ;;
+    weston-cleanup-missing) weston_cleanup_missing=$((weston_cleanup_missing + 1)) ;;
+    godot-direct-sdl2-patched) godot_direct_sdl2_patched=$((godot_direct_sdl2_patched + 1)) ;;
+    godot-direct-sdl2-already) godot_direct_sdl2_already=$((godot_direct_sdl2_already + 1)) ;;
+    godot-direct-sdl2-missing) godot_direct_sdl2_missing=$((godot_direct_sdl2_missing + 1)) ;;
+    runtime-compat-gothic-machismo-gles-patched)
+      runtime_compat_gothic_machismo_gles_patched=$((runtime_compat_gothic_machismo_gles_patched + 1))
+      ;;
+    runtime-compat-gothic-machismo-gles-already)
+      runtime_compat_gothic_machismo_gles_already=$((runtime_compat_gothic_machismo_gles_already + 1))
+      ;;
+    runtime-compat-soh-display-patched)
+      runtime_compat_soh_display_patched=$((runtime_compat_soh_display_patched + 1))
+      ;;
+    runtime-compat-soh-display-already)
+      runtime_compat_soh_display_already=$((runtime_compat_soh_display_already + 1))
+      ;;
+    runtime-compat-soh-display-missing-anchor)
+      runtime_compat_soh_display_missing_anchor=$((runtime_compat_soh_display_missing_anchor + 1))
+      errors=$((errors + 1))
+      ;;
+    runtime-compat-soh-display-error)
+      runtime_compat_soh_display_errors=$((runtime_compat_soh_display_errors + 1))
+      errors=$((errors + 1))
+      ;;
+    runtime-compat-vvvvvv-sdl2-fullscreen-patched)
+      runtime_compat_vvvvvv_sdl2_fullscreen_patched=$((runtime_compat_vvvvvv_sdl2_fullscreen_patched + 1))
+      ;;
+    runtime-compat-vvvvvv-sdl2-fullscreen-already)
+      runtime_compat_vvvvvv_sdl2_fullscreen_already=$((runtime_compat_vvvvvv_sdl2_fullscreen_already + 1))
+      ;;
+    runtime-compat-vvvvvv-sdl2-fullscreen-missing-shim)
+      runtime_compat_vvvvvv_sdl2_fullscreen_missing_shim=$((runtime_compat_vvvvvv_sdl2_fullscreen_missing_shim + 1))
+      ;;
+    runtime-compat-vvvvvv-sdl2-fullscreen-missing-launch)
+      runtime_compat_vvvvvv_sdl2_fullscreen_missing_launch=$((runtime_compat_vvvvvv_sdl2_fullscreen_missing_launch + 1))
+      errors=$((errors + 1))
+      ;;
+    runtime-compat-vvvvvv-sdl2-fullscreen-error)
+      runtime_compat_vvvvvv_sdl2_fullscreen_errors=$((runtime_compat_vvvvvv_sdl2_fullscreen_errors + 1))
+      errors=$((errors + 1))
+      ;;
+    bgdi-sdl2-fullscreen-patched) bgdi_sdl2_fullscreen_patched=$((bgdi_sdl2_fullscreen_patched + 1)) ;;
+    bgdi-sdl2-fullscreen-already) bgdi_sdl2_fullscreen_already=$((bgdi_sdl2_fullscreen_already + 1)) ;;
+    bgdi-sdl2-fullscreen-missing-shim) bgdi_sdl2_fullscreen_missing_shim=$((bgdi_sdl2_fullscreen_missing_shim + 1)) ;;
+    bgdi-sdl2-fullscreen-error)
+      bgdi_sdl2_fullscreen_errors=$((bgdi_sdl2_fullscreen_errors + 1))
+      errors=$((errors + 1))
+      ;;
+  esac
+}
+
+handle_script_action() {
+  local action="$1"
+  local cache_action
+  [ -n "$action" ] || return 0
+  record_script_action "$action"
+  if cache_action="$(script_cache_action "$action")"; then
+    append_csv_action "$cache_action"
+  else
+    script_cacheable=0
+  fi
+}
+
+replay_script_outcomes() {
+  local outcomes="$1"
+  local action rest
+  [ -n "$outcomes" ] || return 0
+  rest="$outcomes"
+  while [ -n "$rest" ]; do
+    action="${rest%%,*}"
+    if [ "$rest" = "$action" ]; then
+      rest=""
+    else
+      rest="${rest#*,}"
+    fi
+    record_script_action "$action"
+  done
+}
+
+replay_elf_manifest_entry() {
+  local file="$1"
+  local kind="${manifest_kind[$file]:-}"
+  local interpreter="${manifest_interpreter[$file]:-}"
+  local sha="${manifest_sha[$file]:-}"
+  local action="${manifest_action[$file]:-}"
+
+  case "$action" in
+    ignored)
+      ;;
+    wrapper-present)
+      already=$((already + 1))
+      printf '%s\t%s\t%s\t%s\t%s\n' "$file" "${kind:-wrapper}" "" "$sha" "$action" >>"$tmp_records"
+      ;;
+    shared-object)
+      seen=$((seen + 1))
+      shared=$((shared + 1))
+      printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$kind" "$interpreter" "$sha" "$action" >>"$tmp_records"
+      ;;
+    needs-wrapper-compat-missing)
+      seen=$((seen + 1))
+      needs_wrapper=$((needs_wrapper + 1))
+      printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$kind" "$interpreter" "$sha" "$action" >>"$tmp_records"
+      ;;
+    already-normalized)
+      seen=$((seen + 1))
+      already=$((already + 1))
+      printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$kind" "$interpreter" "$sha" "$action" >>"$tmp_records"
+      ;;
+    observed)
+      seen=$((seen + 1))
+      printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$kind" "$interpreter" "$sha" "$action" >>"$tmp_records"
+      ;;
+  esac
+}
+
 write_leaf_hook
 patch_control_txt
 
+manifest_read_enabled=1
+manifest_write_enabled=1
+cache_state="cold"
+if [ "$scan_mode" = "full" ]; then
+  manifest_read_enabled=0
+  manifest_write_enabled=0
+  cache_state="disabled"
+elif is_truthy "$scan_no_cache"; then
+  manifest_read_enabled=0
+  cache_state="disabled"
+elif [ "$stat_style" = "none" ]; then
+  manifest_read_enabled=0
+  manifest_write_enabled=0
+  cache_state="disabled"
+fi
+
+if [ "$manifest_read_enabled" -eq 1 ]; then
+  if load_manifest; then
+    cache_state="warm"
+  else
+    manifest_type=()
+    manifest_size=()
+    manifest_mtime=()
+    manifest_kind=()
+    manifest_interpreter=()
+    manifest_sha=()
+    manifest_action=()
+    manifest_outcomes=()
+    cache_state="cold"
+  fi
+fi
+
+scan_tmp_dir="$leaf_dir/scan-tmp.$$"
 tmp_records="$report_tsv.tmp.$$"
+tmp_json="$report_json.tmp.$$"
+manifest_tmp=""
+cleanup_scan_tmp() {
+  rm -rf "$scan_tmp_dir"
+  rm -f "$tmp_records" "$tmp_json"
+  if [ -n "$manifest_tmp" ]; then
+    rm -f "$manifest_tmp"
+  fi
+}
+trap cleanup_scan_tmp EXIT
+
+mkdir -p "$scan_tmp_dir"
+script_candidates="$scan_tmp_dir/scripts.list"
+elf_candidates="$scan_tmp_dir/elfs.list"
+script_stats="$scan_tmp_dir/scripts.stats"
+elf_stats="$scan_tmp_dir/elfs.stats"
+
+find_shell_script_candidates >"$script_candidates"
+find_elf_candidates >"$elf_candidates"
+if [ "$manifest_read_enabled" -eq 1 ] || [ "$manifest_write_enabled" -eq 1 ]; then
+  stat_candidate_list "$script_candidates" "$script_stats"
+  stat_candidate_list "$elf_candidates" "$elf_stats"
+  load_stat_file "$script_stats"
+  load_stat_file "$elf_stats"
+fi
+
+if [ "$manifest_write_enabled" -eq 1 ]; then
+  manifest_tmp="$manifest_path.tmp.$$"
+  manifest_write_header
+fi
+
 printf 'path\tkind\tinterpreter\tsha256\taction\n' >"$tmp_records"
 
 seen=0
 shell_scripts_seen=0
+files_skipped=0
+files_processed=0
 wrapped=0
 shared=0
 needs_wrapper=0
@@ -1158,101 +1658,58 @@ bgdi_sdl2_fullscreen_errors=0
 while IFS= read -r -d '' file; do
   shell_scripts_seen=$((shell_scripts_seen + 1))
 
-  case "$(normalize_port_env_script "$file")" in
-    port-env-patched) port_env_patched=$((port_env_patched + 1)) ;;
-    port-env-already) port_env_already=$((port_env_already + 1)) ;;
-  esac
+  if can_use_manifest_entry "$file" "S"; then
+    files_skipped=$((files_skipped + 1))
+    replay_script_outcomes "${manifest_outcomes[$file]:-}"
+    manifest_record_script "$file" "${manifest_outcomes[$file]:-}"
+    continue
+  fi
 
-  case "$(normalize_port_paths_script "$file")" in
-    port-paths-patched) port_paths_patched=$((port_paths_patched + 1)) ;;
-    port-paths-already) port_paths_already=$((port_paths_already + 1)) ;;
-  esac
+  files_processed=$((files_processed + 1))
+  script_cache_outcomes=""
+  script_cacheable=1
 
-  case "$(normalize_libretro_retroarch_script "$file")" in
-    libretro-retroarch-patched) libretro_retroarch_patched=$((libretro_retroarch_patched + 1)) ;;
-    libretro-retroarch-already) libretro_retroarch_already=$((libretro_retroarch_already + 1)) ;;
-    libretro-retroarch-missing) libretro_retroarch_missing=$((libretro_retroarch_missing + 1)) ;;
-  esac
-
-  case "$(normalize_godot_wayland_script "$file")" in
-    godot-wayland-patched) godot_patched=$((godot_patched + 1)) ;;
-    godot-wayland-already) godot_already=$((godot_already + 1)) ;;
-  esac
-
-  case "$(normalize_godot_weston_cleanup_script "$file")" in
-    weston-cleanup-patched) weston_cleanup_patched=$((weston_cleanup_patched + 1)) ;;
-    weston-cleanup-already) weston_cleanup_already=$((weston_cleanup_already + 1)) ;;
-    weston-cleanup-missing) weston_cleanup_missing=$((weston_cleanup_missing + 1)) ;;
-  esac
-
-  case "$(normalize_godot_direct_sdl2_script "$file")" in
-    godot-direct-sdl2-patched) godot_direct_sdl2_patched=$((godot_direct_sdl2_patched + 1)) ;;
-    godot-direct-sdl2-already) godot_direct_sdl2_already=$((godot_direct_sdl2_already + 1)) ;;
-    godot-direct-sdl2-missing) godot_direct_sdl2_missing=$((godot_direct_sdl2_missing + 1)) ;;
-  esac
+  handle_script_action "$(normalize_port_env_script "$file")"
+  handle_script_action "$(normalize_port_paths_script "$file")"
+  handle_script_action "$(normalize_libretro_retroarch_script "$file")"
+  handle_script_action "$(normalize_godot_wayland_script "$file")"
+  handle_script_action "$(normalize_godot_weston_cleanup_script "$file")"
+  handle_script_action "$(normalize_godot_direct_sdl2_script "$file")"
 
   while IFS= read -r runtime_compat_action; do
-    case "$runtime_compat_action" in
-      runtime-compat-gothic-machismo-gles-patched)
-        runtime_compat_gothic_machismo_gles_patched=$((runtime_compat_gothic_machismo_gles_patched + 1))
-        ;;
-      runtime-compat-gothic-machismo-gles-already)
-        runtime_compat_gothic_machismo_gles_already=$((runtime_compat_gothic_machismo_gles_already + 1))
-        ;;
-      runtime-compat-soh-display-patched)
-        runtime_compat_soh_display_patched=$((runtime_compat_soh_display_patched + 1))
-        ;;
-      runtime-compat-soh-display-already)
-        runtime_compat_soh_display_already=$((runtime_compat_soh_display_already + 1))
-        ;;
-      runtime-compat-soh-display-missing-anchor)
-        runtime_compat_soh_display_missing_anchor=$((runtime_compat_soh_display_missing_anchor + 1))
-        errors=$((errors + 1))
-        ;;
-      runtime-compat-soh-display-error)
-        runtime_compat_soh_display_errors=$((runtime_compat_soh_display_errors + 1))
-        errors=$((errors + 1))
-        ;;
-      runtime-compat-vvvvvv-sdl2-fullscreen-patched)
-        runtime_compat_vvvvvv_sdl2_fullscreen_patched=$((runtime_compat_vvvvvv_sdl2_fullscreen_patched + 1))
-        ;;
-      runtime-compat-vvvvvv-sdl2-fullscreen-already)
-        runtime_compat_vvvvvv_sdl2_fullscreen_already=$((runtime_compat_vvvvvv_sdl2_fullscreen_already + 1))
-        ;;
-      runtime-compat-vvvvvv-sdl2-fullscreen-missing-shim)
-        runtime_compat_vvvvvv_sdl2_fullscreen_missing_shim=$((runtime_compat_vvvvvv_sdl2_fullscreen_missing_shim + 1))
-        ;;
-      runtime-compat-vvvvvv-sdl2-fullscreen-missing-launch)
-        runtime_compat_vvvvvv_sdl2_fullscreen_missing_launch=$((runtime_compat_vvvvvv_sdl2_fullscreen_missing_launch + 1))
-        errors=$((errors + 1))
-        ;;
-      runtime-compat-vvvvvv-sdl2-fullscreen-error)
-        runtime_compat_vvvvvv_sdl2_fullscreen_errors=$((runtime_compat_vvvvvv_sdl2_fullscreen_errors + 1))
-        errors=$((errors + 1))
-        ;;
-    esac
+    handle_script_action "$runtime_compat_action"
   done < <(apply_runtime_compat_rules_script "$file")
 
-  case "$(normalize_bgdi_sdl2_fullscreen_script "$file")" in
-    bgdi-sdl2-fullscreen-patched) bgdi_sdl2_fullscreen_patched=$((bgdi_sdl2_fullscreen_patched + 1)) ;;
-    bgdi-sdl2-fullscreen-already) bgdi_sdl2_fullscreen_already=$((bgdi_sdl2_fullscreen_already + 1)) ;;
-    bgdi-sdl2-fullscreen-missing-shim) bgdi_sdl2_fullscreen_missing_shim=$((bgdi_sdl2_fullscreen_missing_shim + 1)) ;;
-    bgdi-sdl2-fullscreen-error)
-      bgdi_sdl2_fullscreen_errors=$((bgdi_sdl2_fullscreen_errors + 1))
-      errors=$((errors + 1))
-      ;;
-  esac
-done < <(find_shell_script_candidates)
+  handle_script_action "$(normalize_bgdi_sdl2_fullscreen_script "$file")"
+
+  if [ "$script_cacheable" -eq 1 ]; then
+    refresh_file_stat "$file" || true
+    manifest_record_script "$file" "$script_cache_outcomes"
+  fi
+done <"$script_candidates"
 
 while IFS= read -r -d '' file; do
+  if can_use_manifest_entry "$file" "E"; then
+    files_skipped=$((files_skipped + 1))
+    replay_elf_manifest_entry "$file"
+    manifest_record_elf \
+      "$file" \
+      "${manifest_kind[$file]:-}" \
+      "${manifest_interpreter[$file]:-}" \
+      "${manifest_sha[$file]:-}" \
+      "${manifest_action[$file]:-}"
+    continue
+  fi
+
+  files_processed=$((files_processed + 1))
   header="$(elf_header_hex "$file")"
   if ! is_armhf_elf "$header"; then
-    if head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER=1'; then
+    if [ "${header:0:4}" = "2321" ] && is_leaf_armhf_wrapper "$file"; then
       action="wrapper-present"
       original="$(wrapper_path_for "$file")"
       if [ "$compat_available" -eq 1 ] &&
          [ -f "$original" ] &&
-         ! head -n 4 "$file" 2>/dev/null | grep -q 'LEAF_PM_ARMHF_WRAPPER_VERSION=3'; then
+         ! is_leaf_armhf_wrapper_v3 "$file"; then
         write_armhf_wrapper "$file" "$original"
         wrapped=$((wrapped + 1))
         action="rewrapped"
@@ -1261,6 +1718,10 @@ while IFS= read -r -d '' file; do
       fi
       sha="$(file_sha256 "$file")"
       printf '%s\t%s\t%s\t%s\t%s\n' "$file" "wrapper" "" "$sha" "$action" >>"$tmp_records"
+      refresh_file_stat "$file" || true
+      manifest_record_elf "$file" "wrapper" "" "$sha" "wrapper-present"
+    else
+      manifest_record_elf "$file" "" "" "" "ignored"
     fi
     continue
   fi
@@ -1288,11 +1749,24 @@ while IFS= read -r -d '' file; do
   fi
 
   printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$kind" "$interpreter" "$sha" "$action" >>"$tmp_records"
-done < <(find_elf_candidates)
+
+  case "$action" in
+    wrapped|rewrapped)
+      refresh_file_stat "$file" || true
+      post_sha="$(file_sha256 "$file")"
+      manifest_record_elf "$file" "wrapper" "" "$post_sha" "wrapper-present"
+      ;;
+    error)
+      ;;
+    *)
+      refresh_file_stat "$file" || true
+      manifest_record_elf "$file" "$kind" "$interpreter" "$sha" "$action"
+      ;;
+  esac
+done <"$elf_candidates"
 
 mv "$tmp_records" "$report_tsv"
 
-tmp_json="$report_json.tmp.$$"
 cat >"$tmp_json" <<EOF
 {
   "schema": 1,
@@ -1308,6 +1782,10 @@ cat >"$tmp_json" <<EOF
   "aarch64_sdl2_fullscreen_available": $([ "$aarch64_sdl2_fullscreen_available" -eq 1 ] && printf 'true' || printf 'false'),
   "hook": "$(json_escape "$hook_path")",
   "records_tsv": "$(json_escape "$report_tsv")",
+  "manifest": "$(json_escape "$manifest_path")",
+  "files_skipped": $files_skipped,
+  "files_processed": $files_processed,
+  "cache": "$(json_escape "$cache_state")",
   "armhf_elfs_seen": $seen,
   "armhf_execs_wrapped": $wrapped,
   "armhf_execs_already_normalized": $already,
@@ -1351,4 +1829,8 @@ cat >"$tmp_json" <<EOF
 EOF
 mv "$tmp_json" "$report_json"
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_vvvvvv_sdl2_fullscreen_patched=$runtime_compat_vvvvvv_sdl2_fullscreen_patched bgdi_sdl2_fullscreen_patched=$bgdi_sdl2_fullscreen_patched bgdi_sdl2_fullscreen_missing_shim=$bgdi_sdl2_fullscreen_missing_shim report=$report_tsv"
+if [ "$manifest_write_enabled" -eq 1 ]; then
+  mv "$manifest_tmp" "$manifest_path"
+fi
+
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_vvvvvv_sdl2_fullscreen_patched=$runtime_compat_vvvvvv_sdl2_fullscreen_patched bgdi_sdl2_fullscreen_patched=$bgdi_sdl2_fullscreen_patched bgdi_sdl2_fullscreen_missing_shim=$bgdi_sdl2_fullscreen_missing_shim report=$report_tsv"

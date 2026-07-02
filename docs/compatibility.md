@@ -113,6 +113,17 @@ again after upstream PortMaster exits:
 - wrap dynamic armhf executables that name `/lib/ld-linux-armhf.so.3`
 - leave armhf shared objects untouched and report them
 
+The scanner has two layers of speed control. The Leaf wrapper first checks a
+cheap top-level `Roms/PORTS` stamp and skips the scanner entirely when no port
+tree entry changed. When a scan is needed, `scan-and-fix-port-elfs.sh` uses
+`$USERDATA_PATH/portmaster/.leaf/armhf-scan.manifest` to skip unchanged files by
+size, mtime, and path. The manifest key includes the script's internal
+`RULESET_VERSION`, scan mode, compat availability, SDL fullscreen shim
+availability, and `ports_dir`, so changing those inputs naturally forces a cold
+scan. `LEAF_PM_SCAN_NO_CACHE=1` ignores the existing manifest but writes a fresh
+one; `LEAF_PM_FULL_PORT_SCAN=1` disables manifest reads and writes for an
+exhaustive diagnostic scan.
+
 The hook exports `DEVICE_HAS_ARMHF=Y` plus `LEAF_PM_ARMHF_RUN`,
 `LEAF_PM_ARMHF_LOADER`, `LEAF_PM_ARMHF_LIB_PATH`, and `LEAF_PM_BOX86` when the
 managed box86 is installed. `DEVICE_ARCH` remains `aarch64`, so ports that
@@ -247,6 +258,7 @@ Reports are written to:
 ```text
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.json
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.tsv
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.manifest
 ```
 
 After the post-exit scan, the manager asks Jawaka to run `scan-library` through

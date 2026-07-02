@@ -229,15 +229,21 @@ That scanner calls `scripts/write-leaf-runtime-hook.sh` to refresh
 ```text
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.json
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.tsv
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.manifest
 ```
 
 Normal launch uses a fast scan: installed `.sh` launchers plus likely binary
-and library locations are checked, while large asset trees are skipped. Set
-`LEAF_PM_FULL_PORT_SCAN=1` when running `scripts/scan-and-fix-port-elfs.sh`
-manually to force the older exhaustive walk of every file under `Roms/PORTS`.
-The wrapper also stores a cheap top-level `Roms/PORTS` stamp so repeated
-PortMaster open/close cycles skip port repair, artwork sync, and Jawaka rescan
-when no ports changed.
+and library locations are checked, while large asset trees are skipped. The
+scanner keeps an incremental manifest keyed by its internal `RULESET_VERSION`,
+scan mode, compatibility-pack availability, SDL shim availability, and
+`Roms/PORTS` path; unchanged files are skipped on warm runs. Set
+`LEAF_PM_SCAN_NO_CACHE=1` to ignore the old manifest and write a fresh one, or
+set `LEAF_PM_FULL_PORT_SCAN=1` when running
+`scripts/scan-and-fix-port-elfs.sh` manually to force the older exhaustive walk
+of every file under `Roms/PORTS` without reading or writing the manifest. The
+wrapper also stores a cheap top-level `Roms/PORTS` stamp so repeated PortMaster
+open/close cycles skip port repair, artwork sync, and Jawaka rescan when no
+ports changed.
 
 ## Native Compatibility Tools
 
