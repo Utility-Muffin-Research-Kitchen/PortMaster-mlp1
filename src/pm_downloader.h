@@ -19,5 +19,8 @@ int pm_download_partial_path(const char *dest_path, char *out, size_t out_size);
 int pm_download_file(const pm_download_spec *spec, char *err, size_t err_size);
 int pm_download_text(const char *url, size_t max_bytes, bool allow_http,
                      char **out_text, char *err, size_t err_size);
+int pm_download_text_with_timeout(const char *url, size_t max_bytes, bool allow_http,
+                                  long timeout_seconds,
+                                  char **out_text, char *err, size_t err_size);
 
 #endif /* PM_DOWNLOADER_H */

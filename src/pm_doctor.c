@@ -1,5 +1,7 @@
 #include "pm_doctor.h"
 
+#include "pm_launcher.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -39,13 +41,11 @@ void pm_doctor_run(const pm_context *ctx, pm_doctor_report *report)
                 "Upstream PortMaster install", ctx->portmaster_dir);
 
     char runtime_python[PM_PATH_MAX];
-    bool has_runtime = pm_join3(runtime_python, sizeof(runtime_python), ctx->runtime_dir,
-                                "bin", "python3") == 0 && pm_file_exists(runtime_python);
-    bool has_system_python = pm_file_exists("/usr/bin/python3") || pm_file_exists("/bin/python3");
-    append_line(report, (has_runtime || has_system_python) ? "OK" : "WARN",
+    bool has_runtime = pm_portmaster_runtime_available(ctx, runtime_python, sizeof(runtime_python),
+                                                       NULL);
+    append_line(report, has_runtime ? "OK" : "WARN",
                 "PortMaster Python runtime",
-                has_runtime ? runtime_python :
-                (has_system_python ? "system python3" : "install managed runtime archive before launch"));
+                has_runtime ? runtime_python : "install managed runtime archive before launch");
 
     append_line(report, pm_dir_exists(ctx->ports_dir) ? "OK" : "WARN",
                 "Ports folder", ctx->ports_dir);

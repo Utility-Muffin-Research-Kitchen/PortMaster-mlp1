@@ -13,10 +13,20 @@ typedef struct {
     bool from_cache;
 } pm_portmaster_update_status;
 
+typedef enum {
+    PM_UPDATE_CHECK_INTERACTIVE = 0,
+    PM_UPDATE_CHECK_STARTUP,
+} pm_update_check_policy;
+
 int pm_portmaster_check_update(pm_context *ctx, pm_portmaster_update_status *out,
                                char *err, size_t err_size);
 int pm_portmaster_check_update_cached(pm_context *ctx, pm_portmaster_update_status *out,
                                       char *err, size_t err_size);
+int pm_portmaster_check_update_cached_policy(pm_context *ctx,
+                                             pm_portmaster_update_status *out,
+                                             pm_update_check_policy policy,
+                                             char *err,
+                                             size_t err_size);
 int pm_portmaster_apply_update(pm_context *ctx, const pm_portmaster_update_status *status,
                                char *err, size_t err_size);
 int pm_portmaster_record_update_declined(pm_context *ctx,

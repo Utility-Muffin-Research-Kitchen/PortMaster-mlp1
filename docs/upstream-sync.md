@@ -53,7 +53,12 @@ and promotes it only after validation passes.
 The existing install is backed up before promotion; if a post-promote step
 fails, the manager restores that backup or removes the incomplete initial
 install before returning the failure.
-The UI also runs a manager-owned cached/due check before `Launch PortMaster`.
+
+The UI runs a manager-owned cached/due check when the wrapper starts, but only
+when PortMaster is installed and setup is ready. Fresh cached results are used
+immediately. Due network metadata checks use a short startup timeout so a slow
+network does not block the wrapper; failure or timeout is reported quietly in
+Troubleshooting and launch remains available for the current working install.
 Successful checks are cached for 24 hours in:
 
 ```text
@@ -67,6 +72,10 @@ launch with the same prompt. Failed-version suppression is tied to the manager
 version, patch-set ID, and patch-set fingerprint; changing the manager build or
 Leaf patch set allows the same upstream version to be offered again.
 
+The `Update PortMaster` menu row and Troubleshooting's manual `Check For
+Updates` are explicit user actions. They bypass declined-version prompt
+suppression and use the full foreground metadata check path.
+
 Update attempts are appended to:
 
 ```text
@@ -78,7 +87,7 @@ The staged candidate validator checks that `PortMaster.sh`, `pugwash`,
 expected Leaf markers before the live tree is touched.
 
 Use `LEAF_PM_FORCE_UPDATE_CHECK=1` to force a fresh metadata poll,
-`LEAF_PM_SKIP_UPDATE_CHECK=1` to skip the manager-owned prelaunch check,
+`LEAF_PM_SKIP_UPDATE_CHECK=1` to skip the manager-owned startup check,
 `LEAF_PM_UPDATE_VERSION_URL` to point at test metadata, and
 `LEAF_PM_ALLOW_HTTP_UPDATE_METADATA=1` only for local HTTP metadata tests. Use
 `LEAF_PM_ALLOW_UPSTREAM_SELF_UPDATE=1` only as a developer escape hatch for

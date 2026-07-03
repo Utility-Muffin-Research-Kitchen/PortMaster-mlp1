@@ -53,6 +53,17 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (argc > 1 && strcmp(argv[1], "--ui-state-text") == 0) {
+        char text[8192];
+        if (pm_ui_menu_state_text(&ctx, text, sizeof(text)) != 0) {
+            fprintf(stderr, "ui state output truncated\n");
+            fputs(text, stdout);
+            return 1;
+        }
+        fputs(text, stdout);
+        return 0;
+    }
+
     if (argc > 2 && strcmp(argv[1], "--set-controller-layout") == 0) {
         pm_controller_layout layout = PM_CONTROLLER_LAYOUT_X360;
         char err[512];

@@ -10,23 +10,149 @@
 #include "pm_launcher.h"
 #include "pm_update.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 typedef enum {
-    PM_ACTION_STATUS = 0,
-    PM_ACTION_INSTALL,
-    PM_ACTION_INSTALL_UI_RUNTIME,
-    PM_ACTION_CHECK_UPDATE,
+    PM_ACTION_NONE = 0,
     PM_ACTION_LAUNCH,
+    PM_ACTION_INSTALL,
+    PM_ACTION_UPDATE,
     PM_ACTION_CONTROLLER_LAYOUT,
-    PM_ACTION_REPATCH,
-    PM_ACTION_RUNTIMES,
-    PM_ACTION_ARMHF,
-    PM_ACTION_LOGS,
-    PM_ACTION_PATHS,
+    PM_ACTION_REPAIR,
+    PM_ACTION_TROUBLESHOOTING,
     PM_ACTION_QUIT,
 } pm_action;
+
+typedef enum {
+    PM_TROUBLE_ACTION_NONE = 0,
+    PM_TROUBLE_ACTION_HEALTH,
+    PM_TROUBLE_ACTION_CHECK_UPDATE,
+    PM_TROUBLE_ACTION_LOGS,
+    PM_TROUBLE_ACTION_PATHS,
+    PM_TROUBLE_ACTION_BACK,
+} pm_trouble_action;
+
+typedef enum {
+    PM_UI_SETUP_NOT_INSTALLED = 0,
+    PM_UI_SETUP_INCOMPLETE,
+    PM_UI_SETUP_READY,
+} pm_ui_setup_state;
+
+typedef struct {
+    bool installed;
+    bool has_runtime;
+    bool uses_system_python;
+    bool lock_loaded;
+    bool runtime_lock_loaded;
+    bool manifest_exists;
+    bool launchable;
+    pm_ui_setup_state setup_state;
+    pm_portmaster_update_status update;
+    bool update_status_valid;
+    char runtime_path[PM_PATH_MAX];
+    char launch_disabled_reason[256];
+    char setup_summary[128];
+    char update_summary[128];
+} pm_ui_state;
+
+typedef struct {
+    bool startup_update_check_attempted;
+    bool startup_update_check_timed_out;
+    bool update_status_valid;
+    pm_portmaster_update_status update;
+    char update_error[256];
+} pm_ui_session_state;
+
+typedef struct {
+    pm_action action;
+    bool disabled;
+    const char *disabled_message;
+} pm_menu_row;
+
+static const char *setup_state_slug(pm_ui_setup_state setup_state)
+{
+    switch (setup_state) {
+        case PM_UI_SETUP_NOT_INSTALLED:
+            return "not_installed";
+        case PM_UI_SETUP_INCOMPLETE:
+            return "incomplete";
+        case PM_UI_SETUP_READY:
+            return "ready";
+        default:
+            return "unknown";
+    }
+}
+
+static const char *action_slug(pm_action action)
+{
+    switch (action) {
+        case PM_ACTION_LAUNCH:
+            return "launch";
+        case PM_ACTION_INSTALL:
+            return "install";
+        case PM_ACTION_UPDATE:
+            return "update";
+        case PM_ACTION_CONTROLLER_LAYOUT:
+            return "controller_layout";
+        case PM_ACTION_REPAIR:
+            return "repair";
+        case PM_ACTION_TROUBLESHOOTING:
+            return "troubleshooting";
+        case PM_ACTION_QUIT:
+            return "quit";
+        case PM_ACTION_NONE:
+        default:
+            return "none";
+    }
+}
+
+static void append_text_escaped(char *out, size_t out_size, size_t *used, const char *text)
+{
+    if (!out || out_size == 0 || !used || *used >= out_size) {
+        return;
+    }
+    for (const char *p = text ? text : ""; *p && *used + 1 < out_size; p++) {
+        if (*p == '\n') {
+            if (*used + 2 >= out_size) {
+                break;
+            }
+            out[(*used)++] = '\\';
+            out[(*used)++] = 'n';
+        } else if (*p == '\t') {
+            if (*used + 2 >= out_size) {
+                break;
+            }
+            out[(*used)++] = '\\';
+            out[(*used)++] = 't';
+        } else {
+            out[(*used)++] = *p;
+        }
+    }
+    out[*used] = '\0';
+}
+
+static int appendf(char *out, size_t out_size, size_t *used, const char *fmt, ...)
+{
+    if (!out || out_size == 0 || !used || !fmt || *used >= out_size) {
+        return -1;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    int written = vsnprintf(out + *used, out_size - *used, fmt, ap);
+    va_end(ap);
+    if (written < 0) {
+        return -1;
+    }
+    if ((size_t)written >= out_size - *used) {
+        *used = out_size - 1;
+        out[*used] = '\0';
+        return -1;
+    }
+    *used += (size_t)written;
+    return 0;
+}
 
 static void show_message(const char *message)
 {
@@ -57,84 +183,187 @@ static bool confirm_message(const char *message, const char *confirm_label)
     return cat_confirmation(&opts, &result) == CAT_OK && result.confirmed;
 }
 
-static void show_status(pm_context *ctx)
+static pm_controller_layout current_controller_layout(pm_context *ctx)
 {
-    pm_doctor_report report;
-    pm_doctor_run(ctx, &report);
-    show_message(report.text);
-}
-
-typedef struct {
-    pm_context *ctx;
-    char err[512];
-} pm_runtime_job;
-
-static int runtime_worker(void *userdata)
-{
-    pm_runtime_job *job = (pm_runtime_job *)userdata;
-    job->err[0] = '\0';
-    return pm_install_ui_runtime(job->ctx, job->err, sizeof(job->err));
-}
-
-static void show_install_ui_runtime(pm_context *ctx)
-{
-    if (!ctx->runtime_lock_loaded) {
-        char summary[8192];
-        snprintf(summary, sizeof(summary), "UI runtime lock is missing.\n\n%s", ctx->runtime_lock_path);
-        show_message(summary);
-        return;
+    pm_controller_layout layout = PM_CONTROLLER_LAYOUT_X360;
+    if (pm_controller_layout_load(ctx, &layout) != 0) {
+        return PM_CONTROLLER_LAYOUT_X360;
     }
+    return layout;
+}
 
-    pm_runtime_job job = { .ctx = ctx };
-    cat_process_opts opts = {
-        .message = "Installing PortMaster UI runtime\n\nDownloading, verifying, extracting, and replacing the managed Python/SDL runtime.",
-        .show_progress = false,
-        .interrupt_button = CAT_BTN_NONE,
-    };
-    int rc = cat_process_message(&opts, runtime_worker, &job);
-    if (rc == 0) {
-        show_message("PortMaster UI runtime installed.\n\nDoctor should now report a managed Python runtime.");
+static void build_ui_state(pm_context *ctx,
+                           const pm_ui_session_state *session,
+                           pm_ui_state *state)
+{
+    memset(state, 0, sizeof(*state));
+    state->lock_loaded = ctx->lock_loaded;
+    state->runtime_lock_loaded = ctx->runtime_lock_loaded;
+    state->installed = pm_portmaster_is_installed(ctx);
+    state->manifest_exists = pm_file_exists(ctx->manifest_path);
+    state->has_runtime = pm_portmaster_runtime_available(ctx,
+                                                         state->runtime_path,
+                                                         sizeof(state->runtime_path),
+                                                         &state->uses_system_python);
+    state->launchable = pm_portmaster_launch_ready(ctx,
+                                                   state->launch_disabled_reason,
+                                                   sizeof(state->launch_disabled_reason));
+
+    if (!state->installed) {
+        state->setup_state = PM_UI_SETUP_NOT_INSTALLED;
+        pm_copy(state->setup_summary, sizeof(state->setup_summary), "Not installed");
+    } else if (!state->launchable) {
+        state->setup_state = PM_UI_SETUP_INCOMPLETE;
+        if (!state->has_runtime) {
+            pm_copy(state->setup_summary, sizeof(state->setup_summary), "Python runtime missing");
+        } else {
+            pm_copy(state->setup_summary, sizeof(state->setup_summary), "Setup needed");
+        }
+    } else if (!state->manifest_exists) {
+        state->setup_state = PM_UI_SETUP_INCOMPLETE;
+        state->launchable = false;
+        pm_copy(state->setup_summary, sizeof(state->setup_summary), "Setup manifest missing");
+        pm_copy(state->launch_disabled_reason,
+                sizeof(state->launch_disabled_reason),
+                "PortMaster setup needs repair.\n\nUse Repair PortMaster to finish setup.");
     } else {
-        char msg[1024];
-        snprintf(msg, sizeof(msg), "UI runtime install failed.\n\n%s",
-                 job.err[0] ? job.err : "Unknown error");
-        show_message(msg);
+        state->setup_state = PM_UI_SETUP_READY;
+        pm_copy(state->setup_summary, sizeof(state->setup_summary), "Complete");
+    }
+
+    if (session && session->update_status_valid) {
+        state->update = session->update;
+        state->update_status_valid = true;
+        if (state->update.update_available) {
+            pm_format(state->update_summary, sizeof(state->update_summary),
+                      "Stable %s", state->update.source.tag[0] ? state->update.source.tag : "available");
+        } else {
+            pm_copy(state->update_summary, sizeof(state->update_summary), "Current");
+        }
+    } else if (session && session->update_error[0]) {
+        pm_copy(state->update_summary, sizeof(state->update_summary), "Could not check");
+    } else {
+        pm_copy(state->update_summary, sizeof(state->update_summary),
+                state->installed ? "Not checked" : "Not installed");
     }
 }
 
 typedef struct {
     pm_context *ctx;
     char err[512];
+    pm_artwork_sync_result artwork;
+    bool runtime_installed;
+} pm_repair_job;
+
+static int repair_core(pm_context *ctx,
+                       pm_artwork_sync_result *artwork,
+                       bool *runtime_installed,
+                       char *err,
+                       size_t err_size)
+{
+    if (runtime_installed) {
+        *runtime_installed = false;
+    }
+    if (!pm_portmaster_runtime_available(ctx, NULL, 0, NULL)) {
+        if (!ctx->runtime_lock_loaded) {
+            snprintf(err, err_size, "PortMaster runtime setup metadata is missing");
+            return -1;
+        }
+        if (pm_install_ui_runtime(ctx, err, err_size) != 0) {
+            return -1;
+        }
+        if (runtime_installed) {
+            *runtime_installed = true;
+        }
+    }
+
+    if (pm_repatch_portmaster(ctx, err, err_size) != 0) {
+        return -1;
+    }
+    if (artwork) {
+        memset(artwork, 0, sizeof(*artwork));
+        if (pm_artwork_sync(ctx, artwork, err, err_size) != 0) {
+            return -1;
+        }
+    }
+    pm_request_jawaka_library_rescan(ctx);
+    return 0;
+}
+
+static int repair_worker(void *userdata)
+{
+    pm_repair_job *job = (pm_repair_job *)userdata;
+    job->err[0] = '\0';
+    memset(&job->artwork, 0, sizeof(job->artwork));
+    return repair_core(job->ctx,
+                       &job->artwork,
+                       &job->runtime_installed,
+                       job->err,
+                       sizeof(job->err));
+}
+
+typedef struct {
+    pm_context *ctx;
+    char err[512];
+    pm_artwork_sync_result artwork;
+    bool runtime_installed;
 } pm_install_job;
 
 static int install_worker(void *userdata)
 {
     pm_install_job *job = (pm_install_job *)userdata;
     job->err[0] = '\0';
-    return pm_install_portmaster(job->ctx, job->err, sizeof(job->err));
+    memset(&job->artwork, 0, sizeof(job->artwork));
+    if (pm_install_portmaster(job->ctx, job->err, sizeof(job->err)) != 0) {
+        return -1;
+    }
+    return repair_core(job->ctx,
+                       &job->artwork,
+                       &job->runtime_installed,
+                       job->err,
+                       sizeof(job->err));
 }
 
 static void show_install(pm_context *ctx)
 {
     if (!ctx->lock_loaded) {
         char summary[8192];
-        snprintf(summary, sizeof(summary), "Stable PortMaster lock is missing.\n\n%s", ctx->lock_path);
+        snprintf(summary, sizeof(summary), "PortMaster setup metadata is missing.\n\n%s", ctx->lock_path);
         show_message(summary);
         return;
     }
 
     pm_install_job job = { .ctx = ctx };
     cat_process_opts opts = {
-        .message = "Installing PortMaster\n\nDownloading, verifying, extracting, and writing Leaf manifest.",
+        .message = "Installing PortMaster\n\nDownloading PortMaster...\nPreparing setup...\nFinishing setup...",
         .show_progress = false,
         .interrupt_button = CAT_BTN_NONE,
     };
     int rc = cat_process_message(&opts, install_worker, &job);
     if (rc == 0) {
-        show_message("PortMaster installed and patched.\n\nLeaf manifest has been written.");
+        show_message("PortMaster is ready.");
     } else {
         char msg[1024];
-        snprintf(msg, sizeof(msg), "PortMaster install failed.\n\n%s",
+        snprintf(msg, sizeof(msg), "PortMaster setup needs repair.\n\n%s",
+                 job.err[0] ? job.err : "Unknown error");
+        show_message(msg);
+    }
+}
+
+static void show_repair(pm_context *ctx)
+{
+    pm_repair_job job = { .ctx = ctx };
+    cat_process_opts opts = {
+        .message = "Repairing PortMaster\n\nChecking setup and restoring Leaf support.",
+        .show_progress = false,
+        .interrupt_button = CAT_BTN_NONE,
+    };
+    int rc = cat_process_message(&opts, repair_worker, &job);
+    if (rc == 0) {
+        show_message("PortMaster is ready.");
+    } else {
+        char msg[1024];
+        snprintf(msg, sizeof(msg), "PortMaster repair failed.\n\n%s",
                  job.err[0] ? job.err : "Unknown error");
         show_message(msg);
     }
@@ -143,6 +372,8 @@ static void show_install(pm_context *ctx)
 typedef struct {
     pm_context *ctx;
     pm_portmaster_update_status status;
+    pm_update_check_policy policy;
+    bool cached;
     char err[512];
 } pm_update_job;
 
@@ -151,15 +382,14 @@ static int update_check_worker(void *userdata)
     pm_update_job *job = (pm_update_job *)userdata;
     job->err[0] = '\0';
     memset(&job->status, 0, sizeof(job->status));
+    if (job->cached) {
+        return pm_portmaster_check_update_cached_policy(job->ctx,
+                                                        &job->status,
+                                                        job->policy,
+                                                        job->err,
+                                                        sizeof(job->err));
+    }
     return pm_portmaster_check_update(job->ctx, &job->status, job->err, sizeof(job->err));
-}
-
-static int update_check_cached_worker(void *userdata)
-{
-    pm_update_job *job = (pm_update_job *)userdata;
-    job->err[0] = '\0';
-    memset(&job->status, 0, sizeof(job->status));
-    return pm_portmaster_check_update_cached(job->ctx, &job->status, job->err, sizeof(job->err));
 }
 
 static int update_apply_worker(void *userdata)
@@ -169,42 +399,69 @@ static int update_apply_worker(void *userdata)
     return pm_portmaster_apply_update(job->ctx, &job->status, job->err, sizeof(job->err));
 }
 
-static void show_check_update(pm_context *ctx)
+static void store_update_status(pm_ui_session_state *session,
+                                const pm_portmaster_update_status *status)
 {
-    if (!pm_dir_exists(ctx->portmaster_dir)) {
-        show_message("PortMaster is not installed yet.\n\nInstall PortMaster before checking for GUI updates.");
-        return;
+    session->update = *status;
+    session->update_status_valid = true;
+    session->update_error[0] = '\0';
+}
+
+static bool run_update_flow(pm_context *ctx,
+                            pm_ui_session_state *session,
+                            bool check_first,
+                            bool force_prompt,
+                            bool show_current)
+{
+    pm_update_job job = {
+        .ctx = ctx,
+        .policy = PM_UPDATE_CHECK_INTERACTIVE,
+        .cached = false,
+    };
+
+    if (check_first || !session->update_status_valid) {
+        cat_process_opts check_opts = {
+            .message = "Checking PortMaster update\n\nFetching stable release metadata.",
+            .show_progress = false,
+            .interrupt_button = CAT_BTN_NONE,
+        };
+        int rc = cat_process_message(&check_opts, update_check_worker, &job);
+        if (rc != 0) {
+            pm_copy(session->update_error, sizeof(session->update_error),
+                    job.err[0] ? job.err : "Unknown error");
+            char msg[1024];
+            snprintf(msg, sizeof(msg), "PortMaster update check failed.\n\n%s",
+                     session->update_error);
+            show_message(msg);
+            return false;
+        }
+        store_update_status(session, &job.status);
+    } else {
+        job.status = session->update;
     }
 
-    pm_update_job job = { .ctx = ctx };
-    cat_process_opts check_opts = {
-        .message = "Checking PortMaster GUI update\n\nFetching stable release metadata.",
-        .show_progress = false,
-        .interrupt_button = CAT_BTN_NONE,
-    };
-    int rc = cat_process_message(&check_opts, update_check_worker, &job);
-    if (rc != 0) {
-        char msg[1024];
-        snprintf(msg, sizeof(msg), "PortMaster update check failed.\n\n%s",
-                 job.err[0] ? job.err : "Unknown error");
-        show_message(msg);
-        return;
+    if (!job.status.update_available) {
+        if (show_current) {
+            char summary[1024];
+            pm_portmaster_update_summary(&job.status, summary, sizeof(summary));
+            show_message(summary);
+        }
+        return false;
+    }
+
+    if (!force_prompt && !pm_portmaster_should_prompt_update(ctx, &job.status)) {
+        return false;
     }
 
     char summary[1024];
-    pm_portmaster_update_summary(&job.status, summary, sizeof(summary));
-    if (!job.status.update_available) {
-        show_message(summary);
-        return;
-    }
-
     char prompt[1400];
+    pm_portmaster_update_summary(&job.status, summary, sizeof(summary));
     snprintf(prompt, sizeof(prompt), "%s\n\nUpdate now?", summary);
     if (!confirm_message(prompt, "Update")) {
         char state_err[256];
         (void)pm_portmaster_record_update_declined(ctx, &job.status,
                                                    state_err, sizeof(state_err));
-        return;
+        return false;
     }
 
     cat_process_opts apply_opts = {
@@ -212,68 +469,63 @@ static void show_check_update(pm_context *ctx)
         .show_progress = false,
         .interrupt_button = CAT_BTN_NONE,
     };
-    rc = cat_process_message(&apply_opts, update_apply_worker, &job);
+    int rc = cat_process_message(&apply_opts, update_apply_worker, &job);
     if (rc == 0) {
         char msg[256];
-        snprintf(msg, sizeof(msg), "PortMaster updated to %s.", job.status.source.tag);
+        snprintf(msg, sizeof(msg), "PortMaster updated to %s.",
+                 job.status.source.tag[0] ? job.status.source.tag : "the latest stable release");
         show_message(msg);
-    } else {
-        char state_err[256];
-        (void)pm_portmaster_record_update_failed(ctx, &job.status,
-                                                 job.err[0] ? job.err : "Unknown error",
-                                                 state_err, sizeof(state_err));
-        char msg[1024];
-        snprintf(msg, sizeof(msg), "PortMaster update failed.\n\n%s",
-                 job.err[0] ? job.err : "Unknown error");
-        show_message(msg);
+        session->update_status_valid = false;
+        session->update_error[0] = '\0';
+        return true;
     }
+
+    char state_err[256];
+    (void)pm_portmaster_record_update_failed(ctx, &job.status,
+                                             job.err[0] ? job.err : "Unknown error",
+                                             state_err, sizeof(state_err));
+    pm_copy(session->update_error, sizeof(session->update_error),
+            job.err[0] ? job.err : "Unknown error");
+    char msg[1024];
+    snprintf(msg, sizeof(msg), "PortMaster update failed.\n\n%s",
+             session->update_error);
+    show_message(msg);
+    return false;
 }
 
-typedef struct {
-    pm_context *ctx;
-    char err[512];
-    pm_artwork_sync_result artwork;
-} pm_repatch_job;
-
-static int repatch_worker(void *userdata)
+static void run_startup_update_check(pm_context *ctx,
+                                     const pm_ui_state *state,
+                                     pm_ui_session_state *session)
 {
-    pm_repatch_job *job = (pm_repatch_job *)userdata;
-    job->err[0] = '\0';
-    memset(&job->artwork, 0, sizeof(job->artwork));
-    if (pm_repatch_portmaster(job->ctx, job->err, sizeof(job->err)) != 0) {
-        return -1;
+    if (session->startup_update_check_attempted ||
+        state->setup_state != PM_UI_SETUP_READY) {
+        return;
     }
-    if (pm_artwork_sync(job->ctx, &job->artwork, job->err, sizeof(job->err)) != 0) {
-        return -1;
-    }
-    pm_request_jawaka_library_rescan(job->ctx);
-    return 0;
-}
 
-static void show_repatch(pm_context *ctx)
-{
-    pm_repatch_job job = { .ctx = ctx };
-    cat_process_opts opts = {
-        .message = "Repairing PortMaster patches",
+    session->startup_update_check_attempted = true;
+    pm_update_job job = {
+        .ctx = ctx,
+        .policy = PM_UPDATE_CHECK_STARTUP,
+        .cached = true,
+    };
+    cat_process_opts check_opts = {
+        .message = "Checking PortMaster update",
         .show_progress = false,
         .interrupt_button = CAT_BTN_NONE,
     };
-    int rc = cat_process_message(&opts, repatch_worker, &job);
-    if (rc == 0) {
-        char msg[512];
-        snprintf(msg, sizeof(msg),
-                 "PortMaster patches are applied.\n\nArtwork: %d synced, %d preserved, %d missing, %d failed.\n\nJawaka rescan requested.",
-                 job.artwork.synced,
-                 job.artwork.skipped_existing,
-                 job.artwork.missing_source,
-                 job.artwork.failed);
-        show_message(msg);
-    } else {
-        char msg[1024];
-        snprintf(msg, sizeof(msg), "PortMaster repair failed.\n\n%s",
-                 job.err[0] ? job.err : "Unknown error");
-        show_message(msg);
+    int rc = cat_process_message(&check_opts, update_check_worker, &job);
+    if (rc != 0) {
+        pm_copy(session->update_error, sizeof(session->update_error),
+                job.err[0] ? job.err : "Unknown error");
+        if (strstr(session->update_error, "timed out") ||
+            strstr(session->update_error, "curl=28")) {
+            session->startup_update_check_timed_out = true;
+        }
+        return;
     }
+
+    store_update_status(session, &job.status);
+    (void)run_update_flow(ctx, session, false, false, false);
 }
 
 typedef struct {
@@ -288,61 +540,13 @@ static int launch_worker(void *userdata)
     return pm_launch_portmaster(job->ctx, job->err, sizeof(job->err));
 }
 
-static void show_launch(pm_context *ctx)
+static void show_launch(pm_context *ctx, const pm_ui_state *state)
 {
-    char script[PM_PATH_MAX];
-    pm_join(script, sizeof(script), ctx->portmaster_dir, "PortMaster.sh");
-    if (!pm_file_exists(script)) {
-        char msg[8192];
-        snprintf(msg, sizeof(msg),
-                 "PortMaster is not installed yet.\n\nExpected:\n%s\n\nUse Install PortMaster once Phase 1 wiring lands.",
-                 script);
-        show_message(msg);
+    if (!state->launchable) {
+        show_message(state->launch_disabled_reason[0]
+                         ? state->launch_disabled_reason
+                         : "PortMaster is not ready yet.");
         return;
-    }
-
-    pm_update_job update_job = { .ctx = ctx };
-    cat_process_opts check_opts = {
-        .message = "Checking PortMaster GUI update",
-        .show_progress = false,
-        .interrupt_button = CAT_BTN_NONE,
-    };
-    int update_rc = cat_process_message(&check_opts, update_check_cached_worker, &update_job);
-    if (update_rc == 0 &&
-        pm_portmaster_should_prompt_update(ctx, &update_job.status)) {
-        char summary[1024];
-        char prompt[1400];
-        pm_portmaster_update_summary(&update_job.status, summary, sizeof(summary));
-        snprintf(prompt, sizeof(prompt), "%s\n\nUpdate before launch?", summary);
-        if (confirm_message(prompt, "Update")) {
-            cat_process_opts apply_opts = {
-                .message = "Updating PortMaster\n\nDownloading, verifying, patching, and promoting the managed GUI.",
-                .show_progress = false,
-                .interrupt_button = CAT_BTN_NONE,
-            };
-            int apply_rc = cat_process_message(&apply_opts, update_apply_worker, &update_job);
-            if (apply_rc == 0) {
-                char msg[256];
-                snprintf(msg, sizeof(msg),
-                         "PortMaster updated to %s.\n\nLaunching now.",
-                         update_job.status.source.tag);
-                show_message(msg);
-            } else {
-                char state_err[256];
-                (void)pm_portmaster_record_update_failed(ctx, &update_job.status,
-                                                         update_job.err[0] ? update_job.err : "Unknown error",
-                                                         state_err, sizeof(state_err));
-                char msg[1024];
-                snprintf(msg, sizeof(msg),
-                         "PortMaster update failed.\n\n%s\n\nLaunching the current working version.",
-                         update_job.err[0] ? update_job.err : "Unknown error");
-                show_message(msg);
-            }
-        } else {
-            char state_err[256];
-            (void)pm_portmaster_record_update_declined(ctx, &update_job.status,
-                                                       state_err, sizeof(state_err));
-        }
     }
 
     pm_launch_job job = { .ctx = ctx };
@@ -358,15 +562,6 @@ static void show_launch(pm_context *ctx)
                  job.err[0] ? job.err : "Unknown error");
         show_message(msg);
     }
-}
-
-static pm_controller_layout current_controller_layout(pm_context *ctx)
-{
-    pm_controller_layout layout = PM_CONTROLLER_LAYOUT_X360;
-    if (pm_controller_layout_load(ctx, &layout) != 0) {
-        return PM_CONTROLLER_LAYOUT_X360;
-    }
-    return layout;
 }
 
 static void show_controller_layout(pm_context *ctx)
@@ -449,95 +644,288 @@ static void show_logs(pm_context *ctx)
     show_message(msg);
 }
 
-static pm_action menu(pm_context *ctx)
+static void show_health(pm_context *ctx)
 {
-    char runtime_python[PM_PATH_MAX];
-    bool has_runtime = pm_join3(runtime_python, sizeof(runtime_python),
-                                ctx->runtime_dir, "bin", "python3") == 0 &&
-                       pm_file_exists(runtime_python);
-    pm_controller_layout layout = current_controller_layout(ctx);
+    pm_doctor_report report;
+    pm_doctor_run(ctx, &report);
+    show_message(report.text);
+}
+
+static void show_troubleshooting_summary(pm_context *ctx,
+                                         const pm_ui_state *state,
+                                         const pm_ui_session_state *session)
+{
+    const char *status = "Setup needed";
+    if (!state->installed) {
+        status = "Not installed";
+    } else if (state->launchable) {
+        status = "Ready to launch";
+    }
+
+    const char *updates = state->update_summary;
+    if (session->startup_update_check_timed_out) {
+        updates = "Check timed out";
+    }
+
+    char msg[2048];
+    snprintf(msg, sizeof(msg),
+             "Status: %s\nPortMaster: %s\nUpdates: %s\nSetup: %s\nPorts folder: %s\nArtwork folder: %s",
+             status,
+             state->installed ? "Installed" : "Not installed",
+             updates,
+             state->setup_summary,
+             pm_dir_exists(ctx->ports_dir) ? "Found" : "Missing",
+             pm_dir_exists(ctx->port_images_dir) ? "Found" : "Missing");
+    show_message(msg);
+}
+
+static pm_trouble_action troubleshooting_menu(void)
+{
     cat_list_item items[] = {
-        { .label = "Doctor / Status", .trailing_text = ctx->lock_loaded ? "locked" : "lock missing" },
-        { .label = "Install PortMaster", .trailing_text = "Phase 1" },
-        { .label = "Install UI Runtime", .trailing_text = has_runtime ? "installed" : "required" },
-        { .label = "Check GUI Update", .trailing_text = "stable" },
-        { .label = "Launch PortMaster", .trailing_text = pm_dir_exists(ctx->portmaster_dir) ? "ready" : "not installed" },
-        { .label = "Controller Layout", .trailing_text = pm_controller_layout_label(layout) },
-        { .label = "Repair / Repatch", .trailing_text = pm_dir_exists(ctx->portmaster_dir) ? "ready" : "not installed" },
-        { .label = "Popular Runtimes", .trailing_text = "planned" },
-        { .label = "armhf Compatibility", .trailing_text = "planned" },
+        { .label = "Run Health Check" },
+        { .label = "Check For Updates" },
         { .label = "View Logs" },
         { .label = "View Paths" },
     };
-    static const pm_action map[] = {
-        PM_ACTION_STATUS,
-        PM_ACTION_INSTALL,
-        PM_ACTION_INSTALL_UI_RUNTIME,
-        PM_ACTION_CHECK_UPDATE,
-        PM_ACTION_LAUNCH,
-        PM_ACTION_CONTROLLER_LAYOUT,
-        PM_ACTION_REPATCH,
-        PM_ACTION_RUNTIMES,
-        PM_ACTION_ARMHF,
-        PM_ACTION_LOGS,
-        PM_ACTION_PATHS,
+    static const pm_trouble_action map[] = {
+        PM_TROUBLE_ACTION_HEALTH,
+        PM_TROUBLE_ACTION_CHECK_UPDATE,
+        PM_TROUBLE_ACTION_LOGS,
+        PM_TROUBLE_ACTION_PATHS,
     };
+    cat_footer_item footer[] = {
+        { .button = CAT_BTN_B, .label = "Back" },
+        { .button = CAT_BTN_A, .label = "Select", .is_confirm = true },
+    };
+    cat_list_opts opts = cat_list_default_opts("Troubleshooting", items,
+                                               (int)(sizeof(items) / sizeof(items[0])));
+    opts.footer = footer;
+    opts.footer_count = 2;
+
+    cat_list_result result = {0};
+    if (cat_list(&opts, &result) != CAT_OK ||
+        result.selected_index < 0 ||
+        result.selected_index >= (int)(sizeof(map) / sizeof(map[0]))) {
+        return PM_TROUBLE_ACTION_BACK;
+    }
+    return map[result.selected_index];
+}
+
+static void show_troubleshooting(pm_context *ctx,
+                                 pm_ui_session_state *session,
+                                 const pm_ui_state *state)
+{
+    show_troubleshooting_summary(ctx, state, session);
+    switch (troubleshooting_menu()) {
+        case PM_TROUBLE_ACTION_HEALTH:
+            show_health(ctx);
+            break;
+        case PM_TROUBLE_ACTION_CHECK_UPDATE:
+            if (!state->installed) {
+                show_message("PortMaster is not installed yet.\n\nInstall PortMaster before checking for updates.");
+                break;
+            }
+            (void)run_update_flow(ctx, session, true, true, true);
+            break;
+        case PM_TROUBLE_ACTION_LOGS:
+            show_logs(ctx);
+            break;
+        case PM_TROUBLE_ACTION_PATHS:
+            show_paths(ctx);
+            break;
+        case PM_TROUBLE_ACTION_BACK:
+        case PM_TROUBLE_ACTION_NONE:
+        default:
+            break;
+    }
+}
+
+static int build_menu_rows(pm_context *ctx,
+                           const pm_ui_state *state,
+                           cat_list_item *items,
+                           pm_menu_row *rows,
+                           int max_rows)
+{
+    int count = 0;
+    if (!ctx || !state || !items || !rows || max_rows < 5) {
+        return 0;
+    }
+
+    items[count] = (cat_list_item){
+        .label = "Launch PortMaster",
+        .trailing_text = state->launchable
+            ? (state->update_status_valid && state->update.update_available ? "Update available" : "Ready")
+            : (state->setup_state == PM_UI_SETUP_NOT_INSTALLED ? "Not installed" : "Setup needed"),
+        .disabled = !state->launchable,
+    };
+    rows[count++] = (pm_menu_row){
+        .action = PM_ACTION_LAUNCH,
+        .disabled = !state->launchable,
+        .disabled_message = state->launch_disabled_reason,
+    };
+
+    if (!state->installed) {
+        bool disabled = !ctx->lock_loaded;
+        items[count] = (cat_list_item){
+            .label = "Install PortMaster",
+            .trailing_text = disabled ? "Metadata missing" : "Ready",
+            .disabled = disabled,
+        };
+        rows[count++] = (pm_menu_row){
+            .action = PM_ACTION_INSTALL,
+            .disabled = disabled,
+            .disabled_message = "PortMaster setup metadata is missing.",
+        };
+    } else if (state->update_status_valid && state->update.update_available) {
+        items[count] = (cat_list_item){
+            .label = "Update PortMaster",
+            .trailing_text = state->update_summary,
+        };
+        rows[count++] = (pm_menu_row){ .action = PM_ACTION_UPDATE };
+    }
+
+    if (state->installed) {
+        items[count] = (cat_list_item){
+            .label = "Repair PortMaster",
+            .trailing_text = state->setup_state == PM_UI_SETUP_READY ? "Fix setup" : "Finish setup",
+        };
+        rows[count++] = (pm_menu_row){ .action = PM_ACTION_REPAIR };
+    }
+
+    pm_controller_layout layout = current_controller_layout(ctx);
+    items[count] = (cat_list_item){
+        .label = "Controller Layout",
+        .trailing_text = pm_controller_layout_label(layout),
+    };
+    rows[count++] = (pm_menu_row){ .action = PM_ACTION_CONTROLLER_LAYOUT };
+
+    items[count] = (cat_list_item){
+        .label = "Troubleshooting",
+        .trailing_text = state->setup_state == PM_UI_SETUP_READY ? state->update_summary : state->setup_summary,
+    };
+    rows[count++] = (pm_menu_row){ .action = PM_ACTION_TROUBLESHOOTING };
+
+    return count;
+}
+
+static pm_action menu(pm_context *ctx, const pm_ui_state *state)
+{
+    cat_list_item items[6];
+    pm_menu_row rows[6];
+    int count = build_menu_rows(ctx, state, items, rows, (int)(sizeof(items) / sizeof(items[0])));
+    if (count <= 0) {
+        return PM_ACTION_QUIT;
+    }
 
     cat_footer_item footer[] = {
         { .button = CAT_BTN_B, .label = "Quit" },
         { .button = CAT_BTN_A, .label = "Select", .is_confirm = true },
     };
-    cat_list_opts opts = cat_list_default_opts("PortMaster", items, (int)(sizeof(items) / sizeof(items[0])));
+    cat_list_opts opts = cat_list_default_opts("PortMaster", items, count);
     opts.footer = footer;
     opts.footer_count = 2;
+    opts.initial_index = 0;
 
     cat_list_result result = {0};
     if (cat_list(&opts, &result) != CAT_OK) {
         return PM_ACTION_QUIT;
     }
-    if (result.selected_index < 0 || result.selected_index >= (int)(sizeof(map) / sizeof(map[0]))) {
+    if (result.selected_index < 0 || result.selected_index >= count) {
         return PM_ACTION_QUIT;
     }
-    return map[result.selected_index];
+    if (rows[result.selected_index].disabled) {
+        show_message(rows[result.selected_index].disabled_message
+                         ? rows[result.selected_index].disabled_message
+                         : "This action is not available yet.");
+        return PM_ACTION_NONE;
+    }
+    return rows[result.selected_index].action;
+}
+
+int pm_ui_menu_state_text(pm_context *ctx, char *out, size_t out_size)
+{
+    if (!out || out_size == 0) {
+        return -1;
+    }
+    out[0] = '\0';
+
+    pm_ui_session_state session = {0};
+    pm_ui_state state;
+    build_ui_state(ctx, &session, &state);
+
+    cat_list_item items[6];
+    pm_menu_row rows[6];
+    int count = build_menu_rows(ctx, &state, items, rows,
+                                (int)(sizeof(items) / sizeof(items[0])));
+
+    int rc = 0;
+    size_t used = 0;
+    if (appendf(out, out_size, &used,
+                "setup=%s\tinstalled=%d\tlaunchable=%d\tupdate_status=%s\tupdate_available=%d\n",
+                setup_state_slug(state.setup_state),
+                state.installed ? 1 : 0,
+                state.launchable ? 1 : 0,
+                state.update_summary,
+                state.update_status_valid && state.update.update_available ? 1 : 0) != 0) {
+        rc = -1;
+    }
+    for (int i = 0; i < count; i++) {
+        if (appendf(out, out_size, &used,
+                    "row=%d\taction=%s\tdisabled=%d\tlabel=",
+                    i,
+                    action_slug(rows[i].action),
+                    rows[i].disabled ? 1 : 0) != 0) {
+            rc = -1;
+        }
+        append_text_escaped(out, out_size, &used, items[i].label);
+        if (appendf(out, out_size, &used, "\ttrailing=") != 0) {
+            rc = -1;
+        }
+        append_text_escaped(out, out_size, &used, items[i].trailing_text);
+        if (appendf(out, out_size, &used, "\tdisabled_message=") != 0) {
+            rc = -1;
+        }
+        append_text_escaped(out, out_size, &used,
+                            rows[i].disabled ? rows[i].disabled_message : "");
+        if (appendf(out, out_size, &used, "\n") != 0) {
+            rc = -1;
+        }
+    }
+    return rc;
 }
 
 void pm_ui_run(pm_context *ctx)
 {
+    pm_ui_session_state session = {0};
+    pm_ui_state state;
+    build_ui_state(ctx, &session, &state);
+    run_startup_update_check(ctx, &state, &session);
+
     bool running = true;
     while (running) {
-        switch (menu(ctx)) {
-            case PM_ACTION_STATUS:
-                show_status(ctx);
+        build_ui_state(ctx, &session, &state);
+        switch (menu(ctx, &state)) {
+            case PM_ACTION_NONE:
                 break;
             case PM_ACTION_INSTALL:
                 show_install(ctx);
+                session.update_status_valid = false;
+                session.update_error[0] = '\0';
                 break;
-            case PM_ACTION_INSTALL_UI_RUNTIME:
-                show_install_ui_runtime(ctx);
-                break;
-            case PM_ACTION_CHECK_UPDATE:
-                show_check_update(ctx);
+            case PM_ACTION_UPDATE:
+                (void)run_update_flow(ctx, &session, true, true, true);
                 break;
             case PM_ACTION_LAUNCH:
-                show_launch(ctx);
+                show_launch(ctx, &state);
                 break;
             case PM_ACTION_CONTROLLER_LAYOUT:
                 show_controller_layout(ctx);
                 break;
-            case PM_ACTION_REPATCH:
-                show_repatch(ctx);
+            case PM_ACTION_REPAIR:
+                show_repair(ctx);
                 break;
-            case PM_ACTION_RUNTIMES:
-                show_message("Popular runtime install/verify/repair is planned for Phase 1.");
-                break;
-            case PM_ACTION_ARMHF:
-                show_message("armhf compatibility pack build/install/verify is planned for Phase 1.\n\nTier 0 and Tier 1 must be smoked before support is claimed.");
-                break;
-            case PM_ACTION_LOGS:
-                show_logs(ctx);
-                break;
-            case PM_ACTION_PATHS:
-                show_paths(ctx);
+            case PM_ACTION_TROUBLESHOOTING:
+                show_troubleshooting(ctx, &session, &state);
                 break;
             case PM_ACTION_QUIT:
             default:

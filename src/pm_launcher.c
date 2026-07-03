@@ -38,6 +38,85 @@ static bool pm_env_truthy(const char *name)
            strcmp(value, "no") != 0;
 }
 
+bool pm_portmaster_is_installed(const pm_context *ctx)
+{
+    char script[PM_PATH_MAX];
+    return ctx &&
+           pm_join(script, sizeof(script), ctx->portmaster_dir, "PortMaster.sh") == 0 &&
+           pm_file_exists(script);
+}
+
+bool pm_portmaster_runtime_available(const pm_context *ctx,
+                                     char *runtime_path,
+                                     size_t runtime_path_size,
+                                     bool *uses_system_python)
+{
+    if (runtime_path && runtime_path_size > 0) {
+        runtime_path[0] = '\0';
+    }
+    if (uses_system_python) {
+        *uses_system_python = false;
+    }
+    if (!ctx) {
+        return false;
+    }
+
+    char managed[PM_PATH_MAX];
+    if (pm_join3(managed, sizeof(managed), ctx->runtime_dir, "bin", "python3") == 0 &&
+        pm_file_exists(managed)) {
+        if (runtime_path && runtime_path_size > 0) {
+            pm_copy(runtime_path, runtime_path_size, managed);
+        }
+        return true;
+    }
+
+    const char *system_python = NULL;
+    if (pm_file_exists("/usr/bin/python3")) {
+        system_python = "/usr/bin/python3";
+    } else if (pm_file_exists("/bin/python3")) {
+        system_python = "/bin/python3";
+    }
+    if (!system_python) {
+        return false;
+    }
+
+    if (runtime_path && runtime_path_size > 0) {
+        pm_copy(runtime_path, runtime_path_size, system_python);
+    }
+    if (uses_system_python) {
+        *uses_system_python = true;
+    }
+    return true;
+}
+
+bool pm_portmaster_launch_ready(const pm_context *ctx, char *reason, size_t reason_size)
+{
+    if (reason && reason_size > 0) {
+        reason[0] = '\0';
+    }
+    if (!ctx) {
+        if (reason && reason_size > 0) {
+            snprintf(reason, reason_size, "PortMaster setup is unavailable.");
+        }
+        return false;
+    }
+    if (!pm_portmaster_is_installed(ctx)) {
+        if (reason && reason_size > 0) {
+            snprintf(reason, reason_size,
+                     "PortMaster is not installed yet.\n\nUse Install PortMaster to set it up.");
+        }
+        return false;
+    }
+    if (!pm_portmaster_runtime_available(ctx, NULL, 0, NULL)) {
+        if (reason && reason_size > 0) {
+            snprintf(reason, reason_size,
+                     "PortMaster setup is incomplete.\n\nUse Repair PortMaster to finish setup.");
+        }
+        return false;
+    }
+    return true;
+}
+
 static uint64_t pm_hash_bytes(uint64_t hash, const void *data, size_t size)
 {
     const unsigned char *bytes = (const unsigned char *)data;
@@ -278,13 +357,8 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         return -1;
     }
 
-    char script[PM_PATH_MAX];
-    if (pm_join(script, sizeof(script), ctx->portmaster_dir, "PortMaster.sh") != 0) {
-        snprintf(err, err_size, "PortMaster script path too long");
-        return -1;
-    }
-    if (!pm_file_exists(script)) {
-        snprintf(err, err_size, "PortMaster is not installed: %s", script);
+    if (!pm_portmaster_is_installed(ctx)) {
+        snprintf(err, err_size, "PortMaster is not installed: %s", ctx->portmaster_dir);
         return -1;
     }
 
@@ -315,9 +389,10 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     }
 
     char runtime_python[PM_PATH_MAX];
-    bool has_runtime = pm_join3(runtime_python, sizeof(runtime_python), ctx->runtime_dir,
-                                "bin", "python3") == 0 && pm_file_exists(runtime_python);
-    if (!has_runtime && !pm_file_exists("/usr/bin/python3") && !pm_file_exists("/bin/python3")) {
+    bool uses_system_python = false;
+    bool has_runtime = pm_portmaster_runtime_available(ctx, runtime_python, sizeof(runtime_python),
+                                                       &uses_system_python);
+    if (!has_runtime) {
         snprintf(err, err_size, "Python runtime missing; install a managed runtime archive first");
         return -1;
     }
@@ -327,7 +402,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     char path_env[PM_PATH_MAX * 2];
     char ld_env[PM_PATH_MAX * 2];
     char python_path[PM_PATH_MAX * 2];
-    if (has_runtime) {
+    if (!uses_system_python) {
         if (pm_format(path_env, sizeof(path_env), "%s/bin:%s", ctx->runtime_dir, base_path) != 0 ||
             pm_format(ld_env, sizeof(ld_env), "%s/lib:%s", ctx->runtime_dir, base_ld) != 0 ||
             pm_format(python_path, sizeof(python_path),
@@ -354,7 +429,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "HOME", ctx->data_dir },
         { "PATH", path_env },
         { "LD_LIBRARY_PATH", ld_env },
-        { "PYTHONHOME", has_runtime ? ctx->runtime_dir : "" },
+        { "PYTHONHOME", !uses_system_python ? ctx->runtime_dir : "" },
         { "PYTHONPATH", python_path },
         { "PYTHONDONTWRITEBYTECODE", "1" },
         { "XDG_DATA_HOME", ctx->data_dir },

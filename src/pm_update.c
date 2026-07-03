@@ -14,6 +14,7 @@
 
 #define PM_GUI_VERSION_URL "https://github.com/PortsMaster/PortMaster-GUI/releases/latest/download/version.json"
 #define PM_UPDATE_CHECK_INTERVAL_SECONDS (24 * 60 * 60)
+#define PM_UPDATE_STARTUP_TIMEOUT_SECONDS 5
 
 typedef struct {
     long long last_checked_unix;
@@ -381,8 +382,11 @@ static int read_installed_version(pm_context *ctx, char *out, size_t out_size)
     return -1;
 }
 
-int pm_portmaster_check_update(pm_context *ctx, pm_portmaster_update_status *out,
-                               char *err, size_t err_size)
+static int pm_portmaster_check_update_policy(pm_context *ctx,
+                                             pm_portmaster_update_status *out,
+                                             pm_update_check_policy policy,
+                                             char *err,
+                                             size_t err_size)
 {
     if (err && err_size > 0) {
         err[0] = '\0';
@@ -408,7 +412,9 @@ int pm_portmaster_check_update(pm_context *ctx, pm_portmaster_update_status *out
     const char *url = pm_env("LEAF_PM_UPDATE_VERSION_URL", PM_GUI_VERSION_URL);
     char *text = NULL;
     bool allow_http_metadata = env_truthy("LEAF_PM_ALLOW_HTTP_UPDATE_METADATA");
-    if (pm_download_text(url, 1024 * 1024, allow_http_metadata, &text, err, err_size) != 0) {
+    long timeout_seconds = policy == PM_UPDATE_CHECK_STARTUP ? PM_UPDATE_STARTUP_TIMEOUT_SECONDS : 0;
+    if (pm_download_text_with_timeout(url, 1024 * 1024, allow_http_metadata,
+                                      timeout_seconds, &text, err, err_size) != 0) {
         update_log(ctx, "check-failed", out, err);
         return -1;
     }
@@ -469,8 +475,18 @@ int pm_portmaster_check_update(pm_context *ctx, pm_portmaster_update_status *out
     return 0;
 }
 
-int pm_portmaster_check_update_cached(pm_context *ctx, pm_portmaster_update_status *out,
-                                      char *err, size_t err_size)
+int pm_portmaster_check_update(pm_context *ctx, pm_portmaster_update_status *out,
+                               char *err, size_t err_size)
+{
+    return pm_portmaster_check_update_policy(ctx, out, PM_UPDATE_CHECK_INTERACTIVE,
+                                             err, err_size);
+}
+
+int pm_portmaster_check_update_cached_policy(pm_context *ctx,
+                                             pm_portmaster_update_status *out,
+                                             pm_update_check_policy policy,
+                                             char *err,
+                                             size_t err_size)
 {
     if (err && err_size > 0) {
         err[0] = '\0';
@@ -498,7 +514,14 @@ int pm_portmaster_check_update_cached(pm_context *ctx, pm_portmaster_update_stat
         return status_from_state(ctx, &state, out, err, err_size);
     }
 
-    return pm_portmaster_check_update(ctx, out, err, err_size);
+    return pm_portmaster_check_update_policy(ctx, out, policy, err, err_size);
+}
+
+int pm_portmaster_check_update_cached(pm_context *ctx, pm_portmaster_update_status *out,
+                                      char *err, size_t err_size)
+{
+    return pm_portmaster_check_update_cached_policy(ctx, out, PM_UPDATE_CHECK_INTERACTIVE,
+                                                   err, err_size);
 }
 
 int pm_portmaster_apply_update(pm_context *ctx, const pm_portmaster_update_status *status,

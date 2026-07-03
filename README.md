@@ -58,6 +58,35 @@ the staged test package's runtime lock is rewritten to the local feed too.
 `make update-failure-fixtures` exercises the manager-owned GUI update failure
 paths against a temporary SD/userdata root.
 
+PortMaster is Pak Rat-owned. Do not add it to Leaf's direct `stage-app`
+release-managed app policy; device installs and smoke tests should go through a
+Pak Rat catalog.
+
+## Manager UI
+
+The on-device manager is state-driven:
+
+- `Launch PortMaster` is always the first row.
+- If PortMaster is not launchable, the launch row stays visible but disabled
+  with a short reason such as `Not installed` or `Setup needed`.
+- `Install PortMaster` is shown only before the managed upstream GUI exists.
+  That action performs the full user setup: upstream PortMaster install,
+  managed UI runtime install when needed, Leaf patches, compatibility assets,
+  artwork sync, and Jawaka rescan.
+- `Repair PortMaster` is shown once PortMaster is installed. It is the recovery
+  path for missing runtime, stale/missing manifest, missing Leaf patches, or
+  compatibility asset drift.
+- `Update PortMaster` appears only when the manager has found a newer compatible
+  stable GUI release.
+- `Controller Layout` remains a normal user setting.
+- `Troubleshooting` contains the detailed health check, manual update check,
+  logs, and paths.
+
+Game runtimes and armhf compatibility are not main-menu choices. Upstream
+PortMaster manages game runtimes from inside its GUI; Leaf's armhf, SDL,
+EGL/GLES, helper-tool, and wrapper compatibility is refreshed automatically
+during install, repair, launch, and post-exit repair.
+
 ## Runtime Layout
 
 The manager uses Leaf's runtime env contract:
@@ -116,6 +145,7 @@ fails instead of guessing a mount path.
 Useful smoke commands from a staged pak:
 
 ```sh
+./launch.sh --ui-state-text
 ./launch.sh --doctor-text
 ./launch.sh --install-portmaster
 ./launch.sh --repatch-portmaster
@@ -127,6 +157,9 @@ Useful smoke commands from a staged pak:
 ./launch.sh --launch-portmaster
 ```
 
+`--ui-state-text` prints the same top-level row model used by the GUI. It is
+useful for ADB checks that need to prove menu state without launching SDL.
+
 ## PortMaster GUI Updates
 
 Leaf disables upstream PortMaster GUI self-update prompts during managed
@@ -134,13 +167,22 @@ launches with `LEAF_PM_DISABLE_SELF_UPDATE=1`. This does not use upstream
 `--no-check`, so normal HarbourMaster source/catalog refreshes still run inside
 the GUI.
 
-Use the manager's `Check GUI Update` action, or `--check-portmaster-update`, to
-poll the stable upstream GUI release metadata. If a newer stable release is
-available, `--update-portmaster` or the UI action downloads `PortMaster.zip`,
-verifies the upstream MD5, records a SHA-256 in the Leaf manifest, applies the
-Leaf patch set in staging, backs up the current install, and promotes the
-patched tree. If promotion succeeds but a post-promote step fails, the manager
-restores the previous install before returning an error. Set
+When the wrapper starts and PortMaster setup is ready, the manager performs a
+cached/due stable metadata check before showing the menu. Fresh cached results
+are used immediately; due network checks use a short startup timeout so a slow
+or captive network does not block the wrapper. If a newer compatible stable GUI
+release is available, the manager alerts the user. Choosing `Later` suppresses
+the modal for that same upstream version, while the `Update PortMaster` row
+remains available as an explicit action.
+
+The troubleshooting screen also exposes a manual `Check For Updates` action,
+and CLI users can run `--check-portmaster-update`. Explicit checks bypass the
+declined-version prompt suppression because the user asked for them. If an
+update is accepted, the manager downloads `PortMaster.zip`, verifies the
+upstream MD5, records a SHA-256 in the Leaf manifest, applies the Leaf patch set
+in staging, backs up the current install, and promotes the patched tree. If
+promotion succeeds but a post-promote step fails, the manager restores the
+previous install before returning an error. Set
 `LEAF_PM_ALLOW_UPSTREAM_SELF_UPDATE=1` only for developer debugging of the raw
 upstream path.
 
@@ -148,7 +190,6 @@ Before promotion, the staged tree is structurally validated for the expected
 Leaf markers in `PortMaster.sh`, `pugwash`, `control.txt`, `device_info.txt`,
 and HarbourMaster `hardware.py`.
 
-The UI also performs a cached/due update check before `Launch PortMaster`.
 Manager-owned update state lives at:
 
 ```text
@@ -163,14 +204,16 @@ $USERDATA_PATH/portmaster/.leaf/logs/update.log
 
 Successful checks are cached for 24 hours. Use
 `LEAF_PM_FORCE_UPDATE_CHECK=1` to force a fresh metadata poll, or
-`LEAF_PM_SKIP_UPDATE_CHECK=1` to skip the manager-owned prelaunch check.
+`LEAF_PM_SKIP_UPDATE_CHECK=1` to skip the manager-owned startup check.
 Failed candidates are suppressed for the same upstream version only while the
 manager version and Leaf patch-set fingerprint are unchanged.
 
 ## UI Runtime Work
 
-The PortMaster UI runtime is separate from PortMaster game runtimes. The repo can
-fetch locked PyPI inputs used while building or experimenting with the runtime:
+The PortMaster UI runtime is separate from PortMaster game runtimes and is
+installed automatically by the manager's install/repair flows when needed. The
+repo can fetch locked PyPI inputs used while building or experimenting with the
+runtime:
 
 ```sh
 make fetch-ui-runtime-sources
@@ -224,6 +267,10 @@ build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.
 ```
 
 ## Armhf Compatibility Pack
+
+Armhf support is automatic in the manager UI. Users do not install it from a
+separate menu row; install/repair/launch flows refresh the compatibility files
+and wrappers as needed.
 
 The armhf compatibility pack is generated from Debian armhf packages in Docker,
 plus a pinned Rockchip Mali 32-bit userspace blob for GLES ports. Package/file

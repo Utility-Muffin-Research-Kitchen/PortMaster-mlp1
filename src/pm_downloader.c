@@ -247,8 +247,9 @@ int pm_download_file(const pm_download_spec *spec, char *err, size_t err_size)
     return 0;
 }
 
-int pm_download_text(const char *url, size_t max_bytes, bool allow_http,
-                     char **out_text, char *err, size_t err_size)
+int pm_download_text_with_timeout(const char *url, size_t max_bytes, bool allow_http,
+                                  long timeout_seconds,
+                                  char **out_text, char *err, size_t err_size)
 {
     if (out_text) {
         *out_text = NULL;
@@ -292,6 +293,9 @@ int pm_download_text(const char *url, size_t max_bytes, bool allow_http,
     configure_ca(curl);
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    if (timeout_seconds > 0) {
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_seconds);
+    }
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 128L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 20L);
@@ -323,4 +327,11 @@ int pm_download_text(const char *url, size_t max_bytes, bool allow_http,
     }
     *out_text = dl.data;
     return 0;
+}
+
+int pm_download_text(const char *url, size_t max_bytes, bool allow_http,
+                     char **out_text, char *err, size_t err_size)
+{
+    return pm_download_text_with_timeout(url, max_bytes, allow_http, 0,
+                                         out_text, err, err_size);
 }
