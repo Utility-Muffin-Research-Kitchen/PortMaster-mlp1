@@ -10,6 +10,7 @@
 #include "pm_launcher.h"
 #include "pm_update.h"
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,6 +73,14 @@ typedef struct {
     bool disabled;
     const char *disabled_message;
 } pm_menu_row;
+
+static const char *PM_UNOFFICIAL_NOTICE_MARKER = "unofficial-support-notice.seen";
+static const char *PM_UNOFFICIAL_NOTICE_TEXT =
+    "This PortMaster manager is an unofficial Leaf/UMRK wrapper for MLP1.\n\n"
+    "Please do not use the official PortMaster Discord for support with this wrapper, "
+    "Leaf-specific setup, MLP1 runtime issues, or compatibility patches.\n\n"
+    "For help, use Leaf/UMRK support channels or this package's issue tracker. "
+    "The official PortMaster project is not responsible for this implementation.";
 
 static const char *setup_state_slug(pm_ui_setup_state setup_state)
 {
@@ -390,6 +399,65 @@ static void show_text_detail(const char *title, const char *message)
     }
 
     free(wrapped);
+}
+
+static int write_notice_marker(const char *path, char *err, size_t err_size)
+{
+    FILE *fp = fopen(path, "wb");
+    if (!fp) {
+        pm_format(err, err_size, "cannot create %s: %s", path, strerror(errno));
+        return -1;
+    }
+
+    if (fputs("seen\n", fp) == EOF) {
+        int saved_errno = errno;
+        fclose(fp);
+        pm_format(err, err_size, "cannot write %s: %s", path, strerror(saved_errno));
+        return -1;
+    }
+
+    if (fclose(fp) != 0) {
+        pm_format(err, err_size, "cannot finish %s: %s", path, strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
+
+static void show_unofficial_support_notice_if_needed(const pm_context *ctx)
+{
+    char marker_path[PM_PATH_MAX];
+    char err[256];
+
+    if (!ctx) {
+        return;
+    }
+
+    bool dirs_ready = pm_context_ensure_manager_dirs(ctx, err, sizeof(err)) == 0;
+    if (!dirs_ready) {
+        cat_log("PortMaster notice: could not prepare manager dirs: %s", err);
+    }
+
+    if (pm_join(marker_path, sizeof(marker_path), ctx->leaf_dir,
+                PM_UNOFFICIAL_NOTICE_MARKER) != 0) {
+        cat_log("PortMaster notice: marker path too long");
+        show_text_detail("Unofficial PortMaster", PM_UNOFFICIAL_NOTICE_TEXT);
+        return;
+    }
+
+    if (dirs_ready && pm_file_exists(marker_path)) {
+        return;
+    }
+
+    show_text_detail("Unofficial PortMaster", PM_UNOFFICIAL_NOTICE_TEXT);
+
+    if (!dirs_ready) {
+        return;
+    }
+
+    if (write_notice_marker(marker_path, err, sizeof(err)) != 0) {
+        cat_log("PortMaster notice: could not write seen marker: %s", err);
+    }
 }
 
 static bool confirm_message(const char *message, const char *confirm_label)
@@ -1142,6 +1210,7 @@ void pm_ui_run(pm_context *ctx)
     pm_ui_session_state session = {0};
     pm_ui_state state;
     build_ui_state(ctx, &session, &state);
+    show_unofficial_support_notice_if_needed(ctx);
     run_startup_update_check(ctx, &state, &session);
 
     bool running = true;
