@@ -12,6 +12,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef enum {
@@ -27,6 +28,7 @@ typedef enum {
 
 typedef enum {
     PM_TROUBLE_ACTION_NONE = 0,
+    PM_TROUBLE_ACTION_QUICK_DIAGNOSTICS,
     PM_TROUBLE_ACTION_HEALTH,
     PM_TROUBLE_ACTION_CHECK_UPDATE,
     PM_TROUBLE_ACTION_LOGS,
@@ -166,6 +168,228 @@ static void show_message(const char *message)
     };
     cat_confirm_result result = {0};
     (void)cat_confirmation(&opts, &result);
+}
+
+typedef struct {
+    char *text;
+    TTF_Font *font;
+    cat_draw_color color;
+    int line_h;
+} pm_text_detail;
+
+static int text_append_char(char **out, size_t *cap, size_t *used, char ch)
+{
+    if (!out || !cap || !used) {
+        return -1;
+    }
+    if (*used + 2 > *cap) {
+        size_t next_cap = *cap > 0 ? *cap * 2 : 256;
+        while (*used + 2 > next_cap) {
+            next_cap *= 2;
+        }
+        char *next = realloc(*out, next_cap);
+        if (!next) {
+            return -1;
+        }
+        *out = next;
+        *cap = next_cap;
+    }
+    (*out)[(*used)++] = ch;
+    (*out)[*used] = '\0';
+    return 0;
+}
+
+static char *hard_wrap_text(const char *text, TTF_Font *font, int max_w)
+{
+    if (!text) {
+        text = "";
+    }
+    if (!font || max_w <= 0) {
+        char *copy = malloc(strlen(text) + 1);
+        if (copy) {
+            strcpy(copy, text);
+        }
+        return copy;
+    }
+
+    size_t len = strlen(text);
+    size_t cap = len * 2 + 16;
+    if (cap < 256) {
+        cap = 256;
+    }
+    char *out = calloc(1, cap);
+    if (!out) {
+        return NULL;
+    }
+
+    size_t used = 0;
+    size_t line_start = 0;
+    size_t last_space = (size_t)-1;
+    for (size_t i = 0; i < len; i++) {
+        char ch = text[i];
+        if (text_append_char(&out, &cap, &used, ch) != 0) {
+            free(out);
+            return NULL;
+        }
+
+        if (ch == '\n') {
+            line_start = used;
+            last_space = (size_t)-1;
+            continue;
+        }
+        if (ch == ' ' || ch == '\t') {
+            last_space = used - 1;
+        }
+
+        if (cat_measure_text(font, out + line_start) <= max_w) {
+            continue;
+        }
+
+        if (last_space != (size_t)-1 && last_space >= line_start) {
+            out[last_space] = '\n';
+            line_start = last_space + 1;
+            last_space = (size_t)-1;
+        } else if (used - line_start > 1) {
+            char overflow = out[used - 1];
+            out[used - 1] = '\n';
+            line_start = used;
+            last_space = (size_t)-1;
+            if (text_append_char(&out, &cap, &used, overflow) != 0) {
+                free(out);
+                return NULL;
+            }
+        }
+    }
+
+    return out;
+}
+
+static int wrapped_line_count(const char *text)
+{
+    if (!text || !text[0]) {
+        return 1;
+    }
+    int lines = 1;
+    for (const char *p = text; *p; p++) {
+        if (*p == '\n') {
+            lines++;
+        }
+    }
+    return lines;
+}
+
+static void draw_text_detail_content(int x, int y, int w, void *user)
+{
+    pm_text_detail *detail = user;
+    if (!detail || !detail->text || !detail->font) {
+        return;
+    }
+
+    int yy = y;
+    char *line = detail->text;
+    while (line && *line) {
+        char *end = strchr(line, '\n');
+        if (end) {
+            *end = '\0';
+        }
+        if (line[0]) {
+            cat_draw_text(detail->font, line, x, yy, detail->color);
+        }
+        if (end) {
+            *end = '\n';
+            line = end + 1;
+        } else {
+            line = NULL;
+        }
+        yy += detail->line_h;
+    }
+}
+
+static void show_text_detail(const char *title, const char *message)
+{
+    TTF_Font *font = cat_get_font(CAT_FONT_SMALL);
+    if (!font) {
+        show_message(message ? message : "");
+        return;
+    }
+
+    SDL_Rect content = cat_get_content_rect(true, true, false);
+    int margin = cat_get_screen_width() / 40;
+    if (margin < 12) {
+        margin = 12;
+    } else if (margin > 32) {
+        margin = 32;
+    }
+    int top_pad = 8;
+    int bottom_pad = 8;
+    int view_x = content.x + margin;
+    int view_y = content.y + top_pad;
+    int view_w = content.w - margin * 2;
+    int view_h = content.h - top_pad - bottom_pad;
+    if (view_w < 1 || view_h < 1) {
+        show_message(message ? message : "");
+        return;
+    }
+
+    int wrap_w = view_w - 12;
+    if (wrap_w < 1) {
+        wrap_w = view_w;
+    }
+
+    char *wrapped = hard_wrap_text(message ? message : "", font, wrap_w);
+    if (!wrapped) {
+        show_message("Could not render diagnostics.");
+        return;
+    }
+
+    pm_text_detail detail = {
+        .text = wrapped,
+        .font = font,
+        .color = cat_get_theme()->text,
+        .line_h = TTF_FontLineSkip(font) + 2,
+    };
+    int content_h = wrapped_line_count(wrapped) * detail.line_h;
+    cat_scroll_state scroll;
+    cat_scroll_state_init(&scroll);
+    cat_footer_item footer[] = {
+        { .button = CAT_BTN_UP, .label = "Scroll" },
+        { .button = CAT_BTN_DOWN, .label = "Scroll" },
+        { .button = CAT_BTN_B, .label = "Back" },
+        { .button = CAT_BTN_A, .label = "OK", .is_confirm = true },
+    };
+
+    bool running = true;
+    while (running) {
+        cat_input_event ev;
+        while (cat_poll_input(&ev)) {
+            if (!ev.pressed) {
+                continue;
+            }
+            switch (ev.button) {
+                case CAT_BTN_UP:
+                    cat_scroll_state_move(&scroll, -detail.line_h * 3);
+                    break;
+                case CAT_BTN_DOWN:
+                    cat_scroll_state_move(&scroll, detail.line_h * 3);
+                    break;
+                case CAT_BTN_A:
+                case CAT_BTN_B:
+                    running = false;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        cat_draw_background();
+        cat_draw_screen_title(title ? title : "", NULL);
+        cat_draw_scroll_view(view_x, view_y, view_w, view_h, content_h,
+                             &scroll, draw_text_detail_content, &detail);
+        cat_draw_footer(footer, (int)(sizeof(footer) / sizeof(footer[0])));
+        cat_present();
+    }
+
+    free(wrapped);
 }
 
 static bool confirm_message(const char *message, const char *confirm_label)
@@ -432,7 +656,7 @@ static bool run_update_flow(pm_context *ctx,
             char msg[1024];
             snprintf(msg, sizeof(msg), "PortMaster update check failed.\n\n%s",
                      session->update_error);
-            show_message(msg);
+            show_text_detail("Update Check Failed", msg);
             return false;
         }
         store_update_status(session, &job.status);
@@ -444,7 +668,7 @@ static bool run_update_flow(pm_context *ctx,
         if (show_current) {
             char summary[1024];
             pm_portmaster_update_summary(&job.status, summary, sizeof(summary));
-            show_message(summary);
+            show_text_detail("PortMaster Update", summary);
         }
         return false;
     }
@@ -453,10 +677,11 @@ static bool run_update_flow(pm_context *ctx,
         return false;
     }
 
-    char summary[1024];
     char prompt[1400];
-    pm_portmaster_update_summary(&job.status, summary, sizeof(summary));
-    snprintf(prompt, sizeof(prompt), "%s\n\nUpdate now?", summary);
+    snprintf(prompt, sizeof(prompt),
+             "Installed: %s\nLatest stable: %s\nUpdate: available\n\nUpdate now?",
+             job.status.installed_version[0] ? job.status.installed_version : "unknown",
+             job.status.source.tag[0] ? job.status.source.tag : "unknown");
     if (!confirm_message(prompt, "Update")) {
         char state_err[256];
         (void)pm_portmaster_record_update_declined(ctx, &job.status,
@@ -488,8 +713,8 @@ static bool run_update_flow(pm_context *ctx,
             job.err[0] ? job.err : "Unknown error");
     char msg[1024];
     snprintf(msg, sizeof(msg), "PortMaster update failed.\n\n%s",
-             session->update_error);
-    show_message(msg);
+            session->update_error);
+    show_text_detail("Update Failed", msg);
     return false;
 }
 
@@ -632,7 +857,7 @@ static void show_paths(pm_context *ctx)
              ctx->ports_dir,
              ctx->port_images_dir,
              ctx->logs_path);
-    show_message(msg);
+    show_text_detail("Paths", msg);
 }
 
 static void show_logs(pm_context *ctx)
@@ -641,14 +866,14 @@ static void show_logs(pm_context *ctx)
     snprintf(msg, sizeof(msg),
              "Logs are written under:\n%s\n\nCurrent app stderr log:\nportmaster-mlp1.log",
              ctx->logs_path);
-    show_message(msg);
+    show_text_detail("Logs", msg);
 }
 
 static void show_health(pm_context *ctx)
 {
     pm_doctor_report report;
     pm_doctor_run(ctx, &report);
-    show_message(report.text);
+    show_text_detail("Health Check", report.text);
 }
 
 static void show_troubleshooting_summary(pm_context *ctx,
@@ -676,18 +901,20 @@ static void show_troubleshooting_summary(pm_context *ctx,
              state->setup_summary,
              pm_dir_exists(ctx->ports_dir) ? "Found" : "Missing",
              pm_dir_exists(ctx->port_images_dir) ? "Found" : "Missing");
-    show_message(msg);
+    show_text_detail("Quick Diagnostics", msg);
 }
 
-static pm_trouble_action troubleshooting_menu(void)
+static pm_trouble_action troubleshooting_menu(int *cursor)
 {
     cat_list_item items[] = {
+        { .label = "Quick Diagnostics" },
         { .label = "Run Health Check" },
         { .label = "Check For Updates" },
         { .label = "View Logs" },
         { .label = "View Paths" },
     };
     static const pm_trouble_action map[] = {
+        PM_TROUBLE_ACTION_QUICK_DIAGNOSTICS,
         PM_TROUBLE_ACTION_HEALTH,
         PM_TROUBLE_ACTION_CHECK_UPDATE,
         PM_TROUBLE_ACTION_LOGS,
@@ -701,6 +928,10 @@ static pm_trouble_action troubleshooting_menu(void)
                                                (int)(sizeof(items) / sizeof(items[0])));
     opts.footer = footer;
     opts.footer_count = 2;
+    if (cursor && *cursor >= 0 &&
+        *cursor < (int)(sizeof(items) / sizeof(items[0]))) {
+        opts.initial_index = *cursor;
+    }
 
     cat_list_result result = {0};
     if (cat_list(&opts, &result) != CAT_OK ||
@@ -708,35 +939,47 @@ static pm_trouble_action troubleshooting_menu(void)
         result.selected_index >= (int)(sizeof(map) / sizeof(map[0]))) {
         return PM_TROUBLE_ACTION_BACK;
     }
+    if (cursor) {
+        *cursor = result.selected_index;
+    }
     return map[result.selected_index];
 }
 
 static void show_troubleshooting(pm_context *ctx,
-                                 pm_ui_session_state *session,
-                                 const pm_ui_state *state)
+                                 pm_ui_session_state *session)
 {
-    show_troubleshooting_summary(ctx, state, session);
-    switch (troubleshooting_menu()) {
-        case PM_TROUBLE_ACTION_HEALTH:
-            show_health(ctx);
-            break;
-        case PM_TROUBLE_ACTION_CHECK_UPDATE:
-            if (!state->installed) {
-                show_message("PortMaster is not installed yet.\n\nInstall PortMaster before checking for updates.");
+    int cursor = 0;
+    bool running = true;
+    while (running) {
+        pm_ui_state state;
+        build_ui_state(ctx, session, &state);
+
+        switch (troubleshooting_menu(&cursor)) {
+            case PM_TROUBLE_ACTION_QUICK_DIAGNOSTICS:
+                show_troubleshooting_summary(ctx, &state, session);
                 break;
-            }
-            (void)run_update_flow(ctx, session, true, true, true);
-            break;
-        case PM_TROUBLE_ACTION_LOGS:
-            show_logs(ctx);
-            break;
-        case PM_TROUBLE_ACTION_PATHS:
-            show_paths(ctx);
-            break;
-        case PM_TROUBLE_ACTION_BACK:
-        case PM_TROUBLE_ACTION_NONE:
-        default:
-            break;
+            case PM_TROUBLE_ACTION_HEALTH:
+                show_health(ctx);
+                break;
+            case PM_TROUBLE_ACTION_CHECK_UPDATE:
+                if (!state.installed) {
+                    show_message("PortMaster is not installed yet.\n\nInstall PortMaster before checking for updates.");
+                    break;
+                }
+                (void)run_update_flow(ctx, session, true, true, true);
+                break;
+            case PM_TROUBLE_ACTION_LOGS:
+                show_logs(ctx);
+                break;
+            case PM_TROUBLE_ACTION_PATHS:
+                show_paths(ctx);
+                break;
+            case PM_TROUBLE_ACTION_BACK:
+            case PM_TROUBLE_ACTION_NONE:
+            default:
+                running = false;
+                break;
+        }
     }
 }
 
@@ -925,7 +1168,7 @@ void pm_ui_run(pm_context *ctx)
                 show_repair(ctx);
                 break;
             case PM_ACTION_TROUBLESHOOTING:
-                show_troubleshooting(ctx, &session, &state);
+                show_troubleshooting(ctx, &session);
                 break;
             case PM_ACTION_QUIT:
             default:
