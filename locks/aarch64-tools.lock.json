@@ -170,5 +170,31 @@
       ],
       "installed_path": "compat/tools/aarch64/bin/dialog"
     }
+  },
+  "toolchain_artifacts": {
+    "getconf": {
+      "name": "getconf",
+      "source_path": "/opt/mlp1-toolchain/aarch64-buildroot-linux-gnu/sysroot/usr/bin/getconf",
+      "license": "LGPL-2.1-or-later",
+      "installed_path": "compat/tools/aarch64/bin/getconf"
+    },
+    "ldd": {
+      "name": "ldd",
+      "source_path": "/opt/mlp1-toolchain/aarch64-buildroot-linux-gnu/sysroot/usr/bin/ldd",
+      "license": "LGPL-2.1-or-later",
+      "installed_path": "compat/tools/aarch64/bin/ldd"
+    },
+    "readelf": {
+      "name": "readelf",
+      "source_path": "/opt/mlp1-toolchain/aarch64-buildroot-linux-gnu/bin/readelf",
+      "license": "GPL-3.0-or-later",
+      "installed_path": "compat/tools/aarch64/bin/readelf"
+    },
+    "file": {
+      "name": "file",
+      "source": "leaf-portmaster-basic-file-shim",
+      "license": "MIT",
+      "installed_path": "compat/tools/aarch64/bin/file"
+    }
   }
 }

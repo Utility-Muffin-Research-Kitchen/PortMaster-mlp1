@@ -8,6 +8,9 @@ BUILD_DIR="$ROOT/build/mlp1"
 WORK_DIR="$ROOT/build/aarch64-tools"
 OUT_DIR="$BUILD_DIR/compat/tools/aarch64"
 LICENSE_DIR="$BUILD_DIR/licenses/rsync"
+TOOLCHAIN_ROOT="${MLP1_TOOLCHAIN_ROOT:-/opt/mlp1-toolchain}"
+TARGET_PREFIX="$TOOLCHAIN_ROOT/aarch64-buildroot-linux-gnu"
+TARGET_SYSROOT="$TARGET_PREFIX/sysroot"
 container=0
 
 if [[ "${1:-}" == "--container" ]]; then
@@ -405,6 +408,148 @@ cp -f "$OUT_DIR/bin/7z" "$OUT_DIR/bin/7za"
 
 chmod 755 "$OUT_DIR/bin/xdelta3" "$OUT_DIR/bin/7z" "$OUT_DIR/bin/7za"
 
+for tool_path in \
+  "$TARGET_SYSROOT/usr/bin/getconf" \
+  "$TARGET_SYSROOT/usr/bin/ldd" \
+  "$TARGET_PREFIX/bin/readelf"; do
+  if [ ! -f "$tool_path" ]; then
+    echo "missing target toolchain artifact: $tool_path" >&2
+    exit 1
+  fi
+done
+
+cp -f "$TARGET_SYSROOT/usr/bin/getconf" "$OUT_DIR/bin/getconf"
+cp -f "$TARGET_SYSROOT/usr/bin/ldd" "$OUT_DIR/bin/ldd"
+cp -f "$TARGET_PREFIX/bin/readelf" "$OUT_DIR/bin/readelf"
+aarch64-buildroot-linux-gnu-strip "$OUT_DIR/bin/getconf" "$OUT_DIR/bin/readelf" 2>/dev/null || true
+
+cat >"$OUT_DIR/bin/file" <<'EOF'
+#!/bin/sh
+# Leaf PortMaster app-local file(1) shim. This intentionally covers the common
+# PortMaster/debug cases without carrying a full libmagic database.
+
+show_version() {
+  echo "file leaf-portmaster-shim 1"
+}
+
+brief=0
+paths=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --version|-v)
+      show_version
+      exit 0
+      ;;
+    -b|--brief)
+      brief=1
+      shift
+      ;;
+    -L|--dereference|-h|--no-dereference)
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "file: unsupported option: $1" >&2
+      exit 64
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+describe_elf() {
+  path="$1"
+  ident="$(dd if="$path" bs=1 skip=4 count=16 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  class="${ident%??????????????????????????????}"
+  rest="${ident#??}"
+  data="${rest%????????????????????????????}"
+  machine="$(dd if="$path" bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+
+  case "$class" in
+    01) bits="32-bit" ;;
+    02) bits="64-bit" ;;
+    *) bits="unknown-class" ;;
+  esac
+  case "$data" in
+    01) endian="LSB" ;;
+    02) endian="MSB" ;;
+    *) endian="unknown-endian" ;;
+  esac
+  case "$machine" in
+    b700) arch="ARM aarch64" ;;
+    2800) arch="ARM" ;;
+    3e00) arch="x86-64" ;;
+    0300) arch="Intel 80386" ;;
+    *) arch="machine 0x$machine" ;;
+  esac
+
+  printf 'ELF %s %s executable, %s\n' "$bits" "$endian" "$arch"
+}
+
+describe_one() {
+  path="$1"
+  if [ ! -e "$path" ]; then
+    echo "cannot open '$path' (No such file or directory)"
+    return 1
+  fi
+  if [ -d "$path" ]; then
+    echo "directory"
+    return 0
+  fi
+  if [ ! -s "$path" ]; then
+    echo "empty"
+    return 0
+  fi
+
+  magic4="$(dd if="$path" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  magic2="${magic4%????}"
+  case "$magic4" in
+    7f454c46)
+      describe_elf "$path"
+      return 0
+      ;;
+    504b0304)
+      echo "Zip archive data"
+      return 0
+      ;;
+    1f8b0800|1f8b0808)
+      echo "gzip compressed data"
+      return 0
+      ;;
+  esac
+  case "$magic2" in
+    2321)
+      first="$(sed -n '1{s/[[:cntrl:]]//g;p;q;}' "$path" 2>/dev/null)"
+      echo "${first:-script text executable}"
+      return 0
+      ;;
+  esac
+
+  if dd if="$path" bs=512 count=1 2>/dev/null |
+     LC_ALL=C grep -q '[^[:print:][:space:]]'; then
+    echo "data"
+  else
+    echo "ASCII text"
+  fi
+}
+
+status=0
+for path in "$@"; do
+  if [ "$brief" -eq 0 ]; then
+    printf '%s: ' "$path"
+  fi
+  describe_one "$path" || status=1
+done
+exit "$status"
+EOF
+
+chmod 755 "$OUT_DIR/bin/getconf" "$OUT_DIR/bin/ldd" "$OUT_DIR/bin/readelf" "$OUT_DIR/bin/file"
+
 rsync_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/rsync" | awk '{print $1}')"
 rsync_binary_size="$(wc -c <"$OUT_DIR/bin/rsync" | tr -d ' ')"
 rsync_license_sha256="$(shasum -a 256 "$LICENSE_DIR/COPYING" | awk '{print $1}')"
@@ -436,6 +581,14 @@ xdelta3_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/xdelta3" | awk '{print $1}')"
 xdelta3_shim_size="$(wc -c <"$OUT_DIR/bin/xdelta3" | tr -d ' ')"
 seven_zip_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/7z" | awk '{print $1}')"
 seven_zip_shim_size="$(wc -c <"$OUT_DIR/bin/7z" | tr -d ' ')"
+getconf_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/getconf" | awk '{print $1}')"
+getconf_binary_size="$(wc -c <"$OUT_DIR/bin/getconf" | tr -d ' ')"
+ldd_script_sha256="$(shasum -a 256 "$OUT_DIR/bin/ldd" | awk '{print $1}')"
+ldd_script_size="$(wc -c <"$OUT_DIR/bin/ldd" | tr -d ' ')"
+readelf_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/readelf" | awk '{print $1}')"
+readelf_binary_size="$(wc -c <"$OUT_DIR/bin/readelf" | tr -d ' ')"
+file_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/file" | awk '{print $1}')"
+file_shim_size="$(wc -c <"$OUT_DIR/bin/file" | tr -d ' ')"
 
 cat >"$OUT_DIR/manifest.json" <<EOF
 {
@@ -609,6 +762,60 @@ cat >"$OUT_DIR/manifest.json" <<EOF
       "size": $systemctl_shim_size,
       "sha256": "$systemctl_shim_sha256",
       "kind": "app-local-systemd-compat-shim",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    },
+    {
+      "name": "getconf",
+      "version": "glibc-toolchain-sysroot",
+      "path": "bin/getconf",
+      "size": $getconf_binary_size,
+      "sha256": "$getconf_binary_sha256",
+      "kind": "target-toolchain-sysroot-binary",
+      "source": {
+        "path": "$TARGET_SYSROOT/usr/bin/getconf"
+      },
+      "license": {
+        "spdx": "LGPL-2.1-or-later"
+      }
+    },
+    {
+      "name": "ldd",
+      "version": "glibc-toolchain-sysroot",
+      "path": "bin/ldd",
+      "size": $ldd_script_size,
+      "sha256": "$ldd_script_sha256",
+      "kind": "target-toolchain-sysroot-script",
+      "source": {
+        "path": "$TARGET_SYSROOT/usr/bin/ldd"
+      },
+      "license": {
+        "spdx": "LGPL-2.1-or-later"
+      }
+    },
+    {
+      "name": "readelf",
+      "version": "binutils-toolchain",
+      "path": "bin/readelf",
+      "size": $readelf_binary_size,
+      "sha256": "$readelf_binary_sha256",
+      "kind": "target-toolchain-binary",
+      "source": {
+        "path": "$TARGET_PREFIX/bin/readelf"
+      },
+      "license": {
+        "spdx": "GPL-3.0-or-later"
+      }
+    },
+    {
+      "name": "file",
+      "version": "leaf-shim-1",
+      "path": "bin/file",
+      "size": $file_shim_size,
+      "sha256": "$file_shim_sha256",
+      "kind": "app-local-basic-file-shim",
       "license": {
         "spdx": "MIT",
         "path": "LICENSE"
