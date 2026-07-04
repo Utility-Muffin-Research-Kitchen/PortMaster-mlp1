@@ -504,6 +504,67 @@ _leaf_sudo_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 _leaf_squashfs_check="$_leaf_sudo_dir/leaf-squashfs-check"
 _leaf_squashfuse="$_leaf_sudo_dir/squashfuse"
 
+_leaf_fat32_limit() {
+  case "${LEAF_PM_FAT32_FILE_LIMIT_BYTES:-}" in
+    ""|*[!0-9]*) printf '%s\n' 4294967296 ;;
+    *) printf '%s\n' "$LEAF_PM_FAT32_FILE_LIMIT_BYTES" ;;
+  esac
+}
+
+_leaf_mount_type_for_path() {
+  _leaf_path="$1"
+  _leaf_best_mount=""
+  _leaf_best_type=""
+  [ -r /proc/mounts ] || return 1
+  while read -r _leaf_dev _leaf_mount _leaf_type _leaf_rest; do
+    case "$_leaf_path" in
+      "$_leaf_mount"|"$_leaf_mount"/*)
+        if [ "${#_leaf_mount}" -gt "${#_leaf_best_mount}" ]; then
+          _leaf_best_mount="$_leaf_mount"
+          _leaf_best_type="$_leaf_type"
+        fi
+        ;;
+    esac
+  done </proc/mounts
+  [ -n "$_leaf_best_type" ] || return 1
+  printf '%s\n' "$_leaf_best_type"
+}
+
+_leaf_file_size() {
+  [ -f "$1" ] || return 1
+  wc -c <"$1" 2>/dev/null | tr -d ' '
+}
+
+_leaf_download_log() {
+  _leaf_msg="$1"
+  _leaf_base="${LEAF_PM_DATA_DIR:-${XDG_DATA_HOME:-}}"
+  [ -n "$_leaf_base" ] || return 0
+  _leaf_log_dir="$_leaf_base/.leaf/logs"
+  mkdir -p "$_leaf_log_dir" 2>/dev/null || return 0
+  printf '%s %s\n' "$(date +%s 2>/dev/null || printf 0)" "$_leaf_msg" >>"$_leaf_log_dir/download.log" 2>/dev/null || true
+}
+
+_leaf_report_runtime_fat32_failure() {
+  _leaf_runtime="$1"
+  [ -n "$_leaf_runtime" ] || return 0
+  [ -f "$_leaf_runtime" ] || return 0
+  [ "$(_leaf_mount_type_for_path "$_leaf_runtime" 2>/dev/null || true)" = "vfat" ] || return 0
+  _leaf_limit="$(_leaf_fat32_limit)"
+  if [ "$_leaf_limit" -gt 1048576 ]; then
+    _leaf_near_limit=$((_leaf_limit - 1048576))
+  else
+    _leaf_near_limit=0
+  fi
+  _leaf_size="$(_leaf_file_size "$_leaf_runtime" || printf 0)"
+  case "$_leaf_size" in
+    ""|*[!0-9]*) return 0 ;;
+  esac
+  [ "$_leaf_size" -ge "$_leaf_near_limit" ] || return 0
+  _leaf_msg="Leaf PortMaster: runtime_check failed near the FAT32 single-file limit; '${_leaf_runtime##*/}' is $_leaf_size bytes, and stock MLP1 vfat cannot store single files >= $_leaf_limit bytes"
+  echo "$_leaf_msg" >&2
+  _leaf_download_log "$_leaf_msg"
+}
+
 _leaf_squashfs_status() {
   [ -x "$_leaf_squashfs_check" ] || return 0
   LEAF_PM_SQUASHFS_CHECK_QUIET=1 "$_leaf_squashfs_check" "$1"
@@ -568,6 +629,9 @@ case "${1##*/}" in
     done
     "$@"
     _leaf_rc=$?
+    if [ "$_leaf_rc" -ne 0 ] && [ -n "$_leaf_runtime" ]; then
+      _leaf_report_runtime_fat32_failure "$_leaf_runtime"
+    fi
     if [ "$_leaf_rc" -eq 0 ] && [ -n "$_leaf_runtime" ] && [ -x "$_leaf_squashfs_check" ]; then
       _leaf_squashfs_status "$_leaf_runtime"
       _leaf_check_rc=$?

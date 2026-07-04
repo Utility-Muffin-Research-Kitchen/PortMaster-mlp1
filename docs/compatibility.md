@@ -378,6 +378,42 @@ $USERDATA_PATH/portmaster/.leaf/armhf-scan.tsv
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.manifest
 ```
 
+## SD filesystem and large files
+
+On stock MLP1 firmware, Leaf supports PortMaster on the stock-mounted
+FAT32/vfat SD card. The connected test device exposes both SD mount candidates
+as `vfat`, and the stock kernel does not expose `CONFIG_EXFAT_FS`; exFAT is
+therefore not a supported PortMaster card format for stock-firmware boot and
+automount. This is a firmware boundary, not a PortMaster install bug.
+
+FAT32 cannot store one file at or above 4 GiB. Leaf does not work around that
+by changing the stock OS, writing eMMC filesystem helpers, or installing
+system services. Ports with a required single file at that size remain
+unsupported on stock MLP1 until their data is split upstream or the device
+moves to a different firmware/storage stack.
+
+The manager-owned downloader checks expected download size and target free
+space before downloading PortMaster GUI and managed UI-runtime archives. On a
+vfat target, a known single download at or above 4 GiB fails before writing a
+partial file and logs the specific FAT32 boundary under:
+
+```text
+$USERDATA_PATH/portmaster/.leaf/logs/download.log
+```
+
+If a write still fails at runtime with `EFBIG`, a short write at the single-file
+limit, or `ENOSPC`, the manager reports that classification instead of a
+generic curl error. The app-local `sudo` shim also classifies failed
+`harbourmaster runtime_check <runtime>.squashfs` calls when the runtime file is
+already near the FAT32 boundary. The shim is only on PATH when the optional
+`PortMaster.pak` has installed its SD-local tools.
+
+The scanner records an early-warning inventory of installed port files larger
+than 3.5 GiB in `armhf-scan.json`. Doctor exposes that cached count as
+`storage.large_files` next to `storage.sd_filesystem`, so support bundles can
+show whether an installed port is already close to the stock FAT32 limit
+without recursively copying user data.
+
 ## Runtime squashfs formats
 
 MLP1 stock firmware exposes squashfs with gzip/zlib, lzo, and xz compression

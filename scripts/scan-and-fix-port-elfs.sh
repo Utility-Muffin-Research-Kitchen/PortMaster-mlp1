@@ -30,7 +30,7 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=7
+RULESET_VERSION=8
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -676,6 +676,69 @@ json_port_soname_array() {
       json_csv_string_array "$csv"
       printf '}'
     done < <(printf '%s\n' "${ports[@]}" | sort)
+    printf '\n  ],\n'
+  else
+    printf '],\n'
+  fi
+}
+
+large_file_threshold_bytes=3758096384
+large_file_threshold_mib=3584
+large_file_count=0
+
+file_size_for_report() {
+  local file="$1"
+  local line size
+  if line="$(stat_one_line "$file" 2>/dev/null)"; then
+    size="${line%%$'\t'*}"
+    case "$size" in
+      ''|*[!0-9]*) ;;
+      *) printf '%s\n' "$size"; return 0 ;;
+    esac
+  fi
+  wc -c <"$file" 2>/dev/null | tr -d ' '
+}
+
+collect_large_files() {
+  local out_file="$1"
+  local file size
+  : >"$out_file"
+  large_file_count=0
+  while IFS= read -r -d '' file; do
+    path_has_manifest_unsafe_chars "$file" && continue
+    size="$(file_size_for_report "$file" || true)"
+    case "$size" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    large_file_count=$((large_file_count + 1))
+    if [ "$large_file_count" -le 50 ]; then
+      printf '%s\t%s\n' "$size" "$file" >>"$out_file"
+    fi
+  done < <(find "$ports_dir" -type f -size +"${large_file_threshold_mib}"M -print0 2>/dev/null || true)
+}
+
+json_large_file_array() {
+  local first=1
+  local line size path tab sep
+  tab=$'\t'
+  printf '  "large_files": ['
+  if [ -s "$large_file_records" ]; then
+    printf '\n'
+    while IFS= read -r line; do
+      case "$line" in
+        *"$tab"*) ;;
+        *) continue ;;
+      esac
+      size="${line%%${tab}*}"
+      path="${line#*${tab}}"
+      if [ "$first" -eq 1 ]; then
+        sep=''
+        first=0
+      else
+        sep=",\n"
+      fi
+      printf '%b    {"path": "%s", "size": %s}' "$sep" "$(json_escape "$path")" "$size"
+    done <"$large_file_records"
     printf '\n  ],\n'
   else
     printf '],\n'
@@ -2465,6 +2528,7 @@ script_candidates="$scan_tmp_dir/scripts.list"
 elf_candidates="$scan_tmp_dir/elfs.list"
 script_stats="$scan_tmp_dir/scripts.stats"
 elf_stats="$scan_tmp_dir/elfs.stats"
+large_file_records="$scan_tmp_dir/large-files.tsv"
 
 find_shell_script_candidates >"$script_candidates"
 find_elf_candidates >"$elf_candidates"
@@ -2696,6 +2760,7 @@ for sdl2_port in "${!port_sdl2_aarch64[@]}"; do
     sdl2_fullscreen_ports_both=$((sdl2_fullscreen_ports_both + 1))
   fi
 done
+collect_large_files "$large_file_records"
 
 mv "$tmp_records" "$report_tsv"
 
@@ -2722,6 +2787,8 @@ cat >"$tmp_json" <<EOF
   "hook": "$(json_escape "$hook_path")",
   "records_tsv": "$(json_escape "$report_tsv")",
   "manifest": "$(json_escape "$manifest_path")",
+  "large_file_threshold_bytes": $large_file_threshold_bytes,
+  "large_file_count": $large_file_count,
   "files_skipped": $files_skipped,
   "files_processed": $files_processed,
   "cache": "$(json_escape "$cache_state")",
@@ -2790,6 +2857,7 @@ cat >"$tmp_json" <<EOF
   "lowercase_path_move_script_errors": $lowercase_path_move_errors,
   "godot_egl_scripts_patched": $godot_patched,
   "godot_egl_scripts_already_patched": $godot_already,
+$(json_large_file_array)
 $(json_port_soname_array "aarch64_compat_lib_port_sonames" "compat")
 $(json_port_soname_array "unresolved_sonames" "unresolved")
   "readelf_available": $(command -v readelf >/dev/null 2>&1 && printf 'true' || printf 'false'),

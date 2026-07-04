@@ -6,12 +6,18 @@
 #include <curl/curl.h>
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/statvfs.h>
+#include <time.h>
 #include <unistd.h>
 
 static int curl_ready;
+
+#define PM_FAT32_SINGLE_FILE_LIMIT (4ULL * 1024ULL * 1024ULL * 1024ULL)
+#define PM_DOWNLOAD_FREE_SPACE_MARGIN (1024ULL * 1024ULL)
 
 bool pm_download_url_allowed(const char *url, bool allow_http)
 {
@@ -74,9 +80,239 @@ static void configure_ca(CURL *curl)
     }
 }
 
-static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
+typedef struct {
+    FILE *fp;
+    uint64_t written;
+    uint64_t single_file_limit;
+    bool hit_single_file_limit;
+    int write_errno;
+} pm_file_download;
+
+static uint64_t fat32_single_file_limit(void)
 {
-    return fwrite(ptr, size, nmemb, (FILE *)userdata);
+    const char *env = getenv("LEAF_PM_FAT32_FILE_LIMIT_BYTES");
+    if (env && env[0]) {
+        char *end = NULL;
+        unsigned long long value = strtoull(env, &end, 10);
+        if (end && *end == '\0' && value > 0) {
+            return (uint64_t)value;
+        }
+    }
+    return PM_FAT32_SINGLE_FILE_LIMIT;
+}
+
+static void parent_path_for(const char *path, char *out, size_t out_size)
+{
+    if (!out || out_size == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (!path || !path[0]) {
+        return;
+    }
+    if (pm_copy(out, out_size, path) != 0) {
+        out[0] = '\0';
+        return;
+    }
+    char *slash = strrchr(out, '/');
+    if (!slash) {
+        pm_copy(out, out_size, ".");
+    } else if (slash == out) {
+        out[1] = '\0';
+    } else {
+        *slash = '\0';
+    }
+}
+
+static bool mount_type_for_path(const char *path, char *out, size_t out_size)
+{
+    if (out && out_size > 0) {
+        out[0] = '\0';
+    }
+    FILE *fp = fopen("/proc/mounts", "rb");
+    if (!fp) {
+        return false;
+    }
+
+    char best_mount[PM_PATH_MAX] = "";
+    char best_type[64] = "";
+    char line[8192];
+    while (fgets(line, sizeof(line), fp)) {
+        char dev[PM_PATH_MAX], mountpoint[PM_PATH_MAX], type[64];
+        if (sscanf(line, "%4095s %4095s %63s", dev, mountpoint, type) != 3) {
+            continue;
+        }
+        size_t ml = strlen(mountpoint);
+        if (ml == 0) {
+            continue;
+        }
+        if (strncmp(path, mountpoint, ml) == 0 &&
+            (path[ml] == '\0' || mountpoint[ml - 1] == '/' || path[ml] == '/') &&
+            ml > strlen(best_mount)) {
+            pm_copy(best_mount, sizeof(best_mount), mountpoint);
+            pm_copy(best_type, sizeof(best_type), type);
+        }
+    }
+    fclose(fp);
+
+    if (!best_type[0]) {
+        return false;
+    }
+    pm_copy(out, out_size, best_type);
+    return true;
+}
+
+static bool path_is_vfat(const char *path)
+{
+    char type[64];
+    return mount_type_for_path(path, type, sizeof(type)) && strcmp(type, "vfat") == 0;
+}
+
+static int available_bytes_for_path(const char *path, uint64_t *out)
+{
+    if (out) {
+        *out = 0;
+    }
+    char parent[PM_PATH_MAX];
+    parent_path_for(path, parent, sizeof(parent));
+    if (!parent[0]) {
+        return -1;
+    }
+    struct statvfs st;
+    if (statvfs(parent, &st) != 0) {
+        return -1;
+    }
+    uint64_t block = st.f_frsize ? (uint64_t)st.f_frsize : (uint64_t)st.f_bsize;
+    if (block == 0 || st.f_bavail > UINT64_MAX / block) {
+        return -1;
+    }
+    if (out) {
+        *out = (uint64_t)st.f_bavail * block;
+    }
+    return 0;
+}
+
+static void log_download_detail(const char *dest_path, const char *detail)
+{
+    const char *leaf = dest_path ? strstr(dest_path, "/.leaf/") : NULL;
+    if (!leaf || !detail || !detail[0]) {
+        return;
+    }
+
+    size_t leaf_len = (size_t)(leaf - dest_path) + strlen("/.leaf");
+    char leaf_dir[PM_PATH_MAX];
+    char log_dir[PM_PATH_MAX];
+    char log_path[PM_PATH_MAX];
+    if (leaf_len >= sizeof(leaf_dir)) {
+        return;
+    }
+    memcpy(leaf_dir, dest_path, leaf_len);
+    leaf_dir[leaf_len] = '\0';
+    if (pm_join(log_dir, sizeof(log_dir), leaf_dir, "logs") != 0 ||
+        pm_join(log_path, sizeof(log_path), log_dir, "download.log") != 0 ||
+        pm_mkdir_p(log_dir, NULL, 0) != 0) {
+        return;
+    }
+
+    FILE *fp = fopen(log_path, "ab");
+    if (!fp) {
+        return;
+    }
+    time_t now = time(NULL);
+    fprintf(fp, "%lld ", (long long)now);
+    for (const char *p = detail; *p; p++) {
+        fputc((*p == '\n' || *p == '\r' || *p == '\t') ? ' ' : *p, fp);
+    }
+    fputc('\n', fp);
+    fclose(fp);
+}
+
+static int preflight_download_target(const pm_download_spec *spec, char *err, size_t err_size)
+{
+    if (!spec || !spec->dest_path || spec->expected_size == 0) {
+        return 0;
+    }
+
+    uint64_t limit = fat32_single_file_limit();
+    bool vfat = path_is_vfat(spec->dest_path);
+    if (vfat && spec->expected_size >= limit) {
+        snprintf(err, err_size,
+                 "download target is vfat/FAT32 and expected file is %llu bytes; single files >= %llu bytes are unsupported",
+                 (unsigned long long)spec->expected_size,
+                 (unsigned long long)limit);
+        return -1;
+    }
+
+    uint64_t available = 0;
+    uint64_t needed = spec->expected_size;
+    if (needed <= UINT64_MAX - PM_DOWNLOAD_FREE_SPACE_MARGIN) {
+        needed += PM_DOWNLOAD_FREE_SPACE_MARGIN;
+    }
+    if (available_bytes_for_path(spec->dest_path, &available) == 0 &&
+        needed > available) {
+        snprintf(err, err_size,
+                 "not enough free space for download: need %llu bytes plus margin, available %llu bytes",
+                 (unsigned long long)spec->expected_size,
+                 (unsigned long long)available);
+        return -1;
+    }
+    return 0;
+}
+
+static void classify_write_failure(const pm_download_spec *spec,
+                                   const pm_file_download *download,
+                                   char *err,
+                                   size_t err_size)
+{
+    uint64_t limit = fat32_single_file_limit();
+    if (download && download->hit_single_file_limit) {
+        snprintf(err, err_size,
+                 "download stopped at the FAT32 single-file limit (%llu bytes); this port/runtime needs a larger single file than stock MLP1 vfat supports",
+                 (unsigned long long)limit);
+        return;
+    }
+    if (download && download->write_errno == EFBIG) {
+        snprintf(err, err_size,
+                 "download failed because the target filesystem rejected a large file (EFBIG); FAT32/vfat cannot store single files >= %llu bytes",
+                 (unsigned long long)limit);
+        return;
+    }
+    if (download && download->write_errno == ENOSPC) {
+        snprintf(err, err_size,
+                 "download failed because the SD card ran out of free space (ENOSPC)");
+        return;
+    }
+    if (download && download->write_errno) {
+        snprintf(err, err_size, "download write failed: %s", strerror(download->write_errno));
+        return;
+    }
+    snprintf(err, err_size, "download failed: %s", spec && spec->url ? spec->url : "(unknown)");
+}
+
+static size_t write_file_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
+{
+    pm_file_download *dl = (pm_file_download *)userdata;
+    if (!dl || !dl->fp || (size != 0 && nmemb > SIZE_MAX / size)) {
+        return 0;
+    }
+    size_t len = size * nmemb;
+    if (len == 0) {
+        return 0;
+    }
+    if (dl->single_file_limit > 0) {
+        uint64_t max_allowed = dl->single_file_limit - 1;
+        if (dl->written > max_allowed || len > max_allowed - dl->written) {
+            dl->hit_single_file_limit = true;
+            dl->write_errno = EFBIG;
+            return 0;
+        }
+    }
+    size_t wrote = fwrite(ptr, 1, len, dl->fp);
+    dl->written += (uint64_t)wrote;
+    if (wrote != len && ferror(dl->fp)) {
+        dl->write_errno = errno ? errno : EIO;
+    }
+    return wrote;
 }
 
 typedef struct {
@@ -154,6 +390,15 @@ int pm_download_file(const pm_download_spec *spec, char *err, size_t err_size)
         return -1;
     }
 
+    char preflight_err[256];
+    if (preflight_download_target(spec, preflight_err, sizeof(preflight_err)) != 0) {
+        log_download_detail(spec->dest_path, preflight_err);
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "%s", preflight_err);
+        }
+        return -1;
+    }
+
     unlink(partial);
     FILE *fp = fopen(partial, "wb");
     if (!fp) {
@@ -182,21 +427,32 @@ int pm_download_file(const pm_download_spec *spec, char *err, size_t err_size)
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+    pm_file_download download = {
+        .fp = fp,
+        .single_file_limit = path_is_vfat(spec->dest_path) ? fat32_single_file_limit() : 0,
+    };
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_file_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &download);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "portmaster-mlp1/0.1");
 
     CURLcode rc = curl_easy_perform(curl);
     long http = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http);
     curl_easy_cleanup(curl);
-    fclose(fp);
+    if (fclose(fp) != 0 && download.write_errno == 0) {
+        download.write_errno = errno ? errno : EIO;
+    }
 
-    if (rc != CURLE_OK || http < 200 || http >= 300) {
+    if (download.write_errno || rc != CURLE_OK || http < 200 || http >= 300) {
         unlink(partial);
         if (err && err_size > 0) {
-            snprintf(err, err_size, "download failed: curl=%d http=%ld %s",
-                     (int)rc, http, curl_error);
+            if (download.write_errno) {
+                classify_write_failure(spec, &download, err, err_size);
+            } else {
+                snprintf(err, err_size, "download failed: curl=%d http=%ld %s",
+                         (int)rc, http, curl_error);
+            }
+            log_download_detail(spec->dest_path, err);
         }
         return -1;
     }

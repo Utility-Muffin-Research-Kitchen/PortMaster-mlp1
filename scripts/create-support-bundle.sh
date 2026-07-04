@@ -191,6 +191,7 @@ copy_file "$leaf_dir/armhf-scan.manifest" leaf/armhf-scan.manifest
 copy_file "$leaf_dir/smoke/latest.json" leaf/smoke/latest.json
 copy_file "$leaf_dir/smoke/latest.tsv" leaf/smoke/latest.tsv
 copy_file "$leaf_dir/logs/update.log" leaf/logs/update.log
+copy_file "$leaf_dir/logs/download.log" leaf/logs/download.log
 
 for f in "$leaf_dir"/launch-env*.json "$leaf_dir"/launch-env*.txt; do
   [ -f "$f" ] || continue

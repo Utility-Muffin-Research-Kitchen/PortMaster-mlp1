@@ -131,6 +131,14 @@ The same hook prepends `$USERDATA_PATH/portmaster/compat/tools/aarch64/bin` to
 `PATH`. The MLP1 pak source-builds and bundles pinned aarch64 helpers there so
 port patch scripts can use common tools without writing to the stock rootfs.
 
+Stock MLP1 mounts the supported SD card as FAT32/vfat for this PortMaster
+path. Single files at or above 4 GiB are not supported on that filesystem. The
+manager preflights known-size GUI/runtime downloads, classifies FAT32-size and
+free-space write failures, and appends those details under
+`$USERDATA_PATH/portmaster/.leaf/logs/`; it does not install filesystem support
+or persistent helpers into the stock OS/eMMC. The scanner also records
+installed port files larger than 3.5 GiB for the doctor report.
+
 On launch it sources:
 
 ```text

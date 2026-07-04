@@ -1500,6 +1500,78 @@ static void check_unresolved_sonames(const pm_context *ctx, pm_doctor_report *r,
     cJSON_Delete(root);
 }
 
+static void check_large_files(const pm_context *ctx, pm_doctor_report *r, cJSON *checks)
+{
+    char scan_path[PM_PATH_MAX];
+    if (pm_join(scan_path, sizeof(scan_path), ctx->leaf_dir, "armhf-scan.json") != 0 ||
+        !pm_file_exists(scan_path)) {
+        add_check(r, checks, "storage.large_files", PM_CHECK_INFO,
+                  "info", "No scan report exists yet for large-file inventory",
+                  ctx->leaf_dir);
+        return;
+    }
+
+    char err[128];
+    char *text = pm_read_text_file(scan_path, 512 * 1024, err, sizeof(err));
+    if (!text) {
+        add_check(r, checks, "storage.large_files", PM_CHECK_INFO,
+                  "info", "Could not read large-file inventory", scan_path);
+        return;
+    }
+
+    cJSON *root = cJSON_Parse(text);
+    free(text);
+    if (!root) {
+        add_check(r, checks, "storage.large_files", PM_CHECK_INFO,
+                  "info", "Could not parse large-file inventory", scan_path);
+        return;
+    }
+
+    cJSON *count_item = cJSON_GetObjectItemCaseSensitive(root, "large_file_count");
+    cJSON *threshold_item = cJSON_GetObjectItemCaseSensitive(root, "large_file_threshold_bytes");
+    cJSON *items = cJSON_GetObjectItemCaseSensitive(root, "large_files");
+    if (!cJSON_IsNumber(count_item) || !cJSON_IsArray(items)) {
+        add_check(r, checks, "storage.large_files", PM_CHECK_INFO,
+                  "info", "Scan report predates large-file inventory", scan_path);
+        cJSON_Delete(root);
+        return;
+    }
+
+    int count = (int)count_item->valuedouble;
+    unsigned long long threshold = cJSON_IsNumber(threshold_item)
+                                       ? (unsigned long long)threshold_item->valuedouble
+                                       : 0ULL;
+    char detail[4096] = "";
+    appendf(detail, sizeof(detail), "scan=%s\nthreshold_bytes=%llu",
+            scan_path, threshold);
+
+    int shown = 0;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, items) {
+        if (shown >= 12) {
+            appendf(detail, sizeof(detail), "\n...and %d more file%s",
+                    count - shown, count - shown == 1 ? "" : "s");
+            break;
+        }
+        cJSON *path = cJSON_GetObjectItemCaseSensitive(item, "path");
+        cJSON *size = cJSON_GetObjectItemCaseSensitive(item, "size");
+        if (!cJSON_IsString(path) || !path->valuestring || !cJSON_IsNumber(size)) {
+            continue;
+        }
+        appendf(detail, sizeof(detail), "\n%llu\t%s",
+                (unsigned long long)size->valuedouble,
+                path->valuestring);
+        shown++;
+    }
+
+    add_check(r, checks, "storage.large_files", PM_CHECK_INFO,
+              "info",
+              count > 0 ? "Latest scan found installed files near the FAT32 limit"
+                        : "Latest scan found no installed files near the FAT32 limit",
+              detail);
+    cJSON_Delete(root);
+}
+
 static void check_env_contract(const pm_context *ctx, pm_doctor_report *r, cJSON *checks)
 {
     char detail[4096];
@@ -1777,6 +1849,7 @@ void pm_doctor_run_spec(const pm_context *ctx, pm_doctor_report *report, bool js
     check_python(ctx, report, checks);
     check_mounts_and_kernel(ctx, report, checks);
     check_storage(ctx, report, checks);
+    check_large_files(ctx, report, checks);
     check_libraries(ctx, report, checks);
     check_graphics_audio(ctx, report, checks);
     check_root_drift(ctx, report, checks);

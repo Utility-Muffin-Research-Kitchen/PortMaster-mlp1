@@ -20,6 +20,7 @@ typedef struct {
     long long last_checked_unix;
     char latest_version[64];
     char url[1024];
+    uint64_t size;
     char md5[33];
     char release_url[1024];
     char manager_version[64];
@@ -169,6 +170,10 @@ static int load_state(pm_context *ctx, pm_update_state *state)
     }
     (void)json_string(root, "latest_version", state->latest_version, sizeof(state->latest_version));
     (void)json_string(root, "url", state->url, sizeof(state->url));
+    cJSON *size = cJSON_GetObjectItemCaseSensitive(root, "size");
+    if (cJSON_IsNumber(size) && size->valuedouble > 0.0) {
+        state->size = (uint64_t)size->valuedouble;
+    }
     (void)json_string(root, "md5", state->md5, sizeof(state->md5));
     (void)json_string(root, "release_url", state->release_url, sizeof(state->release_url));
     (void)json_string(root, "manager_version", state->manager_version, sizeof(state->manager_version));
@@ -206,6 +211,7 @@ static int write_state(pm_context *ctx, const pm_update_state *state, char *err,
     cJSON_AddNumberToObject(root, "last_checked_unix", (double)state->last_checked_unix);
     cJSON_AddStringToObject(root, "latest_version", state->latest_version);
     cJSON_AddStringToObject(root, "url", state->url);
+    cJSON_AddNumberToObject(root, "size", (double)state->size);
     cJSON_AddStringToObject(root, "md5", state->md5);
     cJSON_AddStringToObject(root, "release_url", state->release_url);
     cJSON_AddStringToObject(root, "manager_version", state->manager_version);
@@ -254,6 +260,7 @@ static void state_from_status(pm_context *ctx,
     state->last_checked_unix = (long long)time(NULL);
     pm_copy(state->latest_version, sizeof(state->latest_version), status->source.tag);
     pm_copy(state->url, sizeof(state->url), status->source.url);
+    state->size = status->source.size;
     pm_copy(state->md5, sizeof(state->md5), status->source.md5);
     pm_copy(state->release_url, sizeof(state->release_url), status->source.release_url);
     char identity_err[128];
@@ -282,6 +289,7 @@ static int status_from_state(pm_context *ctx, const pm_update_state *state,
     pm_copy(source->asset, sizeof(source->asset), "PortMaster.zip");
     pm_copy(source->tag, sizeof(source->tag), state->latest_version);
     pm_copy(source->url, sizeof(source->url), state->url);
+    source->size = state->size;
     pm_copy(source->md5, sizeof(source->md5), state->md5);
     pm_copy(source->release_url, sizeof(source->release_url), state->release_url);
     checked_at_now(source->checked_at, sizeof(source->checked_at));
@@ -440,6 +448,11 @@ static int pm_portmaster_check_update_policy(pm_context *ctx,
     pm_copy(source->channel, sizeof(source->channel), "stable");
     pm_copy(source->asset, sizeof(source->asset), "PortMaster.zip");
     checked_at_now(source->checked_at, sizeof(source->checked_at));
+
+    cJSON *size = cJSON_GetObjectItemCaseSensitive(stable, "size");
+    if (cJSON_IsNumber(size) && size->valuedouble > 0.0) {
+        source->size = (uint64_t)size->valuedouble;
+    }
 
     if (json_string(stable, "version", source->tag, sizeof(source->tag)) != 0 ||
         json_string(stable, "url", source->url, sizeof(source->url)) != 0 ||
