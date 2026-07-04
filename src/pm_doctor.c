@@ -591,6 +591,21 @@ static int count_loop_nodes(void)
     return count;
 }
 
+static bool port_runtime_helper_available(const pm_context *ctx, char *out, size_t out_size)
+{
+    char path[PM_PATH_MAX];
+    if (!ctx ||
+        pm_join3(path, sizeof(path), ctx->pak_dir,
+                 "scripts", "prepare-port-runtime.sh") != 0 ||
+        !executable_file(path)) {
+        if (out && out_size > 0) {
+            out[0] = '\0';
+        }
+        return false;
+    }
+    return pm_copy(out, out_size, path) == 0;
+}
+
 static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, cJSON *checks)
 {
     char squashfs_config[2048] = "";
@@ -635,14 +650,26 @@ static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, 
                   "required", "Kernel config is not readable", "/proc/config.gz");
     }
 
+    char runtime_helper[PM_PATH_MAX];
+    bool has_runtime_helper = port_runtime_helper_available(ctx, runtime_helper,
+                                                            sizeof(runtime_helper));
+
     int loop_count = count_loop_nodes();
-    char detail[128];
-    pm_format(detail, sizeof(detail), "loop block nodes: %d", loop_count);
+    char detail[PM_PATH_MAX + 128];
+    pm_format(detail, sizeof(detail), "loop block nodes now: %d%s%s",
+              loop_count,
+              has_runtime_helper ? "\nOn-demand helper: " : "",
+              has_runtime_helper ? runtime_helper : "");
     add_check(r, checks, "kernel.loop_devices",
-              loop_count >= 16 ? PM_CHECK_OK : (loop_count >= 8 ? PM_CHECK_WARN : PM_CHECK_FAIL),
+              loop_count >= 16 ? PM_CHECK_OK
+                               : (has_runtime_helper ? PM_CHECK_APP_LOCAL_OK
+                                                     : (loop_count >= 8 ? PM_CHECK_WARN
+                                                                       : PM_CHECK_FAIL)),
               "required",
               loop_count >= 16 ? "At least 16 loop nodes are present"
-                               : "Fewer than 16 loop nodes are present",
+                               : (has_runtime_helper
+                                      ? "Loop nodes are provisioned on demand before port launch"
+                                      : "Fewer than 16 loop nodes are present"),
               loop_count >= 0 ? detail : "Could not inspect /dev.");
 
     if (path_exists_any("/dev/uinput")) {
@@ -657,14 +684,26 @@ static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, 
                   "/dev/uinput is missing", NULL);
     }
 
+    bool zram_exists = path_exists_any("/dev/zram0");
+    bool zram_active = pm_file_exists("/proc/swaps") &&
+                       read_file_contains("/proc/swaps", "/dev/zram0");
+    char zram_detail[PM_PATH_MAX + 160];
+    pm_format(zram_detail, sizeof(zram_detail), "%s%s%s",
+              zram_active ? "zram swap appears active"
+                          : "zram swap is not active in the current shell",
+              has_runtime_helper ? "\nOn-demand helper: " : "",
+              has_runtime_helper ? runtime_helper : "");
     add_check(r, checks, "kernel.zram",
-              path_exists_any("/dev/zram0") ? PM_CHECK_WARN : PM_CHECK_WARN,
+              zram_active ? PM_CHECK_OK
+                          : (zram_exists && has_runtime_helper ? PM_CHECK_APP_LOCAL_OK
+                                                               : PM_CHECK_WARN),
               "recommended",
-              path_exists_any("/dev/zram0") ? "/dev/zram0 exists but swap may not be active"
-                                           : "/dev/zram0 is missing",
-              pm_file_exists("/proc/swaps") && read_file_contains("/proc/swaps", "/dev/zram0")
-                  ? "zram swap appears active"
-                  : "zram swap is not active or could not be confirmed");
+              zram_active ? "zram swap is active"
+                          : (zram_exists && has_runtime_helper
+                                 ? "zram swap is provisioned on demand before port launch"
+                                 : (zram_exists ? "/dev/zram0 exists but swap may not be active"
+                                                : "/dev/zram0 is missing")),
+              zram_detail);
 
     add_check(r, checks, "runtime.tmp",
               pm_dir_exists("/tmp") ? PM_CHECK_OK : PM_CHECK_FAIL,
