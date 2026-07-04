@@ -163,6 +163,29 @@ LEAF_PM_DOCTOR_LOOP_STRESS=1 ./launch.sh --doctor-cfw-text
 `--ui-state-text` prints the same top-level row model used by the GUI. It is
 useful for ADB checks that need to prove menu state without launching SDL.
 
+The host-side compatibility matrix writes report artifacts to SD userdata only:
+
+```sh
+make smoke-matrix
+LEAF_PM_SMOKE_LOOP_STRESS=1 make smoke-matrix
+LEAF_PM_SMOKE_PORTS=2048,SDLPoP make smoke-matrix
+LEAF_PM_SMOKE_INTERACTIVE=1 LEAF_PM_SMOKE_PORTS=Duck-Dodge make smoke-matrix
+```
+
+Reports are published on the device at:
+
+```text
+$USERDATA_PATH/portmaster/.leaf/smoke/latest.tsv
+$USERDATA_PATH/portmaster/.leaf/smoke/latest.json
+$USERDATA_PATH/portmaster/.leaf/smoke/logs/
+```
+
+The matrix is passive by default: it runs the CFW doctor, checks runtime/tool
+fixtures, validates representative installed port scripts and required files,
+and records existing port log tails. It does not launch games automatically.
+If `PortMaster.pak` is not installed, the harness exits as skipped before
+loading or writing any PortMaster-specific device path.
+
 ## PortMaster GUI Updates
 
 Leaf disables upstream PortMaster GUI self-update prompts during managed
