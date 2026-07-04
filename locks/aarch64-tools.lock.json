@@ -53,6 +53,70 @@
         "generic"
       ],
       "installed_path": "compat/tools/aarch64/bin/zip"
+    },
+    "sed": {
+      "name": "sed",
+      "version": "4.10",
+      "source": {
+        "url": "https://ftp.gnu.org/gnu/sed/sed-4.10.tar.xz",
+        "size": 1732800,
+        "sha256": "b8e72182b2ec96a3574e2998c47b7aaa64cc20ce000d8e9ac313cc07cecf28c7"
+      },
+      "license": {
+        "spdx": "GPL-3.0-or-later",
+        "source_path": "COPYING",
+        "installed_path": "LICENSES/sed/COPYING"
+      },
+      "configure": [
+        "--host=aarch64-buildroot-linux-gnu",
+        "--prefix=/usr",
+        "--disable-nls"
+      ],
+      "installed_path": "compat/tools/aarch64/bin/sed"
+    },
+    "findutils": {
+      "name": "findutils",
+      "version": "4.10.0",
+      "source": {
+        "url": "https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz",
+        "size": 2240712,
+        "sha256": "1387e0b67ff247d2abde998f90dfbf70c1491391a59ddfecb8ae698789f0a4f5"
+      },
+      "license": {
+        "spdx": "GPL-3.0-or-later",
+        "source_path": "COPYING",
+        "installed_path": "LICENSES/findutils/COPYING"
+      },
+      "configure": [
+        "--host=aarch64-buildroot-linux-gnu",
+        "--prefix=/usr",
+        "--disable-nls"
+      ],
+      "installed_paths": [
+        "compat/tools/aarch64/bin/find",
+        "compat/tools/aarch64/bin/xargs"
+      ]
+    },
+    "grep": {
+      "name": "grep",
+      "version": "3.12",
+      "source": {
+        "url": "https://ftp.gnu.org/gnu/grep/grep-3.12.tar.xz",
+        "size": 1918448,
+        "sha256": "2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9"
+      },
+      "license": {
+        "spdx": "GPL-3.0-or-later",
+        "source_path": "COPYING",
+        "installed_path": "LICENSES/grep/COPYING"
+      },
+      "configure": [
+        "--host=aarch64-buildroot-linux-gnu",
+        "--prefix=/usr",
+        "--disable-nls",
+        "--disable-perl-regexp"
+      ],
+      "installed_path": "compat/tools/aarch64/bin/grep"
     }
   }
 }

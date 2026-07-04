@@ -574,7 +574,14 @@ static int write_manifest(const pm_context *ctx, const pm_portmaster_source *sou
             "    \"aarch64_sdl2_fullscreen_shim\": \"compat/sdl2/aarch64/leaf-sdl2-fullscreen.so\",\n"
             "    \"native_tools\": {\n"
             "      \"rsync\": \"compat/tools/aarch64/bin/rsync\",\n"
-            "      \"zip\": \"compat/tools/aarch64/bin/zip\"\n"
+            "      \"zip\": \"compat/tools/aarch64/bin/zip\",\n"
+            "      \"sed\": \"compat/tools/aarch64/bin/sed\",\n"
+            "      \"find\": \"compat/tools/aarch64/bin/find\",\n"
+            "      \"xargs\": \"compat/tools/aarch64/bin/xargs\",\n"
+            "      \"grep\": \"compat/tools/aarch64/bin/grep\",\n"
+            "      \"sudo\": \"compat/tools/aarch64/bin/sudo\",\n"
+            "      \"doas\": \"compat/tools/aarch64/bin/doas\",\n"
+            "      \"systemctl\": \"compat/tools/aarch64/bin/systemctl\"\n"
             "    }\n"
             "  },\n"
             "  \"ports_scan\": {\n"
@@ -860,7 +867,9 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
     const char *egl_files[] = { "libEGL.so.1", "libEGL.so" };
     const char *mali_files[] = { "libmali.so.1", "libmali-hook.so.1" };
     const char *sdl2_files[] = { "leaf-sdl2-fullscreen.so", "manifest.json" };
-    const char *tools_bin_files[] = { "rsync", "zip" };
+    const char *tools_bin_files[] = {
+        "rsync", "zip", "sed", "find", "xargs", "grep", "sudo", "doas", "systemctl"
+    };
     const char *tools_meta_files[] = { "manifest.json" };
 
     if (copy_compat_asset_set(ctx,

@@ -399,11 +399,20 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
 
     const char *base_path = pm_env("PATH", "/usr/bin:/usr/sbin:/bin");
     const char *base_ld = pm_env("LD_LIBRARY_PATH", "");
+    char tools_bin[PM_PATH_MAX];
+    bool has_tools_bin = pm_join3(tools_bin, sizeof(tools_bin),
+                                  ctx->data_dir, "compat/tools", "aarch64/bin") == 0 &&
+                         pm_dir_exists(tools_bin);
     char path_env[PM_PATH_MAX * 2];
     char ld_env[PM_PATH_MAX * 2];
     char python_path[PM_PATH_MAX * 2];
     if (!uses_system_python) {
-        if (pm_format(path_env, sizeof(path_env), "%s/bin:%s", ctx->runtime_dir, base_path) != 0 ||
+        int path_rc = has_tools_bin
+            ? pm_format(path_env, sizeof(path_env), "%s/bin:%s:%s",
+                        ctx->runtime_dir, tools_bin, base_path)
+            : pm_format(path_env, sizeof(path_env), "%s/bin:%s",
+                        ctx->runtime_dir, base_path);
+        if (path_rc != 0 ||
             pm_format(ld_env, sizeof(ld_env), "%s/lib:%s", ctx->runtime_dir, base_ld) != 0 ||
             pm_format(python_path, sizeof(python_path),
                       "%s/lib/python3.10:%s/lib/python3.10/site-packages:%s/lib",
@@ -412,7 +421,14 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
             return -1;
         }
     } else {
-        pm_copy(path_env, sizeof(path_env), base_path);
+        if (has_tools_bin) {
+            if (pm_format(path_env, sizeof(path_env), "%s:%s", tools_bin, base_path) != 0) {
+                snprintf(err, err_size, "runtime environment path too long");
+                return -1;
+            }
+        } else {
+            pm_copy(path_env, sizeof(path_env), base_path);
+        }
         pm_copy(ld_env, sizeof(ld_env), base_ld);
         pm_copy(python_path, sizeof(python_path), "");
     }
@@ -434,6 +450,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "PYTHONDONTWRITEBYTECODE", "1" },
         { "XDG_DATA_HOME", ctx->data_dir },
         { "HM_TOOLS_DIR", ctx->data_dir },
+        { "LEAF_PM_TOOLS_DIR", has_tools_bin ? tools_bin : "" },
         { "HM_PORTS_DIR", ctx->ports_dir },
         { "HM_SCRIPTS_DIR", ctx->ports_dir },
         { "PORTMASTER_CONTROLFOLDER", ctx->portmaster_dir },

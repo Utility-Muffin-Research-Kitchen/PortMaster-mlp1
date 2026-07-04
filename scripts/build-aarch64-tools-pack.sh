@@ -125,12 +125,196 @@ chmod 755 "$OUT_DIR/bin/zip"
 mkdir -p "$BUILD_DIR/licenses/zip"
 cp -f "$zip_src_dir/LICENSE" "$BUILD_DIR/licenses/zip/LICENSE"
 
+sed_version="$(read_lock tools.sed.version)"
+sed_url="$(read_lock tools.sed.source.url)"
+sed_expected_size="$(read_lock tools.sed.source.size)"
+sed_expected_sha256="$(read_lock tools.sed.source.sha256)"
+sed_tarball="$(download_source "sed-$sed_version.tar.xz" "$sed_url" "$sed_expected_size" "$sed_expected_sha256")"
+sed_src_dir="$container_work/sed-$sed_version"
+mkdir -p "$sed_src_dir"
+tar -xf "$sed_tarball" -C "$sed_src_dir" --strip-components=1
+(
+  cd "$sed_src_dir"
+  ./configure \
+    --host=aarch64-buildroot-linux-gnu \
+    --prefix=/usr \
+    --disable-nls \
+    CC=aarch64-buildroot-linux-gnu-gcc \
+    CFLAGS="-Os"
+  make -j"$(nproc)"
+  aarch64-buildroot-linux-gnu-strip sed/sed
+)
+
+cp -f "$sed_src_dir/sed/sed" "$OUT_DIR/bin/sed"
+chmod 755 "$OUT_DIR/bin/sed"
+mkdir -p "$BUILD_DIR/licenses/sed"
+cp -f "$sed_src_dir/COPYING" "$BUILD_DIR/licenses/sed/COPYING"
+
+findutils_version="$(read_lock tools.findutils.version)"
+findutils_url="$(read_lock tools.findutils.source.url)"
+findutils_expected_size="$(read_lock tools.findutils.source.size)"
+findutils_expected_sha256="$(read_lock tools.findutils.source.sha256)"
+findutils_tarball="$(download_source "findutils-$findutils_version.tar.xz" "$findutils_url" "$findutils_expected_size" "$findutils_expected_sha256")"
+findutils_src_dir="$container_work/findutils-$findutils_version"
+mkdir -p "$findutils_src_dir"
+tar -xf "$findutils_tarball" -C "$findutils_src_dir" --strip-components=1
+(
+  cd "$findutils_src_dir"
+  ./configure \
+    --host=aarch64-buildroot-linux-gnu \
+    --prefix=/usr \
+    --disable-nls \
+    CC=aarch64-buildroot-linux-gnu-gcc \
+    CFLAGS="-Os"
+  make -j"$(nproc)"
+  aarch64-buildroot-linux-gnu-strip find/find xargs/xargs
+)
+
+cp -f "$findutils_src_dir/find/find" "$OUT_DIR/bin/find"
+cp -f "$findutils_src_dir/xargs/xargs" "$OUT_DIR/bin/xargs"
+chmod 755 "$OUT_DIR/bin/find" "$OUT_DIR/bin/xargs"
+mkdir -p "$BUILD_DIR/licenses/findutils"
+cp -f "$findutils_src_dir/COPYING" "$BUILD_DIR/licenses/findutils/COPYING"
+
+grep_version="$(read_lock tools.grep.version)"
+grep_url="$(read_lock tools.grep.source.url)"
+grep_expected_size="$(read_lock tools.grep.source.size)"
+grep_expected_sha256="$(read_lock tools.grep.source.sha256)"
+grep_tarball="$(download_source "grep-$grep_version.tar.xz" "$grep_url" "$grep_expected_size" "$grep_expected_sha256")"
+grep_src_dir="$container_work/grep-$grep_version"
+mkdir -p "$grep_src_dir"
+tar -xf "$grep_tarball" -C "$grep_src_dir" --strip-components=1
+(
+  cd "$grep_src_dir"
+  ./configure \
+    --host=aarch64-buildroot-linux-gnu \
+    --prefix=/usr \
+    --disable-nls \
+    --disable-perl-regexp \
+    CC=aarch64-buildroot-linux-gnu-gcc \
+    CFLAGS="-Os"
+  make -j"$(nproc)"
+  aarch64-buildroot-linux-gnu-strip src/grep
+)
+
+cp -f "$grep_src_dir/src/grep" "$OUT_DIR/bin/grep"
+chmod 755 "$OUT_DIR/bin/grep"
+mkdir -p "$BUILD_DIR/licenses/grep"
+cp -f "$grep_src_dir/COPYING" "$BUILD_DIR/licenses/grep/COPYING"
+
+cat >"$OUT_DIR/bin/sudo" <<'EOF'
+#!/bin/sh
+# Leaf PortMaster app-local sudo shim. The MLP1 launch session already runs as
+# root, so this strips common sudo options and executes the requested command.
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --)
+      shift
+      break
+      ;;
+    --preserve-env|--preserve-env=*|-E|-n|-S|-H)
+      shift
+      ;;
+    -u|-g|-C|-p)
+      shift
+      [ "$#" -gt 0 ] && shift
+      ;;
+    -v|-k|-K)
+      exit 0
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+[ "$#" -gt 0 ] || exit 0
+exec "$@"
+EOF
+
+cat >"$OUT_DIR/bin/doas" <<'EOF'
+#!/bin/sh
+# Leaf PortMaster app-local doas shim. This mirrors the sudo shim for ports or
+# scripts that prefer doas on root-only devices.
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --)
+      shift
+      break
+      ;;
+    -n|-s)
+      shift
+      ;;
+    -u|-C)
+      shift
+      [ "$#" -gt 0 ] && shift
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+[ "$#" -gt 0 ] || exit 0
+exec "$@"
+EOF
+
+cat >"$OUT_DIR/bin/systemctl" <<'EOF'
+#!/bin/sh
+# Leaf PortMaster app-local systemctl shim. MLP1 stock firmware does not run
+# systemd; upstream PortMaster only uses these restart calls as CFW hints.
+case "${1:-}" in
+  --version|-V)
+    echo "systemctl leaf-portmaster-shim 0"
+    exit 0
+    ;;
+  restart|start|stop|try-restart|reload|daemon-reload)
+    exit 0
+    ;;
+  is-active|is-enabled|status)
+    exit 3
+    ;;
+  "")
+    exit 0
+    ;;
+  *)
+    echo "leaf-systemctl-shim: ignoring unsupported systemctl command: $*" >&2
+    exit 0
+    ;;
+esac
+EOF
+
+chmod 755 "$OUT_DIR/bin/sudo" "$OUT_DIR/bin/doas" "$OUT_DIR/bin/systemctl"
+
 rsync_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/rsync" | awk '{print $1}')"
 rsync_binary_size="$(wc -c <"$OUT_DIR/bin/rsync" | tr -d ' ')"
 rsync_license_sha256="$(shasum -a 256 "$LICENSE_DIR/COPYING" | awk '{print $1}')"
 zip_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/zip" | awk '{print $1}')"
 zip_binary_size="$(wc -c <"$OUT_DIR/bin/zip" | tr -d ' ')"
 zip_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/zip/LICENSE" | awk '{print $1}')"
+sed_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/sed" | awk '{print $1}')"
+sed_binary_size="$(wc -c <"$OUT_DIR/bin/sed" | tr -d ' ')"
+sed_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/sed/COPYING" | awk '{print $1}')"
+find_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/find" | awk '{print $1}')"
+find_binary_size="$(wc -c <"$OUT_DIR/bin/find" | tr -d ' ')"
+xargs_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/xargs" | awk '{print $1}')"
+xargs_binary_size="$(wc -c <"$OUT_DIR/bin/xargs" | tr -d ' ')"
+findutils_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/findutils/COPYING" | awk '{print $1}')"
+grep_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/grep" | awk '{print $1}')"
+grep_binary_size="$(wc -c <"$OUT_DIR/bin/grep" | tr -d ' ')"
+grep_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/grep/COPYING" | awk '{print $1}')"
+sudo_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/sudo" | awk '{print $1}')"
+sudo_shim_size="$(wc -c <"$OUT_DIR/bin/sudo" | tr -d ' ')"
+doas_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/doas" | awk '{print $1}')"
+doas_shim_size="$(wc -c <"$OUT_DIR/bin/doas" | tr -d ' ')"
+systemctl_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/systemctl" | awk '{print $1}')"
+systemctl_shim_size="$(wc -c <"$OUT_DIR/bin/systemctl" | tr -d ' ')"
 
 cat >"$OUT_DIR/manifest.json" <<EOF
 {
@@ -170,6 +354,110 @@ cat >"$OUT_DIR/manifest.json" <<EOF
         "spdx": "Info-ZIP",
         "path": "LICENSES/zip/LICENSE",
         "sha256": "$zip_license_sha256"
+      }
+    },
+    {
+      "name": "sed",
+      "version": "$sed_version",
+      "path": "bin/sed",
+      "size": $sed_binary_size,
+      "sha256": "$sed_binary_sha256",
+      "source": {
+        "url": "$sed_url",
+        "size": $sed_expected_size,
+        "sha256": "$sed_expected_sha256"
+      },
+      "license": {
+        "spdx": "GPL-3.0-or-later",
+        "path": "LICENSES/sed/COPYING",
+        "sha256": "$sed_license_sha256"
+      }
+    },
+    {
+      "name": "find",
+      "version": "$findutils_version",
+      "path": "bin/find",
+      "size": $find_binary_size,
+      "sha256": "$find_binary_sha256",
+      "source": {
+        "url": "$findutils_url",
+        "size": $findutils_expected_size,
+        "sha256": "$findutils_expected_sha256"
+      },
+      "license": {
+        "spdx": "GPL-3.0-or-later",
+        "path": "LICENSES/findutils/COPYING",
+        "sha256": "$findutils_license_sha256"
+      }
+    },
+    {
+      "name": "xargs",
+      "version": "$findutils_version",
+      "path": "bin/xargs",
+      "size": $xargs_binary_size,
+      "sha256": "$xargs_binary_sha256",
+      "source": {
+        "url": "$findutils_url",
+        "size": $findutils_expected_size,
+        "sha256": "$findutils_expected_sha256"
+      },
+      "license": {
+        "spdx": "GPL-3.0-or-later",
+        "path": "LICENSES/findutils/COPYING",
+        "sha256": "$findutils_license_sha256"
+      }
+    },
+    {
+      "name": "grep",
+      "version": "$grep_version",
+      "path": "bin/grep",
+      "size": $grep_binary_size,
+      "sha256": "$grep_binary_sha256",
+      "source": {
+        "url": "$grep_url",
+        "size": $grep_expected_size,
+        "sha256": "$grep_expected_sha256"
+      },
+      "license": {
+        "spdx": "GPL-3.0-or-later",
+        "path": "LICENSES/grep/COPYING",
+        "sha256": "$grep_license_sha256"
+      }
+    },
+    {
+      "name": "sudo",
+      "version": "leaf-shim-1",
+      "path": "bin/sudo",
+      "size": $sudo_shim_size,
+      "sha256": "$sudo_shim_sha256",
+      "kind": "app-local-root-pass-through-shim",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    },
+    {
+      "name": "doas",
+      "version": "leaf-shim-1",
+      "path": "bin/doas",
+      "size": $doas_shim_size,
+      "sha256": "$doas_shim_sha256",
+      "kind": "app-local-root-pass-through-shim",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    },
+    {
+      "name": "systemctl",
+      "version": "leaf-shim-1",
+      "path": "bin/systemctl",
+      "size": $systemctl_shim_size,
+      "sha256": "$systemctl_shim_sha256",
+      "kind": "app-local-systemd-compat-shim",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
       }
     }
   ]

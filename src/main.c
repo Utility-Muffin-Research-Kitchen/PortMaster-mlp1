@@ -32,6 +32,25 @@ int main(int argc, char **argv)
         return report.issues == 0 ? 0 : 1;
     }
 
+    if (argc > 1 &&
+        (strcmp(argv[1], "--doctor-spec-text") == 0 ||
+         strcmp(argv[1], "--doctor-cfw-text") == 0)) {
+        pm_doctor_report report;
+        pm_doctor_run_spec(&ctx, &report, false);
+        fputs(report.text, stdout);
+        return report.issues == 0 ? 0 : 1;
+    }
+
+    if (argc > 1 &&
+        (strcmp(argv[1], "--doctor-spec-json") == 0 ||
+         strcmp(argv[1], "--doctor-cfw-json") == 0 ||
+         strcmp(argv[1], "--doctor-json") == 0)) {
+        pm_doctor_report report;
+        pm_doctor_run_spec(&ctx, &report, true);
+        fputs(report.text, stdout);
+        return report.issues == 0 ? 0 : 1;
+    }
+
     if (argc > 1 && strcmp(argv[1], "--lock-summary") == 0) {
         if (!ctx.lock_loaded) {
             fprintf(stderr, "lock not loaded: %s\n", ctx.lock_path);

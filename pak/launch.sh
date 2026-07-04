@@ -35,6 +35,13 @@ fi
 export PLATFORM="${PLATFORM:-mlp1}"
 export PORTMASTER_MLP1_PAK_DIR="$PAK_DIR"
 export PORTMASTER_MLP1_DATA_DIR="${PORTMASTER_MLP1_DATA_DIR:-${USERDATA_PATH:-$SDCARD_PATH/.userdata/$PLATFORM}/portmaster}"
+export LEAF_PM_TOOLS_DIR="${LEAF_PM_TOOLS_DIR:-$PORTMASTER_MLP1_DATA_DIR/compat/tools/aarch64/bin}"
+if [ -d "$LEAF_PM_TOOLS_DIR" ]; then
+  case ":${PATH:-}:" in
+    *:"$LEAF_PM_TOOLS_DIR":*) ;;
+    *) export PATH="$LEAF_PM_TOOLS_DIR:${PATH:-/usr/bin:/usr/sbin:/bin:/sbin}" ;;
+  esac
+fi
 
 LOG_DIR="${LOGS_PATH:-${USERDATA_PATH:-$SDCARD_PATH/.userdata/$PLATFORM}/logs}"
 mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR=/tmp
