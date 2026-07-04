@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 typedef enum {
@@ -606,6 +607,72 @@ static bool port_runtime_helper_available(const pm_context *ctx, char *out, size
     return pm_copy(out, out_size, path) == 0;
 }
 
+static bool find_runtime_squashfs(const pm_context *ctx, char *out, size_t out_size)
+{
+    if (out && out_size > 0) {
+        out[0] = '\0';
+    }
+    if (!ctx || !out || out_size == 0) {
+        return false;
+    }
+
+    char libs_dir[PM_PATH_MAX];
+    if (pm_join(libs_dir, sizeof(libs_dir), ctx->portmaster_dir, "libs") != 0) {
+        return false;
+    }
+
+    DIR *dir = opendir(libs_dir);
+    if (!dir) {
+        return false;
+    }
+
+    char best[PM_PATH_MAX] = "";
+    off_t best_size = 0;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        size_t len = strlen(ent->d_name);
+        if (len <= 9 || strcmp(ent->d_name + len - 9, ".squashfs") != 0) {
+            continue;
+        }
+
+        char candidate[PM_PATH_MAX];
+        if (pm_join(candidate, sizeof(candidate), libs_dir, ent->d_name) != 0) {
+            continue;
+        }
+
+        struct stat st;
+        if (stat(candidate, &st) != 0 || !S_ISREG(st.st_mode)) {
+            continue;
+        }
+
+        if (!best[0] || st.st_size < best_size) {
+            pm_copy(best, sizeof(best), candidate);
+            best_size = st.st_size;
+        }
+    }
+    closedir(dir);
+
+    return best[0] && pm_copy(out, out_size, best) == 0;
+}
+
+static int doctor_loop_stress_count(void)
+{
+    const char *value = getenv("LEAF_PM_DOCTOR_LOOP_STRESS_COUNT");
+    if (!value || !value[0]) {
+        return 16;
+    }
+
+    char *end = NULL;
+    long parsed = strtol(value, &end, 10);
+    if (end == value || *end != '\0' || parsed < 1) {
+        return 16;
+    }
+    if (parsed > 64) {
+        return 64;
+    }
+    return (int)parsed;
+}
+
 static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, cJSON *checks)
 {
     char squashfs_config[2048] = "";
@@ -718,22 +785,8 @@ static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, 
               read_file_contains("/proc/mounts", " /dev/shm tmpfs ") ? "tmpfs" : "mount type unknown");
 
     if (truthy_env("LEAF_PM_DOCTOR_MOUNT_TEST")) {
-        char libs_dir[PM_PATH_MAX];
         char squashfs[PM_PATH_MAX] = "";
-        if (pm_join(libs_dir, sizeof(libs_dir), ctx->portmaster_dir, "libs") == 0) {
-            DIR *dir = opendir(libs_dir);
-            if (dir) {
-                struct dirent *ent;
-                while ((ent = readdir(dir)) != NULL) {
-                    size_t len = strlen(ent->d_name);
-                    if (len > 9 && strcmp(ent->d_name + len - 9, ".squashfs") == 0) {
-                        pm_join(squashfs, sizeof(squashfs), libs_dir, ent->d_name);
-                        break;
-                    }
-                }
-                closedir(dir);
-            }
-        }
+        find_runtime_squashfs(ctx, squashfs, sizeof(squashfs));
         if (squashfs[0]) {
             char qimg[PM_PATH_MAX + 16];
             char cmd[PM_PATH_MAX * 2];
@@ -759,6 +812,73 @@ static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, 
                   "required",
                   "Mount probe skipped",
                   "Set LEAF_PM_DOCTOR_MOUNT_TEST=1 to run a reboot-clean /tmp read-only mount probe.");
+    }
+
+    if (truthy_env("LEAF_PM_DOCTOR_LOOP_STRESS")) {
+        int target = doctor_loop_stress_count();
+        char squashfs[PM_PATH_MAX] = "";
+        find_runtime_squashfs(ctx, squashfs, sizeof(squashfs));
+        if (squashfs[0]) {
+            char qimg[PM_PATH_MAX + 16];
+            char qhelper[PM_PATH_MAX + 16];
+            char helper_prefix[PM_PATH_MAX + 192] = "";
+            char cmd[PM_PATH_MAX * 4 + 4096];
+            char output[2048];
+            shell_quote(qimg, sizeof(qimg), squashfs);
+            if (has_runtime_helper &&
+                shell_quote(qhelper, sizeof(qhelper), runtime_helper) == 0) {
+                pm_format(helper_prefix, sizeof(helper_prefix),
+                          "LEAF_PM_LOOP_COUNT=%d LEAF_PM_ZRAM=0 %s >\"$root/prep.log\" 2>&1 || true; ",
+                          target, qhelper);
+            }
+
+            pm_format(cmd, sizeof(cmd),
+                      "set -u; img=%s; target=%d; root=/tmp/leaf-pm-doctor-loop-stress-$$; "
+                      "mounted=''; loops=''; created_nodes=''; "
+                      "cleanup(){ for m in $mounted; do umount \"$m\" 2>/dev/null || true; done; "
+                      "for d in $loops; do losetup -d \"$d\" 2>/dev/null || true; done; "
+                      "for n in $created_nodes; do losetup -d \"$n\" 2>/dev/null || true; rm -f \"$n\" 2>/dev/null || true; done; "
+                      "rm -rf \"$root\"; }; "
+                      "trap cleanup EXIT HUP INT TERM; "
+                      "rm -rf \"$root\"; mkdir -p \"$root\" || exit 10; "
+                      "preexisting=\"$root/preexisting\"; : >\"$preexisting\"; "
+                      "i=0; while [ \"$i\" -lt \"$target\" ]; do [ -e \"/dev/loop$i\" ] && echo \"$i\" >>\"$preexisting\"; i=$((i + 1)); done; "
+                      "%s"
+                      "i=0; while [ \"$i\" -lt \"$target\" ]; do "
+                      "if [ -e \"/dev/loop$i\" ] && ! grep -qx \"$i\" \"$preexisting\" 2>/dev/null; then created_nodes=\"/dev/loop$i $created_nodes\"; fi; "
+                      "i=$((i + 1)); done; "
+                      "i=0; while [ \"$i\" -lt \"$target\" ]; do "
+                      "dev=$(losetup -f 2>/dev/null) || { echo \"losetup -f failed at $i\"; exit 11; }; "
+                      "losetup -r \"$dev\" \"$img\" 2>/dev/null || { echo \"losetup attach failed for $dev at $i\"; exit 12; }; "
+                      "loops=\"$dev $loops\"; m=\"$root/m$i\"; mkdir -p \"$m\" || exit 13; "
+                      "mount -t squashfs -o ro \"$dev\" \"$m\" 2>/dev/null || { echo \"mount failed for $dev at $i\"; exit 14; }; "
+                      "mounted=\"$m $mounted\"; i=$((i + 1)); done; "
+                      "active=$(grep -c \" $root/m\" /proc/mounts 2>/dev/null || true); "
+                      "echo \"mounted=$active target=$target image=$img\"; "
+                      "[ \"$active\" -eq \"$target\" ] || exit 15",
+                      qimg, target, helper_prefix);
+            int rc = capture_shell(cmd, output, sizeof(output));
+            char detail[PM_PATH_MAX + 512];
+            pm_format(detail, sizeof(detail), "%s%s%s",
+                      squashfs,
+                      output[0] ? "\n" : "",
+                      output[0] ? output : "");
+            add_check(r, checks, "kernel.squashfs_loop_stress",
+                      rc == 0 ? PM_CHECK_OK : PM_CHECK_FAIL,
+                      "required",
+                      rc == 0 ? "Concurrent read-only squashfs loop mount stress passed"
+                              : "Concurrent read-only squashfs loop mount stress failed",
+                      detail);
+        } else {
+            add_check(r, checks, "kernel.squashfs_loop_stress", PM_CHECK_UNKNOWN,
+                      "required", "No installed runtime squashfs found for loop stress",
+                      ctx->portmaster_dir);
+        }
+    } else {
+        add_check(r, checks, "kernel.squashfs_loop_stress", PM_CHECK_INFO,
+                  "required",
+                  "Loop stress probe skipped",
+                  "Set LEAF_PM_DOCTOR_LOOP_STRESS=1 to mount a runtime squashfs 16 times under /tmp.");
     }
 }
 

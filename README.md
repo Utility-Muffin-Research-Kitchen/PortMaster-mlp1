@@ -147,6 +147,9 @@ Useful smoke commands from a staged pak:
 ```sh
 ./launch.sh --ui-state-text
 ./launch.sh --doctor-text
+./launch.sh --doctor-cfw-text
+LEAF_PM_DOCTOR_MOUNT_TEST=1 ./launch.sh --doctor-cfw-text
+LEAF_PM_DOCTOR_LOOP_STRESS=1 ./launch.sh --doctor-cfw-text
 ./launch.sh --install-portmaster
 ./launch.sh --repatch-portmaster
 ./launch.sh --check-portmaster-update
