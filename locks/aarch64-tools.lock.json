@@ -118,6 +118,27 @@
       ],
       "installed_path": "compat/tools/aarch64/bin/grep"
     },
+    "strace": {
+      "name": "strace",
+      "version": "7.1",
+      "source": {
+        "url": "https://github.com/strace/strace/releases/download/v7.1/strace-7.1.tar.xz",
+        "size": 2792640,
+        "sha256": "81743ecf2a5b44186b2f5038afdc8beda7e5c70aed15b4fbfbcc6e9ece24490f"
+      },
+      "license": {
+        "spdx": "LGPL-2.1-or-later",
+        "source_path": "COPYING",
+        "installed_path": "LICENSES/strace/COPYING"
+      },
+      "configure": [
+        "--host=aarch64-buildroot-linux-gnu",
+        "--build=aarch64-buildroot-linux-gnu",
+        "--prefix=/usr",
+        "--enable-mpers=no"
+      ],
+      "installed_path": "compat/tools/aarch64/bin/strace"
+    },
     "ncurses": {
       "name": "ncurses",
       "version": "6.5",

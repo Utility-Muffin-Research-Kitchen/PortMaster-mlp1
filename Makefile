@@ -109,6 +109,7 @@ package-build:
 	@if [ -d "$(BUILD)/licenses" ]; then cp -Rf "$(BUILD)"/licenses/. "$(PACKAGE_DIR)/LICENSES/"; fi
 	@chmod 755 "$(PACKAGE_DIR)/launch.sh" "$(PACKAGE_DIR)/bin/$(APP_ID)" "$(PACKAGE_DIR)"/scripts/*.sh
 	@if [ -f "$(PACKAGE_DIR)/compat/tools/aarch64/bin/rsync" ]; then chmod 755 "$(PACKAGE_DIR)/compat/tools/aarch64/bin/rsync"; fi
+	@if [ -f "$(PACKAGE_DIR)/compat/tools/aarch64/bin/strace" ]; then chmod 755 "$(PACKAGE_DIR)/compat/tools/aarch64/bin/strace"; fi
 	@if [ -f "$(PACKAGE_DIR)/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so" ]; then chmod 755 "$(PACKAGE_DIR)/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so"; fi
 	@find "$(PACKAGE_DIR)" -type f | sort
 

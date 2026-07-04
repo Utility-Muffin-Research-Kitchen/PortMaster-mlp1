@@ -205,6 +205,33 @@ chmod 755 "$OUT_DIR/bin/grep"
 mkdir -p "$BUILD_DIR/licenses/grep"
 cp -f "$grep_src_dir/COPYING" "$BUILD_DIR/licenses/grep/COPYING"
 
+strace_version="$(read_lock tools.strace.version)"
+strace_url="$(read_lock tools.strace.source.url)"
+strace_expected_size="$(read_lock tools.strace.source.size)"
+strace_expected_sha256="$(read_lock tools.strace.source.sha256)"
+strace_tarball="$(download_source "strace-$strace_version.tar.xz" "$strace_url" "$strace_expected_size" "$strace_expected_sha256")"
+strace_src_dir="$container_work/strace-$strace_version"
+mkdir -p "$strace_src_dir"
+tar -xf "$strace_tarball" -C "$strace_src_dir" --strip-components=1
+(
+  cd "$strace_src_dir"
+  ./configure \
+    --host=aarch64-buildroot-linux-gnu \
+    --build=aarch64-buildroot-linux-gnu \
+    --prefix=/usr \
+    --enable-mpers=no \
+    CC=aarch64-buildroot-linux-gnu-gcc \
+    CC_FOR_BUILD=aarch64-buildroot-linux-gnu-gcc \
+    CFLAGS="-Os"
+  make -j"$(nproc)"
+  aarch64-buildroot-linux-gnu-strip src/strace
+)
+
+cp -f "$strace_src_dir/src/strace" "$OUT_DIR/bin/strace"
+chmod 755 "$OUT_DIR/bin/strace"
+mkdir -p "$BUILD_DIR/licenses/strace"
+cp -f "$strace_src_dir/COPYING" "$BUILD_DIR/licenses/strace/COPYING"
+
 ncurses_version="$(read_lock tools.ncurses.version)"
 ncurses_url="$(read_lock tools.ncurses.source.url)"
 ncurses_expected_size="$(read_lock tools.ncurses.source.size)"
@@ -567,6 +594,9 @@ findutils_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/findutils/COPYING
 grep_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/grep" | awk '{print $1}')"
 grep_binary_size="$(wc -c <"$OUT_DIR/bin/grep" | tr -d ' ')"
 grep_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/grep/COPYING" | awk '{print $1}')"
+strace_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/strace" | awk '{print $1}')"
+strace_binary_size="$(wc -c <"$OUT_DIR/bin/strace" | tr -d ' ')"
+strace_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/strace/COPYING" | awk '{print $1}')"
 ncurses_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/ncurses/COPYING" | awk '{print $1}')"
 dialog_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/dialog" | awk '{print $1}')"
 dialog_binary_size="$(wc -c <"$OUT_DIR/bin/dialog" | tr -d ' ')"
@@ -696,6 +726,23 @@ cat >"$OUT_DIR/manifest.json" <<EOF
         "spdx": "GPL-3.0-or-later",
         "path": "LICENSES/grep/COPYING",
         "sha256": "$grep_license_sha256"
+      }
+    },
+    {
+      "name": "strace",
+      "version": "$strace_version",
+      "path": "bin/strace",
+      "size": $strace_binary_size,
+      "sha256": "$strace_binary_sha256",
+      "source": {
+        "url": "$strace_url",
+        "size": $strace_expected_size,
+        "sha256": "$strace_expected_sha256"
+      },
+      "license": {
+        "spdx": "LGPL-2.1-or-later",
+        "path": "LICENSES/strace/COPYING",
+        "sha256": "$strace_license_sha256"
       }
     },
     {

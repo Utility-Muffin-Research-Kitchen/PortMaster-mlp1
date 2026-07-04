@@ -588,6 +588,7 @@ static int write_manifest(const pm_context *ctx, const pm_portmaster_source *sou
             "      \"ldd\": \"compat/tools/aarch64/bin/ldd\",\n"
             "      \"readelf\": \"compat/tools/aarch64/bin/readelf\",\n"
             "      \"file\": \"compat/tools/aarch64/bin/file\",\n"
+            "      \"strace\": \"compat/tools/aarch64/bin/strace\",\n"
             "      \"sudo\": \"compat/tools/aarch64/bin/sudo\",\n"
             "      \"doas\": \"compat/tools/aarch64/bin/doas\",\n"
             "      \"systemctl\": \"compat/tools/aarch64/bin/systemctl\"\n"
@@ -930,9 +931,9 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
 	        "libkeyutils.so.1",
 	        "manifest.json"
 	    };
-	    const char *tools_bin_files[] = {
+    const char *tools_bin_files[] = {
         "rsync", "zip", "sed", "find", "xargs", "grep", "dialog", "xdelta3",
-        "7z", "7za", "getconf", "ldd", "readelf", "file",
+        "7z", "7za", "getconf", "ldd", "readelf", "file", "strace",
         "sudo", "doas", "systemctl"
     };
     const char *tools_meta_files[] = { "manifest.json" };
