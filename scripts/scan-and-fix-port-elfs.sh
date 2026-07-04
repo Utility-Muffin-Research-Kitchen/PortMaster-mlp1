@@ -825,22 +825,22 @@ normalize_port_paths_script() {
     *.sh) ;;
     *) printf 'not-shell'; return 0 ;;
   esac
-  if ! grep -Eq 'GAMEDIR="?/\$directory/ports/' "$file" 2>/dev/null; then
+  if ! grep -Eq '[Gg][Aa][Mm][Ee][Dd][Ii][Rr]="?/\$directory/ports/' "$file" 2>/dev/null; then
     printf 'port-paths-already'
     return 0
   fi
 
   tmp="$file.tmp.$$"
   awk '
-    /^[[:space:]]*GAMEDIR="\/\$directory\/ports\/[^"#[:space:]]+"[[:space:]]*$/ {
+    /^[[:space:]]*(export[[:space:]]+)?[Gg][Aa][Mm][Ee][Dd][Ii][Rr]="\/\$directory\/ports\/[^"#[:space:]]+"[[:space:]]*$/ {
       line = $0
-      sub(/GAMEDIR="\/\$directory\/ports\//, "GAMEDIR=\"${HM_PORTS_DIR:-/$directory/ports}/", line)
+      sub(/="\/\$directory\/ports\//, "=\"${HM_PORTS_DIR:-/$directory/ports}/", line)
       print line
       next
     }
-    /^[[:space:]]*GAMEDIR=\/\$directory\/ports\/[^[:space:]#]+[[:space:]]*$/ {
+    /^[[:space:]]*(export[[:space:]]+)?[Gg][Aa][Mm][Ee][Dd][Ii][Rr]=\/\$directory\/ports\/[^[:space:]#]+[[:space:]]*$/ {
       line = $0
-      sub(/GAMEDIR=\/\$directory\/ports\//, "GAMEDIR=\"${HM_PORTS_DIR:-/$directory/ports}/", line)
+      sub(/=\/\$directory\/ports\//, "=\"${HM_PORTS_DIR:-/$directory/ports}/", line)
       print line "\""
       next
     }

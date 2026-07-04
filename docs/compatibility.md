@@ -483,6 +483,19 @@ produced `pass=36 ready=8 skipped=1`. Active launch rows:
 | Ren'Py | Cute Fame: Halloween Bash | `interactive-launch pass`; the launcher uses `renpy_8.1.3.squashfs` and reached the Ren'Py startup process. HarbourMaster metadata also downloaded `renpy_8.3.4.squashfs`, so both runtimes are present. |
 | AGS | Shards of God | `interactive-launch pass`; AGS 3.6 interpreter reached the game loop with the SDL2 fullscreen shim active. |
 
+MLP1 interactive smoke on 2026-07-05 with
+`SDCARD_PATH=/media/sdcard1 LEAF_PM_SMOKE_PORTS='vvvvvv 2048 apotris songo5 celeste shovel-knight'`
+produced `pass=36 ready=8 skipped=1`. Active launch rows:
+
+| Runtime family | Port | Evidence |
+| --- | --- | --- |
+| Native SDL2 | VVVVVV | `interactive-launch pass`; the `VVVVVV` process was observed with the aarch64 SDL2 fullscreen shim active. |
+| Libretro/RetroArch | 2048 | `interactive-launch pass`; the RetroArch/libretro launch path was observed through the normalized `leaf_pm_run_retroarch` wrapper. |
+| GameMaker SDL2 | Apotris | `interactive-launch pass`; the aarch64 `Apotris.aarch64` process was observed. |
+| Godot 4.3 direct SDL2 | Songo5 | `interactive-launch pass`; the scanner-patched direct Godot path ran through `leaf_pm_run_godot_sdl2_runtime` and the `sbc_4_3_rcv12` process was observed at 960x720. |
+| Mono/FNA | Celeste | `interactive-launch pass`; the scanner now repairs lowercase `gamedir=/$directory/ports/...` assignments to `HM_PORTS_DIR`, then the Mono runtime launched `Celeste.exe`. |
+| box86 | Shovel Knight | `interactive-launch pass`; the bundled `box86` path launched `ShovelKnight` with the managed armhf compatibility environment. |
+
 After the post-exit scan, the manager asks Jawaka to run `scan-library` through
 `jawaka-platformctl`. The request is best-effort so PortMaster remains usable
 when Jawaka is not running, but normal Leaf launches refresh the Ports list
