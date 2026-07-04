@@ -181,7 +181,7 @@ capture_shell system/kernel-config-summary.txt "if [ -f /proc/config.gz ]; then 
 capture_shell system/storage.txt "df -h '$SDCARD_PATH' '$userdata_path' 2>/dev/null; printf '\n/proc/mounts filtered:\n'; grep -E 'sdcard|mmc|vfat|exfat|squashfs|zram|loop' /proc/mounts 2>/dev/null || true; printf '\n/proc/swaps:\n'; cat /proc/swaps 2>/dev/null || true"
 capture_shell system/devices.txt "ls -l /dev/uinput /dev/dri /dev/dri/* /dev/loop* 2>/dev/null || true"
 capture_shell system/ssh.txt "printf 'SSHServer.pak: '; [ -d '$SDCARD_PATH/Apps/$platform/SSHServer.pak' ] && echo installed || echo missing; printf '\nProcesses:\n'; ps -eo pid,args 2>/dev/null | grep -E 'dropbear|sshd' | grep -v grep || true; printf '\nListening TCP:\n'; (netstat -ltn 2>/dev/null || ss -ltn 2>/dev/null || true) | grep -E ':22|:222' || true"
-capture_shell system/tool-versions.txt "for c in bash zip unzip sed find grep xargs rsync strace ldd readelf file xdelta3 7z 7za innoextract dos2unix systemctl sudo doas; do printf '%s: ' \"\$c\"; command -v \"\$c\" 2>/dev/null || echo missing; done"
+capture_shell system/tool-versions.txt "for c in bash zip unzip sed find grep xargs rsync strace ldd readelf file xdelta3 7z 7za innoextract dos2unix systemctl sudo doas leaf-squashfs-check; do printf '%s: ' \"\$c\"; command -v \"\$c\" 2>/dev/null || echo missing; done"
 
 copy_file "$leaf_dir/manifest.json" leaf/manifest.json
 copy_file "$leaf_dir/gui-update-state.json" leaf/gui-update-state.json

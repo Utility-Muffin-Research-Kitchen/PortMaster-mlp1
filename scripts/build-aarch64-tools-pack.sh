@@ -298,6 +298,8 @@ cat >"$OUT_DIR/bin/sudo" <<'EOF'
 #!/bin/sh
 # Leaf PortMaster app-local sudo shim. The MLP1 launch session already runs as
 # root, so this strips common sudo options and executes the requested command.
+# It also gives PortMaster runtime squashfs downloads and mounts one SD-local
+# compatibility preflight before the kernel can fail with a cryptic mount error.
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --)
@@ -324,7 +326,153 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$#" -gt 0 ] || exit 0
+_leaf_sudo_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+_leaf_squashfs_check="$_leaf_sudo_dir/leaf-squashfs-check"
+
+case "${1##*/}" in
+  harbourmaster)
+    _leaf_runtime=""
+    _leaf_next_is_runtime=0
+    for _leaf_arg in "$@"; do
+      if [ "$_leaf_next_is_runtime" -eq 1 ]; then
+        _leaf_runtime="$_leaf_arg"
+        break
+      fi
+      if [ "$_leaf_arg" = "runtime_check" ]; then
+        _leaf_next_is_runtime=1
+      fi
+    done
+    "$@"
+    _leaf_rc=$?
+    if [ "$_leaf_rc" -eq 0 ] && [ -n "$_leaf_runtime" ] && [ -x "$_leaf_squashfs_check" ]; then
+      "$_leaf_squashfs_check" "$_leaf_runtime" || exit $?
+    fi
+    exit "$_leaf_rc"
+    ;;
+  mount)
+    if [ -x "$_leaf_squashfs_check" ]; then
+      for _leaf_arg in "$@"; do
+        case "$_leaf_arg" in
+          *.squashfs)
+            "$_leaf_squashfs_check" "$_leaf_arg" || exit $?
+            break
+            ;;
+        esac
+      done
+    fi
+    ;;
+esac
 exec "$@"
+EOF
+
+cat >"$OUT_DIR/bin/leaf-squashfs-check" <<'EOF'
+#!/bin/sh
+# Leaf PortMaster squashfs runtime preflight. This is intentionally tiny and
+# POSIX-shell only: it must run inside arbitrary port scripts before mount.
+
+_leaf_pm_name_for_id() {
+  case "$1" in
+    1) printf '%s\n' gzip ;;
+    2) printf '%s\n' lzma ;;
+    3) printf '%s\n' lzo ;;
+    4) printf '%s\n' xz ;;
+    5) printf '%s\n' lz4 ;;
+    6) printf '%s\n' zstd ;;
+    *) printf '%s\n' unknown ;;
+  esac
+}
+
+_leaf_pm_symbol_for_id() {
+  case "$1" in
+    1) printf '%s\n' CONFIG_SQUASHFS_ZLIB ;;
+    2) printf '%s\n' CONFIG_SQUASHFS_LZMA ;;
+    3) printf '%s\n' CONFIG_SQUASHFS_LZO ;;
+    4) printf '%s\n' CONFIG_SQUASHFS_XZ ;;
+    5) printf '%s\n' CONFIG_SQUASHFS_LZ4 ;;
+    6) printf '%s\n' CONFIG_SQUASHFS_ZSTD ;;
+    *) return 1 ;;
+  esac
+}
+
+_leaf_pm_resolve_squashfs() {
+  _leaf_pm_runtime="$1"
+  case "$_leaf_pm_runtime" in
+    */*) printf '%s\n' "$_leaf_pm_runtime"; return 0 ;;
+  esac
+
+  case "$_leaf_pm_runtime" in
+    *.squashfs) ;;
+    *) _leaf_pm_runtime="$_leaf_pm_runtime.squashfs" ;;
+  esac
+
+  _leaf_pm_control="${PORTMASTER_CONTROLFOLDER:-}"
+  if [ -z "$_leaf_pm_control" ] && [ -n "${LEAF_PM_DATA_DIR:-}" ]; then
+    _leaf_pm_control="$LEAF_PM_DATA_DIR/PortMaster"
+  fi
+  if [ -z "$_leaf_pm_control" ] && [ -n "${PORTMASTER_MLP1_DATA_DIR:-}" ]; then
+    _leaf_pm_control="$PORTMASTER_MLP1_DATA_DIR/PortMaster"
+  fi
+  if [ -z "$_leaf_pm_control" ] && [ -n "${SDCARD_PATH:-}" ]; then
+    _leaf_pm_control="${SDCARD_PATH%/}/.userdata/${PLATFORM:-mlp1}/portmaster/PortMaster"
+  fi
+
+  if [ -n "$_leaf_pm_control" ]; then
+    printf '%s\n' "$_leaf_pm_control/libs/$_leaf_pm_runtime"
+  else
+    printf '%s\n' "$_leaf_pm_runtime"
+  fi
+}
+
+_leaf_pm_config_has() {
+  _leaf_pm_symbol="$1"
+  [ -f /proc/config.gz ] || return 2
+  zcat /proc/config.gz 2>/dev/null | grep -Eq "^${_leaf_pm_symbol}=(y|m)$"
+}
+
+if [ "$#" -lt 1 ]; then
+  echo "Leaf PortMaster: leaf-squashfs-check requires a runtime image path" >&2
+  exit 64
+fi
+
+_leaf_pm_path="$(_leaf_pm_resolve_squashfs "$1")"
+if [ ! -f "$_leaf_pm_path" ]; then
+  # Missing files are left to harbourmaster/mount so their normal error and
+  # download behavior remains unchanged.
+  exit 0
+fi
+
+set -- $(od -An -tu1 -N22 "$_leaf_pm_path" 2>/dev/null)
+if [ "$#" -lt 22 ]; then
+  echo "Leaf PortMaster: cannot read squashfs header: $_leaf_pm_path" >&2
+  exit 65
+fi
+if [ "$1" != "104" ] || [ "$2" != "115" ] || [ "$3" != "113" ] || [ "$4" != "115" ]; then
+  echo "Leaf PortMaster: bad squashfs magic: $_leaf_pm_path" >&2
+  exit 65
+fi
+
+shift 20
+_leaf_pm_id=$(( $1 + ($2 * 256) ))
+_leaf_pm_name="$(_leaf_pm_name_for_id "$_leaf_pm_id")"
+_leaf_pm_symbol="$(_leaf_pm_symbol_for_id "$_leaf_pm_id" 2>/dev/null || true)"
+
+if [ -z "$_leaf_pm_symbol" ]; then
+  echo "Leaf PortMaster: runtime squashfs '${_leaf_pm_path##*/}' uses unknown compression id $_leaf_pm_id; refusing a likely-broken mount." >&2
+  exit 65
+fi
+
+if _leaf_pm_config_has "$_leaf_pm_symbol"; then
+  exit 0
+fi
+_leaf_pm_config_rc=$?
+if [ "$_leaf_pm_config_rc" -eq 2 ]; then
+  # If the config is unreadable, avoid false negatives and let the kernel mount
+  # attempt be the source of truth.
+  exit 0
+fi
+
+echo "Leaf PortMaster: runtime squashfs '${_leaf_pm_path##*/}' uses $_leaf_pm_name (id $_leaf_pm_id), but this kernel lacks $_leaf_pm_symbol; squashfuse fallback is not installed yet." >&2
+exit 65
 EOF
 
 cat >"$OUT_DIR/bin/doas" <<'EOF'
@@ -458,7 +606,7 @@ done
 exit "$status"
 EOF
 
-chmod 755 "$OUT_DIR/bin/sudo" "$OUT_DIR/bin/doas" "$OUT_DIR/bin/systemctl" "$OUT_DIR/bin/dos2unix"
+chmod 755 "$OUT_DIR/bin/sudo" "$OUT_DIR/bin/doas" "$OUT_DIR/bin/systemctl" "$OUT_DIR/bin/dos2unix" "$OUT_DIR/bin/leaf-squashfs-check"
 
 cat >"$OUT_DIR/bin/xdelta3" <<'EOF'
 #!/bin/sh
@@ -709,6 +857,8 @@ systemctl_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/systemctl" | awk '{print $1
 systemctl_shim_size="$(wc -c <"$OUT_DIR/bin/systemctl" | tr -d ' ')"
 dos2unix_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/dos2unix" | awk '{print $1}')"
 dos2unix_shim_size="$(wc -c <"$OUT_DIR/bin/dos2unix" | tr -d ' ')"
+leaf_squashfs_check_sha256="$(shasum -a 256 "$OUT_DIR/bin/leaf-squashfs-check" | awk '{print $1}')"
+leaf_squashfs_check_size="$(wc -c <"$OUT_DIR/bin/leaf-squashfs-check" | tr -d ' ')"
 xdelta3_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/xdelta3" | awk '{print $1}')"
 xdelta3_shim_size="$(wc -c <"$OUT_DIR/bin/xdelta3" | tr -d ' ')"
 seven_zip_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/7z" | awk '{print $1}')"
@@ -925,6 +1075,18 @@ cat >"$OUT_DIR/manifest.json" <<EOF
       "size": $dos2unix_shim_size,
       "sha256": "$dos2unix_shim_sha256",
       "kind": "app-local-crlf-conversion-shim",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    },
+    {
+      "name": "leaf-squashfs-check",
+      "version": "leaf-shim-1",
+      "path": "bin/leaf-squashfs-check",
+      "size": $leaf_squashfs_check_size,
+      "sha256": "$leaf_squashfs_check_sha256",
+      "kind": "app-local-squashfs-runtime-preflight",
       "license": {
         "spdx": "MIT",
         "path": "LICENSE"

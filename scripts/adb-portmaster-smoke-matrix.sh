@@ -837,6 +837,7 @@ dos2unix_ok = tool_status("dos2unix")
 sevenzip_ok = tool_status("7z")
 innoextract_ok = tool_status("innoextract")
 systemctl_ok = tool_status("systemctl")
+leaf_squashfs_check_ok = tool_status("leaf-squashfs-check")
 tool_status("strace")
 
 fixture_base = f"{remote_tmp_dir}/tool-fixtures"
@@ -910,6 +911,26 @@ if innoextract_ok:
     )
 else:
     add("fixture", "innoextract", "presence", "skipped", "innoextract missing")
+
+if leaf_squashfs_check_ok:
+    run_remote_fixture(
+        "squashfs-format-preflight",
+        " && ".join(
+            [
+                f"PATH={sh_quote(tools_bin)}:$PATH",
+                f"cd {sh_quote(fixture_base)}",
+                "rm -rf squashfs && mkdir -p squashfs/mnt && cd squashfs",
+                "(printf '\\150\\163\\161\\163'; dd if=/dev/zero bs=1 count=16 2>/dev/null; printf '\\001\\000') > gzip.squashfs",
+                "(printf '\\150\\163\\161\\163'; dd if=/dev/zero bs=1 count=16 2>/dev/null; printf '\\006\\000') > zstd.squashfs",
+                "leaf-squashfs-check ./gzip.squashfs",
+                "sudo mount ./zstd.squashfs mnt > preflight.log 2>&1; rc=$?; [ \"$rc\" -eq 65 ]",
+                "grep -q 'zstd (id 6)' preflight.log",
+            ]
+        ),
+        "leaf-squashfs-check allows gzip and sudo mount preflight blocks unsupported zstd before kernel mount",
+    )
+else:
+    add("fixture", "squashfs-format-preflight", "synthetic", "skipped", "leaf-squashfs-check missing")
 
 if systemctl_ok:
     add("service-restart", "systemctl-shim", "presence", "ready", "systemctl shim present; restart not invoked by passive smoke")

@@ -348,6 +348,21 @@ MLP1 had seven installed runtime images, all gzip/id 1, and the row passed with
 `leaf-test-zstd.squashfs` header produced the expected FAIL
 (`zstd (id 6, kernel missing)`) and was removed immediately afterward.
 
+For port-visible failures, the app-local tools pack installs
+`leaf-squashfs-check` and routes the `sudo` shim through it for two cases:
+
+- after `$ESUDO .../harbourmaster ... runtime_check <runtime>.squashfs`
+  succeeds, so a newly downloaded unsupported runtime is reported immediately
+- before `$ESUDO mount .../*.squashfs ...`, so unsupported images produce a
+  clear Leaf PortMaster log line and exit before the kernel mount path can emit
+  a generic `wrong fs type` error
+
+The helper is SD/userdata-local and is only on PATH when the optional
+`PortMaster.pak` has installed its tools. On 2026-07-04 a synthetic zstd header
+returned exit 65 through direct `leaf-squashfs-check`, through `sudo mount`,
+and through a fake post-`runtime_check` command, with the message
+`uses zstd (id 6), but this kernel lacks CONFIG_SQUASHFS_ZSTD`.
+
 The next compatibility step is an app-local `squashfuse` fallback for zstd/lz4.
 Until that lands, detection is intentionally conservative: zstd/lz4 images are
 reported as unsupported rather than silently trying a kernel mount that cannot
