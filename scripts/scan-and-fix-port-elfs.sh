@@ -21,7 +21,7 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=5
+RULESET_VERSION=6
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -633,6 +633,63 @@ normalize_godot_wayland_script() {
   mv "$tmp" "$file"
   chmod 755 "$file" 2>/dev/null || true
   printf 'godot-wayland-patched'
+}
+
+normalize_godot_wayland_runtime_script() {
+  file="$1"
+  if ! is_godot_script "$file"; then
+    return 0
+  fi
+  if grep -q 'LEAF_PM_GODOT_WAYLAND_RUNTIME_UPGRADE_VERSION=1' "$file" 2>/dev/null; then
+    printf 'godot-wayland-runtime-already'
+    return 0
+  fi
+  if ! grep -Eq '^[[:space:]]*godot_runtime="?godot_4[.]2[.]2"?' "$file" 2>/dev/null ||
+     ! grep -Eq '^[[:space:]]*godot_executable="?godot422[.]' "$file" 2>/dev/null ||
+     ! grep -q 'westonwrap.sh' "$file" 2>/dev/null; then
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  if awk '
+    function insert_block() {
+      print ""
+      print "# LEAF_PM_GODOT_WAYLAND_RUNTIME_UPGRADE=1"
+      print "# LEAF_PM_GODOT_WAYLAND_RUNTIME_UPGRADE_VERSION=1"
+      print "# Godot 4.2.2 PortMaster runtime only exposes x11/headless; use the Wayland-capable 4.3 runtime on Leaf."
+      print "if [ \"${LEAF_PM_GODOT_422_WAYLAND_UPGRADE:-1}\" != \"0\" ]; then"
+      print "  godot_runtime=\"${LEAF_PM_GODOT_WAYLAND_RUNTIME:-godot_4.3}\""
+      print "  godot_executable=\"${LEAF_PM_GODOT_WAYLAND_EXECUTABLE:-godot43.$DEVICE_ARCH}\""
+      print "fi"
+      inserted = 1
+      changed = 1
+    }
+    {
+      print
+      if (!inserted && $0 ~ /^[[:space:]]*godot_executable="?godot422[.]/) {
+        insert_block()
+      }
+    }
+    END {
+      if (!inserted || !changed) {
+        exit 2
+      }
+    }
+  ' "$file" >"$tmp"; then
+    mv "$tmp" "$file"
+    chmod 755 "$file" 2>/dev/null || true
+    printf 'godot-wayland-runtime-patched'
+    return 0
+  else
+    rc=$?
+  fi
+
+  rm -f "$tmp"
+  if [ "$rc" -eq 2 ]; then
+    printf 'godot-wayland-runtime-missing-anchor'
+    return 0
+  fi
+  printf 'godot-wayland-runtime-error'
 }
 
 normalize_godot_weston_cleanup_script() {
@@ -1674,6 +1731,8 @@ script_cache_action() {
     libretro-retroarch-missing) printf 'libretro-retroarch-missing' ;;
     godot-wayland-patched) printf 'godot-wayland-already' ;;
     godot-wayland-already) printf 'godot-wayland-already' ;;
+    godot-wayland-runtime-patched) printf 'godot-wayland-runtime-already' ;;
+    godot-wayland-runtime-already) printf 'godot-wayland-runtime-already' ;;
     weston-cleanup-patched) printf 'weston-cleanup-already' ;;
     weston-cleanup-already) printf 'weston-cleanup-already' ;;
     weston-cleanup-missing) printf 'weston-cleanup-missing' ;;
@@ -1694,7 +1753,7 @@ script_cache_action() {
     runtime-compat-love-11-5-libs-already) printf 'runtime-compat-love-11-5-libs-already' ;;
     lowercase-path-move-patched) printf 'lowercase-path-move-already' ;;
     lowercase-path-move-already) printf 'lowercase-path-move-already' ;;
-    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|lowercase-path-move-error|weston-cleanup-error|godot-direct-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error)
+    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error)
       return 1
       ;;
     *) printf '' ;;
@@ -1712,6 +1771,16 @@ record_script_action() {
     libretro-retroarch-missing) libretro_retroarch_missing=$((libretro_retroarch_missing + 1)) ;;
     godot-wayland-patched) godot_patched=$((godot_patched + 1)) ;;
     godot-wayland-already) godot_already=$((godot_already + 1)) ;;
+    godot-wayland-runtime-patched) godot_wayland_runtime_patched=$((godot_wayland_runtime_patched + 1)) ;;
+    godot-wayland-runtime-already) godot_wayland_runtime_already=$((godot_wayland_runtime_already + 1)) ;;
+    godot-wayland-runtime-missing-anchor)
+      godot_wayland_runtime_missing_anchor=$((godot_wayland_runtime_missing_anchor + 1))
+      errors=$((errors + 1))
+      ;;
+    godot-wayland-runtime-error)
+      godot_wayland_runtime_errors=$((godot_wayland_runtime_errors + 1))
+      errors=$((errors + 1))
+      ;;
     weston-cleanup-patched) weston_cleanup_patched=$((weston_cleanup_patched + 1)) ;;
     weston-cleanup-already) weston_cleanup_already=$((weston_cleanup_already + 1)) ;;
     weston-cleanup-missing) weston_cleanup_missing=$((weston_cleanup_missing + 1)) ;;
@@ -1929,6 +1998,10 @@ already=0
 errors=0
 godot_patched=0
 godot_already=0
+godot_wayland_runtime_patched=0
+godot_wayland_runtime_already=0
+godot_wayland_runtime_missing_anchor=0
+godot_wayland_runtime_errors=0
 godot_direct_sdl2_patched=0
 godot_direct_sdl2_already=0
 godot_direct_sdl2_missing=0
@@ -2085,6 +2158,7 @@ while IFS= read -r -d '' file; do
   handle_script_action "$(normalize_port_paths_script "$file")"
   handle_script_action "$(normalize_libretro_retroarch_script "$file")"
   handle_script_action "$(normalize_godot_wayland_script "$file")"
+  handle_script_action "$(normalize_godot_wayland_runtime_script "$file")"
   handle_script_action "$(normalize_godot_weston_cleanup_script "$file")"
   handle_script_action "$(normalize_godot_direct_sdl2_script "$file")"
   handle_script_action "$(normalize_sdl2_fullscreen_env_script "$file")"
@@ -2146,6 +2220,10 @@ cat >"$tmp_json" <<EOF
   "libretro_retroarch_scripts_missing": $libretro_retroarch_missing,
   "godot_wayland_scripts_patched": $godot_patched,
   "godot_wayland_scripts_already_patched": $godot_already,
+  "godot_wayland_runtime_scripts_patched": $godot_wayland_runtime_patched,
+  "godot_wayland_runtime_scripts_already_patched": $godot_wayland_runtime_already,
+  "godot_wayland_runtime_scripts_missing_anchor": $godot_wayland_runtime_missing_anchor,
+  "godot_wayland_runtime_script_errors": $godot_wayland_runtime_errors,
   "godot_direct_sdl2_scripts_patched": $godot_direct_sdl2_patched,
   "godot_direct_sdl2_scripts_already_patched": $godot_direct_sdl2_already,
   "godot_direct_sdl2_scripts_missing": $godot_direct_sdl2_missing,
@@ -2184,4 +2262,4 @@ if [ "$manifest_write_enabled" -eq 1 ]; then
   mv "$manifest_tmp" "$manifest_path"
 fi
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"

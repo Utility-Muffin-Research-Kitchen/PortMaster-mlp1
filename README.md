@@ -399,6 +399,12 @@ guards Westonpack cleanup calls for those Godot launchers, because cleaning up a
 nested compositor that was never started can disturb Leaf's real Wayland
 runtime.
 
+Godot 4.2.2 PortMaster launchers are upgraded to the upstream `godot_4.3`
+runtime before that direct Wayland path runs, because the 4.2.2 aarch64 runtime
+only advertises X11/headless display drivers. Set
+`LEAF_PM_GODOT_422_WAYLAND_UPGRADE=0` to keep the original runtime for a
+specific diagnostic launch.
+
 The scanner also handles direct Godot/SDL2 launchers such as Songo #5. Those
 ports do not call Westonpack, so the scanner wraps their direct
 `"$GAMEDIR/runtime/$runtime" --main-pack ...` command with the same SD-managed

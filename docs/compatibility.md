@@ -177,6 +177,17 @@ from removing runtime files that belong to Leaf's real compositor. Older
 `LEAF_PM_EGL_GLES_SHIM=1` script patches are still recognized through a hook
 alias.
 
+Some installed Godot launchers request the `godot_4.2.2` PortMaster runtime,
+whose aarch64 binary only supports X11/headless display drivers. For those
+Westonpack-style launchers, the scanner injects
+`LEAF_PM_GODOT_WAYLAND_RUNTIME_UPGRADE=1` after the upstream runtime variables
+and switches the launch to upstream `godot_4.3`, whose aarch64 runtime supports
+Wayland. The script still goes through upstream `runtime_check`, so the 4.3
+squashfs is downloaded by PortMaster if it is not already installed. Set
+`LEAF_PM_GODOT_422_WAYLAND_UPGRADE=0`, or override
+`LEAF_PM_GODOT_WAYLAND_RUNTIME` and `LEAF_PM_GODOT_WAYLAND_EXECUTABLE`, for a
+specific diagnostic launch.
+
 Some ports, such as Songo #5, launch a custom Godot/SDL2 runtime directly
 instead of using Westonpack. The scanner wraps those direct
 `"$GAMEDIR/runtime/$runtime" --main-pack ...` commands with
