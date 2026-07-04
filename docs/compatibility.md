@@ -198,6 +198,15 @@ and, when the port did not provide its own window sizing flags, adds
 because that path fills the MLP1's native portrait `720x960` KMS framebuffer and
 can mangle landscape content.
 
+Godot 3.x FRT ports such as Cats on Mars use an upstream pattern that mounts
+`frt_*.squashfs` under `$HOME/godot`, prepends that mountpoint to `PATH`, and
+then launches `"$runtime" --main-pack ...`. The scanner recognizes that pattern,
+fixes the pre-mount cleanup to unmount the SD/userdata mountpoint rather than
+the squashfs file, and wraps the final launch in
+`leaf_pm_run_godot_sdl2_runtime`. The mountpoint is under
+`$USERDATA_PATH/portmaster` through the generated hook's `HOME`; no stock
+rootfs/eMMC paths are modified.
+
 For Gothic/Machismo launchers such as Mina the Hollower, the scanner patches a
 small runtime compatibility block that defaults `GOTHIC_BACKEND=gles` on
 Leaf/MLP1. The block does not depend on `CFW_NAME`, because direct Jawaka
@@ -316,6 +325,25 @@ $USERDATA_PATH/portmaster/.leaf/armhf-scan.json
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.tsv
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.manifest
 ```
+
+## Active smoke evidence
+
+`scripts/adb-portmaster-smoke-matrix.sh` keeps passive readiness rows by
+default. With `LEAF_PM_SMOKE_INTERACTIVE=1`, rows marked for active smoke launch
+their port script in an isolated process group from ADB, poll for the expected
+runtime/game process, capture stdout plus port log tails, and terminate the
+process group. Reports are written under
+`$USERDATA_PATH/portmaster/.leaf/smoke/`.
+
+MLP1 interactive smoke on 2026-07-04 with
+`LEAF_PM_SMOKE_PORTS='6-feet-under,cats-on-mars,mr-rescue'` produced
+`pass=24 ready=5 skipped=1`. Active launch rows:
+
+| Runtime family | Port | Evidence |
+| --- | --- | --- |
+| GameMaker gmtoolkit + dotnet | 6 Feet Under | `interactive-launch pass`; first launch mounted `gmtoolkit.squashfs` and `dotnet-8.0.12.squashfs`, patched the game data to 960x720, and reached `gmloadernext.aarch64` main loop. |
+| Godot 3.x FRT | Cats on Mars | `interactive-launch pass`; `frt_3.2.3.squashfs` mount path was patched and the `frt_3.2.3` process was observed. |
+| Love2D | Mr. Rescue | `interactive-launch pass`; the Love 11.5 lib compatibility block was present and the Love runtime process was observed. |
 
 After the post-exit scan, the manager asks Jawaka to run `scan-library` through
 `jawaka-platformctl`. The request is best-effort so PortMaster remains usable

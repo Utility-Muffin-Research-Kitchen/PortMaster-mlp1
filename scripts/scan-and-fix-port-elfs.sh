@@ -294,7 +294,7 @@ is_godot_script() {
     *.sh) ;;
     *) return 1 ;;
   esac
-  grep -Eq 'godot_runtime=|godot_executable=|--rendering-driver[[:space:]]+opengl3_es|godot[0-9]+.*DEVICE_ARCH' "$file" 2>/dev/null
+  grep -Eq 'godot_runtime=|godot_executable=|--rendering-driver[[:space:]]+opengl3_es|godot[0-9]+.*DEVICE_ARCH|runtime="?frt_[0-9]' "$file" 2>/dev/null
 }
 
 is_gothic_machismo_script() {
@@ -814,6 +814,73 @@ normalize_godot_direct_sdl2_script() {
   mv "$tmp" "$file"
   chmod 755 "$file" 2>/dev/null || true
   printf 'godot-direct-sdl2-patched'
+}
+
+normalize_godot_frt_sdl2_script() {
+  file="$1"
+  if ! is_godot_script "$file"; then
+    printf 'not-godot'
+    return 0
+  fi
+  if grep -q 'LEAF_PM_GODOT_FRT_SDL2=1' "$file" 2>/dev/null; then
+    printf 'godot-frt-sdl2-already'
+    return 0
+  fi
+  if ! grep -Eq 'runtime="?frt_[0-9]' "$file" 2>/dev/null ||
+     ! grep -Eq '"\$runtime".*--main-pack' "$file" 2>/dev/null; then
+    printf 'godot-frt-sdl2-missing'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  awk '
+    index($0, "umount \"$godot_file\"") > 0 {
+      patched = $0
+      sub(/"\$godot_file"/, "\"$godot_dir\"", patched)
+      print patched
+      changed = 1
+      next
+    }
+    index($0, "\"$runtime\"") > 0 &&
+    index($0, "--main-pack") > 0 &&
+    index($0, "leaf_pm_run_godot_sdl2_runtime") == 0 {
+      indent = $0
+      sub(/[^[:space:]].*$/, "", indent)
+      cmd = substr($0, length(indent) + 1)
+      patched = cmd
+      sub(/"\$runtime"/,
+          "leaf_pm_run_godot_sdl2_runtime \"$runtime\"",
+          patched)
+      print indent "# LEAF_PM_GODOT_FRT_SDL2=1"
+      print indent "if declare -f leaf_pm_run_godot_sdl2_runtime >/dev/null 2>&1; then"
+      print indent "  " patched
+      print indent "else"
+      print indent "  " cmd
+      print indent "fi"
+      changed = 1
+      next
+    }
+    { print }
+    END {
+      if (!changed) {
+        exit 2
+      }
+    }
+  ' "$file" >"$tmp"
+  rc=$?
+  if [ "$rc" -eq 2 ]; then
+    rm -f "$tmp"
+    printf 'godot-frt-sdl2-missing'
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$tmp"
+    printf 'godot-frt-sdl2-error'
+    return 0
+  fi
+  mv "$tmp" "$file"
+  chmod 755 "$file" 2>/dev/null || true
+  printf 'godot-frt-sdl2-patched'
 }
 
 normalize_sdl2_fullscreen_env_script() {
@@ -1756,6 +1823,9 @@ script_cache_action() {
     godot-direct-sdl2-patched) printf 'godot-direct-sdl2-already' ;;
     godot-direct-sdl2-already) printf 'godot-direct-sdl2-already' ;;
     godot-direct-sdl2-missing) printf 'godot-direct-sdl2-missing' ;;
+    godot-frt-sdl2-patched) printf 'godot-frt-sdl2-already' ;;
+    godot-frt-sdl2-already) printf 'godot-frt-sdl2-already' ;;
+    godot-frt-sdl2-missing) printf 'godot-frt-sdl2-missing' ;;
     sdl2-fullscreen-env-patched) printf 'sdl2-fullscreen-env-already' ;;
     sdl2-fullscreen-env-already) printf 'sdl2-fullscreen-env-already' ;;
     sdl2-fullscreen-env-not-sdl2) printf 'sdl2-fullscreen-env-not-sdl2' ;;
@@ -1770,7 +1840,7 @@ script_cache_action() {
     runtime-compat-love-11-5-libs-already) printf 'runtime-compat-love-11-5-libs-already' ;;
     lowercase-path-move-patched) printf 'lowercase-path-move-already' ;;
     lowercase-path-move-already) printf 'lowercase-path-move-already' ;;
-    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error)
+    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error)
       return 1
       ;;
     *) printf '' ;;
@@ -1804,6 +1874,13 @@ record_script_action() {
     godot-direct-sdl2-patched) godot_direct_sdl2_patched=$((godot_direct_sdl2_patched + 1)) ;;
     godot-direct-sdl2-already) godot_direct_sdl2_already=$((godot_direct_sdl2_already + 1)) ;;
     godot-direct-sdl2-missing) godot_direct_sdl2_missing=$((godot_direct_sdl2_missing + 1)) ;;
+    godot-frt-sdl2-patched) godot_frt_sdl2_patched=$((godot_frt_sdl2_patched + 1)) ;;
+    godot-frt-sdl2-already) godot_frt_sdl2_already=$((godot_frt_sdl2_already + 1)) ;;
+    godot-frt-sdl2-missing) godot_frt_sdl2_missing=$((godot_frt_sdl2_missing + 1)) ;;
+    godot-frt-sdl2-error)
+      godot_frt_sdl2_errors=$((godot_frt_sdl2_errors + 1))
+      errors=$((errors + 1))
+      ;;
     sdl2-fullscreen-env-patched) sdl2_fullscreen_env_patched=$((sdl2_fullscreen_env_patched + 1)) ;;
     sdl2-fullscreen-env-already) sdl2_fullscreen_env_already=$((sdl2_fullscreen_env_already + 1)) ;;
     sdl2-fullscreen-env-not-sdl2) sdl2_fullscreen_env_not_sdl2=$((sdl2_fullscreen_env_not_sdl2 + 1)) ;;
@@ -2022,6 +2099,10 @@ godot_wayland_runtime_errors=0
 godot_direct_sdl2_patched=0
 godot_direct_sdl2_already=0
 godot_direct_sdl2_missing=0
+godot_frt_sdl2_patched=0
+godot_frt_sdl2_already=0
+godot_frt_sdl2_missing=0
+godot_frt_sdl2_errors=0
 sdl2_fullscreen_env_patched=0
 sdl2_fullscreen_env_already=0
 sdl2_fullscreen_env_not_sdl2=0
@@ -2178,6 +2259,7 @@ while IFS= read -r -d '' file; do
   handle_script_action "$(normalize_godot_wayland_runtime_script "$file")"
   handle_script_action "$(normalize_godot_weston_cleanup_script "$file")"
   handle_script_action "$(normalize_godot_direct_sdl2_script "$file")"
+  handle_script_action "$(normalize_godot_frt_sdl2_script "$file")"
   handle_script_action "$(normalize_sdl2_fullscreen_env_script "$file")"
 
   while IFS= read -r runtime_compat_action; do
@@ -2244,6 +2326,10 @@ cat >"$tmp_json" <<EOF
   "godot_direct_sdl2_scripts_patched": $godot_direct_sdl2_patched,
   "godot_direct_sdl2_scripts_already_patched": $godot_direct_sdl2_already,
   "godot_direct_sdl2_scripts_missing": $godot_direct_sdl2_missing,
+  "godot_frt_sdl2_scripts_patched": $godot_frt_sdl2_patched,
+  "godot_frt_sdl2_scripts_already_patched": $godot_frt_sdl2_already,
+  "godot_frt_sdl2_scripts_missing": $godot_frt_sdl2_missing,
+  "godot_frt_sdl2_script_errors": $godot_frt_sdl2_errors,
   "sdl2_fullscreen_env_scripts_patched": $sdl2_fullscreen_env_patched,
   "sdl2_fullscreen_env_scripts_already_patched": $sdl2_fullscreen_env_already,
   "sdl2_fullscreen_env_scripts_not_sdl2": $sdl2_fullscreen_env_not_sdl2,
@@ -2279,4 +2365,4 @@ if [ "$manifest_write_enabled" -eq 1 ]; then
   mv "$manifest_tmp" "$manifest_path"
 fi
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"

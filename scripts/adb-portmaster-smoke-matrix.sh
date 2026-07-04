@@ -126,6 +126,8 @@ ports_filter = {
 loop_stress = env_flag("LEAF_PM_SMOKE_LOOP_STRESS")
 interactive = env_flag("LEAF_PM_SMOKE_INTERACTIVE")
 timeout_s = int(os.environ.get("LEAF_PM_SMOKE_TIMEOUT", "45"))
+active_timeout_s = int(os.environ.get("LEAF_PM_SMOKE_ACTIVE_TIMEOUT", str(timeout_s)))
+active_hold_s = int(os.environ.get("LEAF_PM_SMOKE_ACTIVE_HOLD", "5"))
 
 
 def resolve_sdcard():
@@ -207,6 +209,13 @@ def write_log(name, content):
     path = logs_dir / f"{safe}.log"
     path.write_text(content or "", encoding="utf-8", errors="replace")
     return rel_log_path(path.name)
+
+
+def remote_tail(path, lines=120):
+    if not path or not remote_exists(path, "f"):
+        return ""
+    proc = adb_shell(f"tail -{int(lines)} {sh_quote(path)}")
+    return proc.stdout
 
 
 def run_doctor(name, extra_env=None):
@@ -372,6 +381,37 @@ def runtime_status(name, filename):
     return False
 
 
+def item_static_findings(item):
+    script_path = f"{sdcard}/{item['script']}"
+    missing = []
+    marker_missing = []
+
+    if not remote_exists(script_path, "f"):
+        missing.append(item["script"])
+    for rel in item.get("required", []):
+        if not remote_exists(f"{sdcard}/{rel}", "e"):
+            missing.append(rel)
+    alternative_groups = item.get("any_required", [])
+    if alternative_groups:
+        if not any(
+            all(remote_exists(f"{sdcard}/{rel}", "e") for rel in choices)
+            for choices in alternative_groups
+        ):
+            missing.append(
+                "one of: "
+                + " | ".join(" + ".join(choices) for choices in alternative_groups)
+            )
+    for runtime in item.get("runtimes", []):
+        if not remote_exists(f"{libs_dir}/{runtime}", "f"):
+            missing.append(f"libs/{runtime}")
+    if not missing and remote_exists(script_path, "f"):
+        for marker in item.get("markers", []):
+            if not remote_grep(script_path, marker):
+                marker_missing.append(marker)
+
+    return missing, marker_missing
+
+
 MATRIX = [
     {
         "category": "native-sdl2",
@@ -430,6 +470,23 @@ MATRIX = [
         "log": "Roms/PORTS/am2r/log.txt",
     },
     {
+        "category": "gamemaker-gmtoolkit-dotnet",
+        "subject": "6 Feet Under",
+        "script": "Roms/PORTS/6 Feet Under.sh",
+        "required": ["Roms/PORTS/6feetunder/gmloadernext.aarch64", "Roms/PORTS/6feetunder/gmloader.json"],
+        "any_required": [
+            ["Roms/PORTS/6feetunder/assets/data.win"],
+            ["Roms/PORTS/6feetunder/6feetunder.port"],
+        ],
+        "runtimes": ["gmtoolkit.squashfs", "dotnet-8.0.12.squashfs"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "LEAF_PM_SDL2_FULLSCREEN_ENV", "gmloadernext"],
+        "log": "Roms/PORTS/6feetunder/log.txt",
+        "extra_logs": ["Roms/PORTS/6feetunder/patchlog.txt", "Roms/PORTS/6feetunder/patcherr.txt"],
+        "interactive": True,
+        "active_timeout": 300,
+        "process_regex": "gmloadernext[.]aarch64",
+    },
+    {
         "category": "box86",
         "subject": "Shovel Knight",
         "script": "Roms/PORTS/Shovel Knight.sh",
@@ -460,12 +517,35 @@ MATRIX = [
         "log": "Roms/PORTS/koboldkastilla/log.txt",
     },
     {
+        "category": "godot-3-frt",
+        "subject": "Cats on Mars",
+        "script": "Roms/PORTS/Cats on Mars.sh",
+        "required": ["Roms/PORTS/catsonmars/gamedata/CatsOnMarsWindows_patched.pck"],
+        "runtimes": ["frt_3.2.3.squashfs"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "LEAF_PM_GODOT_FRT_SDL2", "leaf_pm_run_godot_sdl2_runtime"],
+        "log": "Roms/PORTS/catsonmars/log.txt",
+        "interactive": True,
+        "active_timeout": 90,
+        "process_regex": "frt_3[.]2[.]3",
+    },
+    {
         "category": "love2d",
         "subject": "Wolfenstein 3D",
         "script": "Roms/PORTS/Wolfenstein 3D.sh",
         "required": ["Roms/PORTS/wolf3d/love", "Roms/PORTS/wolf3d/libs/liblove-11.5.so"],
         "markers": ["LEAF_PM_PORT_ENV=1", "LEAF_PM_RUNTIME_COMPAT_LOVE_11_5_LIBS"],
         "log": "Roms/PORTS/wolf3d/log.txt",
+    },
+    {
+        "category": "love2d",
+        "subject": "Mr. Rescue",
+        "script": "Roms/PORTS/Mr. Rescue.sh",
+        "required": ["Roms/PORTS/mrrescue/mrrescue.love"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "LEAF_PM_RUNTIME_COMPAT_LOVE_11_5_LIBS"],
+        "log": "Roms/PORTS/mrrescue/log.txt",
+        "interactive": True,
+        "active_timeout": 90,
+        "process_regex": "love[.]aarch64|mrrescue[.]love",
     },
     {
         "category": "mono-dotnet",
@@ -512,32 +592,7 @@ def copy_previous_log(item, row_slug):
 
 def evaluate_matrix_item(item):
     row_slug = slugify(f"{item['category']}-{item['subject']}")
-    script_path = f"{sdcard}/{item['script']}"
-    missing = []
-    marker_missing = []
-
-    if not remote_exists(script_path, "f"):
-        missing.append(item["script"])
-    for rel in item.get("required", []):
-        if not remote_exists(f"{sdcard}/{rel}", "e"):
-            missing.append(rel)
-    alternative_groups = item.get("any_required", [])
-    if alternative_groups:
-        if not any(
-            all(remote_exists(f"{sdcard}/{rel}", "e") for rel in choices)
-            for choices in alternative_groups
-        ):
-            missing.append(
-                "one of: "
-                + " | ".join(" + ".join(choices) for choices in alternative_groups)
-            )
-    for runtime in item.get("runtimes", []):
-        if not remote_exists(f"{libs_dir}/{runtime}", "f"):
-            missing.append(f"libs/{runtime}")
-    if not missing and remote_exists(script_path, "f"):
-        for marker in item.get("markers", []):
-            if not remote_grep(script_path, marker):
-                marker_missing.append(marker)
+    missing, marker_missing = item_static_findings(item)
 
     previous_log = copy_previous_log(item, row_slug)
     if missing:
@@ -563,6 +618,177 @@ def evaluate_matrix_item(item):
         add(item["category"], item["subject"], "static-readiness", "ready", detail, previous_log)
 
 
+def run_interactive_item(item):
+    row_slug = slugify(f"{item['category']}-{item['subject']}")
+    missing, marker_missing = item_static_findings(item)
+    previous_log = copy_previous_log(item, row_slug)
+    if missing:
+        add(
+            item["category"],
+            item["subject"],
+            "interactive-launch",
+            "skipped",
+            "missing: " + ", ".join(missing),
+            previous_log,
+        )
+        return
+    if marker_missing:
+        add(
+            item["category"],
+            item["subject"],
+            "interactive-launch",
+            "skipped",
+            "script markers missing: " + ", ".join(marker_missing),
+            previous_log,
+        )
+        return
+
+    timeout = int(item.get("active_timeout", active_timeout_s))
+    hold = int(item.get("active_hold", active_hold_s))
+    script_path = f"{sdcard}/{item['script']}"
+    port_log = f"{sdcard}/{item.get('log', '')}" if item.get("log") else ""
+    extra_logs = [f"{sdcard}/{rel}" for rel in item.get("extra_logs", [])]
+    expected_re = item.get("process_regex", "")
+    remote_stdout = f"{remote_logs_dir}/{row_slug}-interactive-stdout.log"
+    remote_ps = f"{remote_logs_dir}/{row_slug}-interactive-ps.log"
+    remote_driver = f"{remote_tmp_dir}/{row_slug}-interactive.sh"
+
+    extra_log_words = " ".join(sh_quote(path) for path in extra_logs)
+
+    driver = f"""#!/bin/sh
+set +e
+PORT_SCRIPT={sh_quote(script_path)}
+PORTS_DIR={sh_quote(sdcard + '/Roms/PORTS')}
+REMOTE_STDOUT={sh_quote(remote_stdout)}
+REMOTE_PS={sh_quote(remote_ps)}
+PORT_LOG={sh_quote(port_log)}
+EXPECTED_RE={sh_quote(expected_re)}
+FAIL_RE='segmentation fault|trace/breakpoint trap|illegal instruction|bus error|command not found|no such file or directory|permission denied|error while loading shared libraries|cannot execute|Traceback'
+TIMEOUT_S={timeout}
+HOLD_S={hold}
+export PLATFORM={sh_quote(platform)}
+export SDCARD_PATH={sh_quote(sdcard)}
+export USERDATA_PATH={sh_quote(userdata)}
+export LEAF_PM_SMOKE_ACTIVE=1
+export LEAF_PM_SMOKE_SUBJECT={sh_quote(item['subject'])}
+
+mkdir -p "$(dirname "$REMOTE_STDOUT")"
+rm -f "$REMOTE_STDOUT" "$REMOTE_PS"
+cd "$PORTS_DIR" || exit 97
+
+echo "leaf-smoke: starting $PORT_SCRIPT timeout=$TIMEOUT_S hold=$HOLD_S" >"$REMOTE_STDOUT"
+setsid sh -c 'exec bash "$1"' leaf-port-smoke "$PORT_SCRIPT" >>"$REMOTE_STDOUT" 2>&1 &
+LAUNCH_PID=$!
+echo "leaf-smoke: launcher_pid=$LAUNCH_PID" >>"$REMOTE_STDOUT"
+echo "LEAF_PM_SMOKE_LAUNCH_PID=$LAUNCH_PID" >>"$REMOTE_STDOUT"
+
+status=12
+detail="expected process not observed before timeout"
+i=0
+while [ "$i" -lt "$TIMEOUT_S" ]; do
+  if ! kill -0 "$LAUNCH_PID" 2>/dev/null; then
+    wait "$LAUNCH_PID"
+    rc=$?
+    status=10
+    detail="launcher exited before expected process rc=$rc"
+    break
+  fi
+
+  ps -eo pid,ppid,pgid,stat,args >"$REMOTE_PS" 2>/dev/null || ps >"$REMOTE_PS" 2>/dev/null || true
+  if [ -n "$EXPECTED_RE" ] && grep -E "$EXPECTED_RE" "$REMOTE_PS" >/dev/null 2>&1; then
+    status=0
+    detail="expected process observed"
+    break
+  fi
+
+  for _leaf_pm_log in "$REMOTE_STDOUT" "$PORT_LOG" {extra_log_words}; do
+    [ -n "$_leaf_pm_log" ] || continue
+    [ -f "$_leaf_pm_log" ] || continue
+    if grep -Eiq "$FAIL_RE" "$_leaf_pm_log"; then
+      status=20
+      detail="failure pattern observed in $_leaf_pm_log"
+      break
+    fi
+  done
+  [ "$status" -eq 20 ] && break
+  sleep 1
+  i=$((i + 1))
+done
+
+if [ "$status" -eq 0 ]; then
+  sleep "$HOLD_S"
+  for _leaf_pm_log in "$REMOTE_STDOUT" "$PORT_LOG" {extra_log_words}; do
+    [ -n "$_leaf_pm_log" ] || continue
+    [ -f "$_leaf_pm_log" ] || continue
+    if grep -Eiq "$FAIL_RE" "$_leaf_pm_log"; then
+      status=21
+      detail="failure pattern observed after startup in $_leaf_pm_log"
+      break
+    fi
+  done
+fi
+
+echo "LEAF_PM_SMOKE_STATUS=$status" >>"$REMOTE_STDOUT"
+echo "LEAF_PM_SMOKE_DETAIL=$detail" >>"$REMOTE_STDOUT"
+
+kill -TERM -"$LAUNCH_PID" 2>/dev/null || kill -TERM "$LAUNCH_PID" 2>/dev/null || true
+sleep 2
+kill -KILL -"$LAUNCH_PID" 2>/dev/null || kill -KILL "$LAUNCH_PID" 2>/dev/null || true
+
+exit "$status"
+"""
+
+    local_driver = tmpdir / f"{row_slug}-interactive.sh"
+    local_driver.write_text(driver, encoding="utf-8")
+    adb_push(local_driver, remote_driver)
+    chmod_proc = adb_shell(f"chmod 755 {sh_quote(remote_driver)}")
+    if chmod_proc.returncode != 0:
+        log = write_log(f"{row_slug}-interactive", chmod_proc.stdout)
+        add(item["category"], item["subject"], "interactive-launch", "fail", "could not chmod remote driver", log)
+        return
+
+    proc = adb_shell(f"sh {sh_quote(remote_driver)}", timeout=timeout + hold + 45)
+    pieces = [proc.stdout, remote_tail(remote_stdout, 220)]
+    if port_log:
+        pieces.append(f"\n--- port log: {port_log} ---\n" + remote_tail(port_log, 160))
+    for extra in extra_logs:
+        pieces.append(f"\n--- extra log: {extra} ---\n" + remote_tail(extra, 160))
+    pieces.append(f"\n--- ps: {remote_ps} ---\n" + remote_tail(remote_ps, 120))
+    log = write_log(f"{row_slug}-interactive", "\n".join(piece for piece in pieces if piece))
+
+    detail = "interactive launch failed"
+    remote_status = None
+    launch_pid = ""
+    for line in remote_tail(remote_stdout, 80).splitlines():
+        if line.startswith("LEAF_PM_SMOKE_DETAIL="):
+            detail = line.split("=", 1)[1].strip()
+        elif line.startswith("LEAF_PM_SMOKE_STATUS="):
+            try:
+                remote_status = int(line.split("=", 1)[1].strip())
+            except ValueError:
+                remote_status = None
+        elif line.startswith("LEAF_PM_SMOKE_LAUNCH_PID="):
+            launch_pid = line.split("=", 1)[1].strip()
+    if launch_pid.isdigit():
+        adb_shell(
+            f"kill -TERM -{launch_pid} 2>/dev/null || true; "
+            "sleep 1; "
+            f"kill -KILL -{launch_pid} 2>/dev/null || true"
+        )
+
+    effective_rc = remote_status if remote_status is not None else proc.returncode
+    if effective_rc == 0:
+        add(item["category"], item["subject"], "interactive-launch", "pass", detail, log)
+    elif effective_rc == 10:
+        add(item["category"], item["subject"], "interactive-launch", "fail", detail, log)
+    elif effective_rc in (20, 21):
+        add(item["category"], item["subject"], "interactive-launch", "fail", detail, log)
+    elif effective_rc == 12:
+        add(item["category"], item["subject"], "interactive-launch", "fail", detail, log)
+    else:
+        add(item["category"], item["subject"], "interactive-launch", "fail", f"{detail}; driver exited {proc.returncode}", log)
+
+
 run_env_probe_gui()
 run_env_probe_port()
 run_env_probe_adb_manual()
@@ -575,6 +801,7 @@ else:
 runtime_status("gmtoolkit", "gmtoolkit.squashfs")
 runtime_status("godot-4.3", "godot_4.3.squashfs")
 runtime_status("godot-4.2.2", "godot_4.2.2.squashfs")
+runtime_status("frt-3.2.3", "frt_3.2.3.squashfs")
 runtime_status("mono", "mono-6.12.0.122-aarch64.squashfs")
 runtime_status("dotnet", "dotnet-8.0.12.squashfs")
 runtime_status("weston", "weston_pkg_0.2.squashfs")
@@ -676,13 +903,20 @@ for item in MATRIX:
     if matrix_included(item):
         evaluate_matrix_item(item)
 
+interactive_rows = 0
 if interactive:
+    for item in MATRIX:
+        if matrix_included(item) and item.get("interactive"):
+            interactive_rows += 1
+            run_interactive_item(item)
+
+if interactive and interactive_rows == 0:
     add(
         "interactive",
         "manual-confirmation",
         "manual",
         "manual",
-        "LEAF_PM_SMOKE_INTERACTIVE=1 noted; first harness slice records readiness and logs but does not auto-launch ports",
+        "LEAF_PM_SMOKE_INTERACTIVE=1 set, but no active launch rows matched LEAF_PM_SMOKE_PORTS",
     )
 
 adb_shell(f"rm -rf {sh_quote(fixture_base)}")
