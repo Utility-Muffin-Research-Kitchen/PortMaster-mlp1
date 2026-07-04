@@ -148,6 +148,13 @@ helper Python process, which lets port scripts run
 `harbourmaster runtime_check` without leaking Python runtime settings into the
 game executable.
 
+The hook also wraps upstream `bind_directories` and `bind_files` after
+`control.txt` is sourced. The wrappers create only the parent path requested by
+the port at bind time, and strip a trailing slash from the destination before
+symlinking when `PM_CAN_MOUNT=N`. This keeps Pyxel, Ren'Py, AGS, and similar
+ports on app-local SD/userdata save/config paths without precreating
+port-specific directories and without touching stock eMMC/rootfs.
+
 Installed `.sh` port launchers also receive a small `LEAF_PM_PORT_ENV=1`
 normalization block before they source upstream `control.txt`. That block
 selects the active SD-managed PortMaster tree through `XDG_DATA_HOME` and
@@ -379,7 +386,7 @@ debug a later mount error.
 
 The smoke matrix also publishes that doctor check as a dedicated
 `doctor/kernel.squashfs_runtime_formats` TSV row. On 2026-07-04 the connected
-MLP1 had seven installed runtime images, all gzip/id 1, and the row passed with
+MLP1 had 12 installed runtime images, all gzip/id 1, and the row passed with
 `unsupported=0 unreadable=0 unknown=0`. A temporary SD-only synthetic
 `leaf-test-zstd.squashfs` header produced the expected FAIL
 (`zstd (id 6, kernel missing)`) and was removed immediately afterward.
@@ -453,6 +460,19 @@ MLP1 interactive smoke on 2026-07-04 with
 | GameMaker gmtoolkit + dotnet | 6 Feet Under | `interactive-launch pass`; first launch mounted `gmtoolkit.squashfs` and `dotnet-8.0.12.squashfs`, patched the game data to 960x720, and reached `gmloadernext.aarch64` main loop. |
 | Godot 3.x FRT | Cats on Mars | `interactive-launch pass`; `frt_3.2.3.squashfs` mount path was patched and the `frt_3.2.3` process was observed. |
 | Love2D | Mr. Rescue | `interactive-launch pass`; the Love 11.5 lib compatibility block was present and the Love runtime process was observed. |
+
+MLP1 interactive smoke on 2026-07-04 with
+`SDCARD_PATH=/media/sdcard1 LEAF_PM_SMOKE_PORTS='shattered-pixel-dungeon unciv megaball ticoban cute-fame-halloween-bash shards-of-god'`
+produced `pass=36 ready=8 skipped=1`. Active launch rows:
+
+| Runtime family | Port | Evidence |
+| --- | --- | --- |
+| Java JRE17 + Weston | Shattered Pixel Dungeon | `interactive-launch pass`; Java 17 runtime and Westonpack path mounted from app-local PortMaster libs and the `ShatteredPD.jar` process was observed. |
+| Java JDK8 + Weston | Unciv | `interactive-launch pass`; Java 8 JDK runtime and Westonpack path mounted from app-local PortMaster libs and the `Unciv.jar` process was observed on the 1 GB RAM profile. |
+| Pyxel | Megaball | `interactive-launch pass`; Pyxel 2.2.8 runtime process was observed running the bundled `main.py`. |
+| Pyxel | Ticoban | `interactive-launch pass`; Pyxel 2.2.8 runtime process was observed running `ticoban.pyxapp`. |
+| Ren'Py | Cute Fame: Halloween Bash | `interactive-launch pass`; the launcher uses `renpy_8.1.3.squashfs` and reached the Ren'Py startup process. HarbourMaster metadata also downloaded `renpy_8.3.4.squashfs`, so both runtimes are present. |
+| AGS | Shards of God | `interactive-launch pass`; AGS 3.6 interpreter reached the game loop with the SDL2 fullscreen shim active. |
 
 After the post-exit scan, the manager asks Jawaka to run `scan-library` through
 `jawaka-platformctl`. The request is best-effort so PortMaster remains usable

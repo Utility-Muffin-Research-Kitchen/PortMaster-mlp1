@@ -70,6 +70,56 @@ fi
 export HM_PORTS_DIR="\${HM_PORTS_DIR:-\$_leaf_pm_ports_dir}"
 export HM_SCRIPTS_DIR="\${HM_SCRIPTS_DIR:-\$HM_PORTS_DIR}"
 
+leaf_pm_bind_target_parent() {
+  _leaf_pm_bind_target="\${1%/}"
+  [ -n "\$_leaf_pm_bind_target" ] || return 0
+  _leaf_pm_bind_parent="\$(dirname "\$_leaf_pm_bind_target" 2>/dev/null || printf '.')"
+  case "\$_leaf_pm_bind_parent" in
+    ""|.) return 0 ;;
+  esac
+  mkdir -p "\$_leaf_pm_bind_parent" 2>/dev/null || true
+}
+
+bind_directories() {
+  [ "\$#" -ge 2 ] || return 2
+  _leaf_pm_bind_target="\${1%/}"
+  [ -n "\$_leaf_pm_bind_target" ] || _leaf_pm_bind_target="\$1"
+  leaf_pm_bind_target_parent "\$_leaf_pm_bind_target"
+  if [ "\${PM_CAN_MOUNT:-N}" = "Y" ]; then
+    [ -L "\$_leaf_pm_bind_target" ] && rm -f "\$_leaf_pm_bind_target" && echo "removed previous symlink \$_leaf_pm_bind_target"
+    if [ -d "\$2" ]; then
+      mkdir -p "\$_leaf_pm_bind_target"
+      \$ESUDO umount "\$_leaf_pm_bind_target"
+      \$ESUDO mount --bind "\$2" "\$_leaf_pm_bind_target" && echo "successful bind mount from \$2 to \$_leaf_pm_bind_target"
+    else
+      echo "no directory found at \$2"
+    fi
+  else
+    rm -f "\$_leaf_pm_bind_target"
+    ln -sfv "\$2" "\$_leaf_pm_bind_target"
+  fi
+}
+
+bind_files() {
+  [ "\$#" -ge 2 ] || return 2
+  _leaf_pm_bind_target="\${1%/}"
+  [ -n "\$_leaf_pm_bind_target" ] || _leaf_pm_bind_target="\$1"
+  leaf_pm_bind_target_parent "\$_leaf_pm_bind_target"
+  if [ "\${PM_CAN_MOUNT:-N}" = "Y" ]; then
+    [ -L "\$_leaf_pm_bind_target" ] && rm -f "\$_leaf_pm_bind_target" && echo "removed previous symlink \$_leaf_pm_bind_target"
+    if [ -f "\$2" ]; then
+      touch "\$_leaf_pm_bind_target"
+      \$ESUDO umount "\$_leaf_pm_bind_target"
+      \$ESUDO mount --bind "\$2" "\$_leaf_pm_bind_target" && echo "successful bind mount from \$2 to \$_leaf_pm_bind_target"
+    else
+      echo "no file found at \$2"
+    fi
+  else
+    rm -f "\$_leaf_pm_bind_target"
+    ln -sfv "\$2" "\$_leaf_pm_bind_target"
+  fi
+}
+
 _leaf_pm_system_dir="\${UMRK_PLATFORM_PATH:-}"
 if [ -z "\$_leaf_pm_system_dir" ] && [ -n "\${SDCARD_PATH:-}" ]; then
   _leaf_pm_system_dir="\${SDCARD_PATH%/}/.system/leaf/platforms/\${PLATFORM:-mlp1}"

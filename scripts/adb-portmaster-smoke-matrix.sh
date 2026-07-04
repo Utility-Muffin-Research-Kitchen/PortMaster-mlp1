@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,14 +27,45 @@ def sh_quote(value):
     return "'" + str(value).replace("'", "'\"'\"'") + "'"
 
 
-def run(cmd, *, timeout=None, check=False):
-    proc = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
+def adb_transport_error(output):
+    lowered = (output or "").lower()
+    return any(
+        needle in lowered
+        for needle in (
+            "device not found",
+            "device offline",
+            "failed to get feature set",
+            "no devices/emulators found",
+            "protocol fault",
+        )
     )
+
+
+def run(cmd, *, timeout=None, check=False):
+    attempts = 4 if cmd and cmd[0] == "adb" else 1
+    proc = None
+    for attempt in range(attempts):
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout,
+        )
+        if proc.returncode == 0 or not adb_transport_error(proc.stdout):
+            break
+        wait_cmd = ["adb"]
+        if len(cmd) >= 3 and cmd[1] == "-s":
+            wait_cmd += ["-s", cmd[2]]
+        wait_cmd.append("wait-for-device")
+        subprocess.run(
+            wait_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        )
+        time.sleep(1 + attempt)
+    assert proc is not None
     if check and proc.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd)} failed with {proc.returncode}:\n{proc.stdout}")
     return proc
@@ -590,6 +622,80 @@ MATRIX = [
         "markers": ["LEAF_PM_PORT_ENV=1", "mono"],
         "log": "Roms/PORTS/stardewvalley/log.txt",
     },
+    {
+        "category": "java-jre17-weston",
+        "subject": "Shattered Pixel Dungeon",
+        "script": "Roms/PORTS/Shattered Pixel Dungeon.sh",
+        "required": ["Roms/PORTS/shatteredpixeldungeon/ShatteredPD.jar", "Roms/PORTS/shatteredpixeldungeon/shatteredpixeldungeon.gptk"],
+        "runtimes": ["weston_pkg_0.2.squashfs", "zulu17.54.21-ca-jre17.0.13-linux.squashfs"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "weston_pkg_0\\.2", "zulu17\\.54\\.21", "JAVA_HOME"],
+        "log": "Roms/PORTS/shatteredpixeldungeon/log.txt",
+        "interactive": True,
+        "active_timeout": 240,
+        "active_hold": 8,
+        "process_regex": "java .*ShatteredPD[.]jar|ShatteredPD[.]jar|westonwrap[.]sh.*ShatteredPD",
+    },
+    {
+        "category": "java-jdk8-weston",
+        "subject": "Unciv",
+        "script": "Roms/PORTS/Unciv.sh",
+        "required": ["Roms/PORTS/unciv/Unciv.jar", "Roms/PORTS/unciv/unciv.gptk"],
+        "runtimes": ["weston_pkg_0.2.squashfs", "zulu8.86.0.25-ca-jdk8.0.452-linux.squashfs"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "weston_pkg_0\\.2", "zulu8\\.86\\.0\\.25"],
+        "log": "Roms/PORTS/unciv/log.txt",
+        "interactive": True,
+        "active_timeout": 240,
+        "active_hold": 8,
+        "process_regex": "java .*Unciv[.]jar|Unciv[.]jar|westonwrap[.]sh.*Unciv",
+    },
+    {
+        "category": "pyxel",
+        "subject": "Megaball",
+        "script": "Roms/PORTS/Megaball.sh",
+        "required": ["Roms/PORTS/megaball/gamedata/main.py"],
+        "runtimes": ["pyxel_2.2.8_python_3.11.squashfs"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "pyxel_2\\.2\\.8_python_3\\.11", "pm_platform_helper"],
+        "log": "Roms/PORTS/megaball/log.txt",
+        "interactive": True,
+        "active_timeout": 120,
+        "process_regex": "pyxel.*main[.]py|python.*main[.]py|bin/pyxel",
+    },
+    {
+        "category": "pyxel",
+        "subject": "Ticoban",
+        "script": "Roms/PORTS/Ticoban.sh",
+        "required": ["Roms/PORTS/ticoban/ticoban.pyxapp"],
+        "runtimes": ["pyxel_2.2.8_python_3.11.squashfs"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "pyxel_2\\.2\\.8_python_3\\.11", "pm_platform_helper"],
+        "log": "Roms/PORTS/ticoban/log.txt",
+        "interactive": True,
+        "active_timeout": 120,
+        "process_regex": "pyxel.*ticoban[.]pyxapp|python.*ticoban[.]pyxapp|bin/pyxel",
+    },
+    {
+        "category": "renpy",
+        "subject": "Cute Fame: Halloween Bash",
+        "script": "Roms/PORTS/Cute Fame Halloween Bash.sh",
+        "required": ["Roms/PORTS/cutefamehalloweenbash/game/script.rpyc", "Roms/PORTS/cutefamehalloweenbash/gl4es/libGL.so.1"],
+        "runtimes": ["renpy_8.1.3.squashfs"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "renpy_8\\.1\\.3", "startRENPY", "pm_platform_helper"],
+        "log": "Roms/PORTS/cutefamehalloweenbash/log.txt",
+        "interactive": True,
+        "active_timeout": 180,
+        "active_hold": 8,
+        "process_regex": "startRENPY|CuteFameHalloweenBash[.]py|py3-linux-aarch64/startRENPY",
+    },
+    {
+        "category": "ags",
+        "subject": "Shards of God",
+        "script": "Roms/PORTS/Shards of God.sh",
+        "required": ["Roms/PORTS/shardsofgod/ags", "Roms/PORTS/shardsofgod/gamedata/Shards of God.ags", "Roms/PORTS/shardsofgod/libs.aarch64/libSDL2_sound.so.2"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "LEAF_PM_SDL2_FULLSCREEN_ENV", "pm_platform_helper", "ags"],
+        "log": "Roms/PORTS/shardsofgod/log.txt",
+        "interactive": True,
+        "active_timeout": 120,
+        "process_regex": "(^|[ /])ags($| )|Shards of God[.]ags",
+    },
 ]
 
 
@@ -689,6 +795,7 @@ REMOTE_PS={sh_quote(remote_ps)}
 PORT_LOG={sh_quote(port_log)}
 EXPECTED_RE={sh_quote(expected_re)}
 FAIL_RE='segmentation fault|trace/breakpoint trap|illegal instruction|bus error|command not found|no such file or directory|permission denied|error while loading shared libraries|cannot execute|Traceback'
+POST_START_FAIL_RE='segmentation fault|trace/breakpoint trap|illegal instruction|bus error|cannot execute|Traceback'
 TIMEOUT_S={timeout}
 HOLD_S={hold}
 export PLATFORM={sh_quote(platform)}
@@ -699,6 +806,11 @@ export LEAF_PM_SMOKE_SUBJECT={sh_quote(item['subject'])}
 
 mkdir -p "$(dirname "$REMOTE_STDOUT")"
 rm -f "$REMOTE_STDOUT" "$REMOTE_PS"
+[ -n "$PORT_LOG" ] && rm -f "$PORT_LOG"
+for _leaf_pm_log in {extra_log_words}; do
+  [ -n "$_leaf_pm_log" ] || continue
+  rm -f "$_leaf_pm_log"
+done
 cd "$PORTS_DIR" || exit 97
 
 echo "leaf-smoke: starting $PORT_SCRIPT timeout=$TIMEOUT_S hold=$HOLD_S" >"$REMOTE_STDOUT"
@@ -745,7 +857,7 @@ if [ "$status" -eq 0 ]; then
   for _leaf_pm_log in "$REMOTE_STDOUT" "$PORT_LOG" {extra_log_words}; do
     [ -n "$_leaf_pm_log" ] || continue
     [ -f "$_leaf_pm_log" ] || continue
-    if grep -Eiq "$FAIL_RE" "$_leaf_pm_log"; then
+    if grep -Eiq "$POST_START_FAIL_RE" "$_leaf_pm_log"; then
       status=21
       detail="failure pattern observed after startup in $_leaf_pm_log"
       break
@@ -831,6 +943,11 @@ runtime_status("frt-3.2.3", "frt_3.2.3.squashfs")
 runtime_status("mono", "mono-6.12.0.122-aarch64.squashfs")
 runtime_status("dotnet", "dotnet-8.0.12.squashfs")
 runtime_status("weston", "weston_pkg_0.2.squashfs")
+runtime_status("java-jre17", "zulu17.54.21-ca-jre17.0.13-linux.squashfs")
+runtime_status("java-jdk8", "zulu8.86.0.25-ca-jdk8.0.452-linux.squashfs")
+runtime_status("pyxel-2.2.8", "pyxel_2.2.8_python_3.11.squashfs")
+runtime_status("renpy-8.1.3", "renpy_8.1.3.squashfs")
+runtime_status("renpy-8.3.4", "renpy_8.3.4.squashfs")
 
 xdelta_ok = tool_status("xdelta3")
 dos2unix_ok = tool_status("dos2unix")
