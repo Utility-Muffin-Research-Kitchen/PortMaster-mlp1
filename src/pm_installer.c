@@ -411,6 +411,19 @@ static int apply_patch_records(const char *tree, const pm_patch_record *records,
                 continue;
             }
             free(content);
+        } else if (strcmp(records[i].name, "0008-leaf-quote-esudo-check.patch") == 0) {
+            char target[PM_PATH_MAX];
+            if (pm_join(target, sizeof(target), tree, "control.txt") != 0) {
+                snprintf(err, err_size, "control.txt path too long");
+                return -1;
+            }
+            char marker_err[128];
+            char *content = pm_read_text_file(target, 256 * 1024, marker_err, sizeof(marker_err));
+            if (content && strstr(content, "ESUDO:-")) {
+                free(content);
+                continue;
+            }
+            free(content);
         }
 
         char patch_path[PM_PATH_MAX];
@@ -497,6 +510,8 @@ static int validate_patched_portmaster_tree(const char *tree, char *err, size_t 
         file_contains_required(control, "PORTMASTER_CONTROLFOLDER",
                                "control.txt", err, err_size) != 0 ||
         file_contains_required(control, "leaf-armhf-env.sh",
+                               "control.txt", err, err_size) != 0 ||
+        file_contains_required(control, "ESUDO:-",
                                "control.txt", err, err_size) != 0 ||
         file_contains_required(device_info, "PORTMASTER_LEAF_DEVICE_INFO",
                                "device_info.txt", err, err_size) != 0 ||

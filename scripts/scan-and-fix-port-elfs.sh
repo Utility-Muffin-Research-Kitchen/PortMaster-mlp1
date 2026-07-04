@@ -407,8 +407,9 @@ normalize_port_env_script() {
     *) printf 'not-shell'; return 0 ;;
   esac
   if grep -q 'LEAF_PM_PORT_ENV=1' "$file" 2>/dev/null; then
-    if grep -q 'LEAF_PM_PORT_ENV_VERSION=2' "$file" 2>/dev/null &&
-       grep -q 'PORTMASTER_LEAF_DEVICE_INFO' "$file" 2>/dev/null; then
+    if grep -q 'LEAF_PM_PORT_ENV_VERSION=3' "$file" 2>/dev/null &&
+       grep -q 'PORTMASTER_LEAF_DEVICE_INFO' "$file" 2>/dev/null &&
+       grep -q 'LEAF_PM_TOOLS_DIR' "$file" 2>/dev/null; then
       printf 'port-env-already'
       return 0
     fi
@@ -416,7 +417,7 @@ normalize_port_env_script() {
     awk '
       function insert_block() {
         print "# LEAF_PM_PORT_ENV=1"
-        print "# LEAF_PM_PORT_ENV_VERSION=2"
+        print "# LEAF_PM_PORT_ENV_VERSION=3"
         print "_leaf_pm_platform=\"${PLATFORM:-mlp1}\""
         print "export PLATFORM=\"${PLATFORM:-$_leaf_pm_platform}\""
         print "export PORTMASTER_LEAF_DEVICE_INFO=\"${PORTMASTER_LEAF_DEVICE_INFO:-1}\""
@@ -440,7 +441,15 @@ normalize_port_env_script() {
         print "    fi"
         print "  done"
         print "fi"
-        print "unset _leaf_pm_sd _leaf_pm_userdata _leaf_pm_platform _leaf_pm_script_dir _leaf_pm_script_sd"
+        print "_leaf_pm_tools_dir=\"${LEAF_PM_TOOLS_DIR:-${XDG_DATA_HOME:-}/compat/tools/aarch64/bin}\""
+        print "if [ -d \"$_leaf_pm_tools_dir\" ]; then"
+        print "  export LEAF_PM_TOOLS_DIR=\"$_leaf_pm_tools_dir\""
+        print "  case \":${PATH:-}:\" in"
+        print "    *:\"$_leaf_pm_tools_dir\":*) ;;"
+        print "    *) export PATH=\"$_leaf_pm_tools_dir:${PATH:-/usr/bin:/usr/sbin:/bin:/sbin}\" ;;"
+        print "  esac"
+        print "fi"
+        print "unset _leaf_pm_sd _leaf_pm_userdata _leaf_pm_platform _leaf_pm_script_dir _leaf_pm_script_sd _leaf_pm_tools_dir"
         inserted = 1
       }
       {
@@ -474,7 +483,7 @@ normalize_port_env_script() {
     function insert_block() {
       print ""
       print "# LEAF_PM_PORT_ENV=1"
-      print "# LEAF_PM_PORT_ENV_VERSION=2"
+      print "# LEAF_PM_PORT_ENV_VERSION=3"
       print "_leaf_pm_platform=\"${PLATFORM:-mlp1}\""
       print "export PLATFORM=\"${PLATFORM:-$_leaf_pm_platform}\""
       print "export PORTMASTER_LEAF_DEVICE_INFO=\"${PORTMASTER_LEAF_DEVICE_INFO:-1}\""
@@ -498,7 +507,15 @@ normalize_port_env_script() {
       print "    fi"
       print "  done"
       print "fi"
-      print "unset _leaf_pm_sd _leaf_pm_userdata _leaf_pm_platform _leaf_pm_script_dir _leaf_pm_script_sd"
+      print "_leaf_pm_tools_dir=\"${LEAF_PM_TOOLS_DIR:-${XDG_DATA_HOME:-}/compat/tools/aarch64/bin}\""
+      print "if [ -d \"$_leaf_pm_tools_dir\" ]; then"
+      print "  export LEAF_PM_TOOLS_DIR=\"$_leaf_pm_tools_dir\""
+      print "  case \":${PATH:-}:\" in"
+      print "    *:\"$_leaf_pm_tools_dir\":*) ;;"
+      print "    *) export PATH=\"$_leaf_pm_tools_dir:${PATH:-/usr/bin:/usr/sbin:/bin:/sbin}\" ;;"
+      print "  esac"
+      print "fi"
+      print "unset _leaf_pm_sd _leaf_pm_userdata _leaf_pm_platform _leaf_pm_script_dir _leaf_pm_script_sd _leaf_pm_tools_dir"
       inserted = 1
     }
     {

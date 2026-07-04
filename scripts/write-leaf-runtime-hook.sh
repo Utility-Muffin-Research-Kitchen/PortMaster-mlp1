@@ -271,6 +271,133 @@ leaf_pm_apply_controller_layout() {
   printf '%s\n' "\$SDL_GAMECONTROLLERCONFIG" >"\$SDL_GAMECONTROLLERCONFIG_FILE" 2>/dev/null || true
 }
 
+leaf_pm_resolve_cfw_version() {
+  _leaf_pm_release_version=""
+  for _leaf_pm_release_file in \
+    "\${SDCARD_PATH:-}/.system/leaf/platforms/\${PLATFORM:-mlp1}/release.json" \
+    "\${SDCARD_PATH:-}/.system/leaf/platforms/\${PLATFORM:-mlp1}/manifest.json" \
+    "\${SDCARD_PATH:-}/.umrk/\${PLATFORM:-mlp1}/release.json"; do
+    [ -f "\$_leaf_pm_release_file" ] || continue
+    _leaf_pm_release_version="\$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p; s/.*"release_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "\$_leaf_pm_release_file" 2>/dev/null | head -n 1)"
+    [ -n "\$_leaf_pm_release_version" ] && break
+  done
+  [ -n "\$_leaf_pm_release_version" ] || _leaf_pm_release_version="portmaster-mlp1"
+  printf '%s\n' "\$_leaf_pm_release_version"
+}
+
+if [ -z "\${CFW_VERSION:-}" ] || [ "\$CFW_VERSION" = "Unknown" ]; then
+  export CFW_VERSION="\$(leaf_pm_resolve_cfw_version)"
+fi
+export CFW_NAME="\${CFW_NAME:-Leaf}"
+
+if [ -f /tmp/leaf-pm-mount-probe-ok ]; then
+  export PM_CAN_MOUNT=Y
+else
+  export PM_CAN_MOUNT=N
+fi
+
+if command -v taskset >/dev/null 2>&1 && taskset 0xF true >/dev/null 2>&1; then
+  export TASKSET="\${TASKSET:-taskset 0xF}"
+else
+  export TASKSET=""
+fi
+
+leaf_pm_json_escape() {
+  printf '%s' "\${1:-}" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g'
+}
+
+leaf_pm_env_source_for() {
+  case "\$1" in
+    PLATFORM|SDCARD_PATH|USERDATA_PATH|LOGS_PATH|ROMS_PATH|IMAGES_PATH|UMRK_*|JAWAKA_*)
+      printf '%s\n' leaf-session-env ;;
+    ESUDO|ESUDOKILL|ESUDOKILL2|GPTOKEYB|GPTOKEYB2|directory|PM_CAN_MOUNT|TASKSET)
+      printf '%s\n' upstream-control ;;
+    LEAF_PM_*|PATH|LD_LIBRARY_PATH|LD_PRELOAD|PYTHONHOME|PYTHONPATH|PYTHONDONTWRITEBYTECODE|SDL_GAMECONTROLLERCONFIG_FILE)
+      printf '%s\n' shim ;;
+    *)
+      printf '%s\n' leaf-hook ;;
+  esac
+}
+
+leaf_pm_snapshot_value() {
+  _leaf_pm_snapshot_name="\$1"
+  eval "printf '%s' \"\\\${\${_leaf_pm_snapshot_name}:-}\""
+}
+
+leaf_pm_write_snapshot_pair() {
+  _leaf_pm_snapshot_mode="\$1"
+  _leaf_pm_snapshot_base="\$2"
+  _leaf_pm_snapshot_dir="\${LEAF_PM_DATA_DIR:-\${XDG_DATA_HOME:-}}/.leaf"
+  [ -n "\$_leaf_pm_snapshot_dir" ] || return 1
+  mkdir -p "\$_leaf_pm_snapshot_dir" 2>/dev/null || return 1
+
+  _leaf_pm_snapshot_json="\$_leaf_pm_snapshot_dir/\$_leaf_pm_snapshot_base.json"
+  _leaf_pm_snapshot_txt="\$_leaf_pm_snapshot_dir/\$_leaf_pm_snapshot_base.txt"
+  _leaf_pm_snapshot_json_tmp="\$_leaf_pm_snapshot_json.tmp.\$\$"
+  _leaf_pm_snapshot_txt_tmp="\$_leaf_pm_snapshot_txt.tmp.\$\$"
+  _leaf_pm_snapshot_generated_at="\$(date +%s 2>/dev/null || printf '%s' 0)"
+  _leaf_pm_snapshot_vars="PLATFORM SDCARD_PATH USERDATA_PATH LOGS_PATH ROMS_PATH IMAGES_PATH HOME XDG_DATA_HOME HM_TOOLS_DIR HM_PORTS_DIR HM_SCRIPTS_DIR PORTMASTER_CONTROLFOLDER CFW_NAME CFW_VERSION DEVICE_NAME DEVICE_CPU DEVICE_ARCH DEVICE_RAM DEVICE_HAS_ARMHF DEVICE_HAS_AARCH64 DEVICE_HAS_X86 DEVICE_HAS_X86_64 DISPLAY_WIDTH DISPLAY_HEIGHT DISPLAY_ORIENTATION ASPECT_X ASPECT_Y ANALOG_STICKS ANALOGSTICKS ESUDO ESUDOKILL ESUDOKILL2 GPTOKEYB GPTOKEYB2 directory PM_CAN_MOUNT TASKSET PORTMASTER_LEAF_PORT_LAYOUT_SCOPE PORTMASTER_LEAF_CONTROLLER_LAYOUT SDL_GAMECONTROLLERCONFIG sdl_controllerconfig SDL_GAMECONTROLLERCONFIG_FILE LEAF_PM_TOOLS_DIR LEAF_PM_RUNTIME_DIR LEAF_PM_ARMHF_ROOT LEAF_PM_ARMHF_RUN LEAF_PM_ARMHF_LOADER LEAF_PM_ARMHF_LIB_PATH LEAF_PM_BOX86 LEAF_PM_RETROARCH_BIN LEAF_PM_RETROARCH_CONFIG LEAF_PM_AARCH64_COMPAT_LIB_DIR LEAF_PM_NATIVE_COMPAT_LIB_DIR LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM LEAF_PM_SDL_FORCE_FULLSCREEN LEAF_PM_LAUNCH_MODE"
+
+  {
+    printf '{\n'
+    printf '  "schema": 1,\n'
+    printf '  "kind": "portmaster-launch-env",\n'
+    printf '  "mode": "%s",\n' "\$(leaf_pm_json_escape "\$_leaf_pm_snapshot_mode")"
+    printf '  "generated_at_unix": %s,\n' "\$_leaf_pm_snapshot_generated_at"
+    printf '  "manager_version": "hook",\n'
+    printf '  "platform": "%s",\n' "\$(leaf_pm_json_escape "\${PLATFORM:-}")"
+    printf '  "sdcard_path": "%s",\n' "\$(leaf_pm_json_escape "\${SDCARD_PATH:-}")"
+    printf '  "entries": [\n'
+    _leaf_pm_snapshot_first=1
+    for _leaf_pm_snapshot_var in \$_leaf_pm_snapshot_vars; do
+      _leaf_pm_snapshot_value="\$(leaf_pm_snapshot_value "\$_leaf_pm_snapshot_var")"
+      _leaf_pm_snapshot_source="\$(leaf_pm_env_source_for "\$_leaf_pm_snapshot_var")"
+      if [ "\$_leaf_pm_snapshot_first" -eq 0 ]; then
+        printf ',\n'
+      fi
+      _leaf_pm_snapshot_first=0
+      printf '    {"name":"%s","value":"%s","source":"%s"}' \
+        "\$(leaf_pm_json_escape "\$_leaf_pm_snapshot_var")" \
+        "\$(leaf_pm_json_escape "\$_leaf_pm_snapshot_value")" \
+        "\$(leaf_pm_json_escape "\$_leaf_pm_snapshot_source")"
+    done
+    printf '\n  ]\n'
+    printf '}\n'
+  } >"\$_leaf_pm_snapshot_json_tmp" || return 1
+
+  {
+    printf 'schema=1\n'
+    printf 'kind=portmaster-launch-env\n'
+    printf 'mode=%s\n' "\$_leaf_pm_snapshot_mode"
+    printf 'generated_at_unix=%s\n' "\$_leaf_pm_snapshot_generated_at"
+    printf 'manager_version=hook\n'
+    printf 'platform=%s\n' "\${PLATFORM:-}"
+    printf 'sdcard_path=%s\n' "\${SDCARD_PATH:-}"
+    printf '\n# name\tsource\tvalue\n'
+    for _leaf_pm_snapshot_var in \$_leaf_pm_snapshot_vars; do
+      _leaf_pm_snapshot_value="\$(leaf_pm_snapshot_value "\$_leaf_pm_snapshot_var")"
+      _leaf_pm_snapshot_source="\$(leaf_pm_env_source_for "\$_leaf_pm_snapshot_var")"
+      printf '%s\t%s\t%s\n' "\$_leaf_pm_snapshot_var" "\$_leaf_pm_snapshot_source" "\$_leaf_pm_snapshot_value"
+    done
+  } >"\$_leaf_pm_snapshot_txt_tmp" || return 1
+
+  [ -f "\$_leaf_pm_snapshot_json" ] && mv -f "\$_leaf_pm_snapshot_json" "\$_leaf_pm_snapshot_dir/\$_leaf_pm_snapshot_base.previous.json" 2>/dev/null || true
+  [ -f "\$_leaf_pm_snapshot_txt" ] && mv -f "\$_leaf_pm_snapshot_txt" "\$_leaf_pm_snapshot_dir/\$_leaf_pm_snapshot_base.previous.txt" 2>/dev/null || true
+  mv -f "\$_leaf_pm_snapshot_json_tmp" "\$_leaf_pm_snapshot_json" || return 1
+  mv -f "\$_leaf_pm_snapshot_txt_tmp" "\$_leaf_pm_snapshot_txt" || return 1
+}
+
+leaf_pm_write_launch_env_snapshot() {
+  _leaf_pm_snapshot_mode="\${1:-\${LEAF_PM_LAUNCH_MODE:-port}}"
+  case "\$_leaf_pm_snapshot_mode" in
+    latest|"") _leaf_pm_snapshot_mode="port" ;;
+  esac
+  _leaf_pm_snapshot_slug="\$(printf '%s' "\$_leaf_pm_snapshot_mode" | sed 's/[^A-Za-z0-9_-]/_/g')"
+  [ -n "\$_leaf_pm_snapshot_slug" ] || _leaf_pm_snapshot_slug="port"
+  leaf_pm_write_snapshot_pair "\$_leaf_pm_snapshot_mode" "launch-env-\$_leaf_pm_snapshot_slug" || return 1
+  leaf_pm_write_snapshot_pair "\$_leaf_pm_snapshot_mode" "launch-env" || return 1
+}
+
 if declare -f get_controls >/dev/null 2>&1; then
   if ! declare -f leaf_pm_upstream_get_controls >/dev/null 2>&1; then
     eval "\$(declare -f get_controls | sed '1s/get_controls/leaf_pm_upstream_get_controls/')"
@@ -278,6 +405,14 @@ if declare -f get_controls >/dev/null 2>&1; then
   get_controls() {
     leaf_pm_upstream_get_controls "\$@"
     leaf_pm_apply_controller_layout
+    _leaf_pm_snapshot_mode="\${LEAF_PM_ENV_PROBE_MODE:-\${LEAF_PM_LAUNCH_MODE:-port}}"
+    leaf_pm_write_launch_env_snapshot "\$_leaf_pm_snapshot_mode" || true
+    case "\${LEAF_PM_ENV_PROBE:-0}" in
+      1|true|yes|TRUE|YES)
+        echo "Leaf PortMaster env probe wrote launch-env-\$_leaf_pm_snapshot_mode under \${LEAF_PM_DATA_DIR:-\${XDG_DATA_HOME:-}}/.leaf" >&2
+        exit 0
+        ;;
+    esac
   }
 fi
 

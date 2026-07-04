@@ -261,6 +261,96 @@ def run_remote_fixture(name, command, success_detail, missing_detail=None):
         )
 
 
+def run_env_probe_gui():
+    snapshot = f"{pm_data}/.leaf/launch-env-gui.json"
+    proc = adb_shell(
+        " ".join(
+            [
+                f"cd {sh_quote(pak_dir)}",
+                "&&",
+                f"PLATFORM={sh_quote(platform)}",
+                f"SDCARD_PATH={sh_quote(sdcard)}",
+                f"USERDATA_PATH={sh_quote(userdata)}",
+                "LEAF_PM_ENV_PROBE=1",
+                "./launch.sh --launch-portmaster",
+            ]
+        ),
+        timeout=90,
+    )
+    log = write_log("env-probe-gui", proc.stdout)
+    if proc.returncode != 0:
+        add("env-probe", "gui", "adb", "fail", f"probe exited {proc.returncode}", log)
+    elif "binary operator expected" in proc.stdout:
+        add("env-probe", "gui", "adb", "warn", "probe completed with shell warning", log)
+    elif remote_exists(snapshot, "f"):
+        add("env-probe", "gui", "adb", "pass", f"snapshot written: {snapshot}", log)
+    else:
+        add("env-probe", "gui", "adb", "fail", f"snapshot missing: {snapshot}", log)
+
+
+def run_env_probe_port():
+    script = f"{sdcard}/Roms/PORTS/2048.sh"
+    snapshot = f"{pm_data}/.leaf/launch-env-port.json"
+    if not remote_exists(script, "f"):
+        add("env-probe", "port-2048", "adb", "skipped", f"probe script missing: {script}")
+        return
+
+    proc = adb_shell(
+        " ".join(
+            [
+                f"cd {sh_quote(sdcard + '/Roms/PORTS')}",
+                "&&",
+                f"PLATFORM={sh_quote(platform)}",
+                f"SDCARD_PATH={sh_quote(sdcard)}",
+                f"USERDATA_PATH={sh_quote(userdata)}",
+                "LEAF_PM_ENV_PROBE=1",
+                "LEAF_PM_ENV_PROBE_MODE=port",
+                "bash ./2048.sh",
+            ]
+        ),
+        timeout=timeout_s,
+    )
+    log = write_log("env-probe-port-2048", proc.stdout)
+    if proc.returncode != 0:
+        add("env-probe", "port-2048", "adb", "fail", f"probe exited {proc.returncode}", log)
+    elif "binary operator expected" in proc.stdout:
+        add("env-probe", "port-2048", "adb", "warn", "probe completed with shell warning", log)
+    elif remote_exists(snapshot, "f"):
+        add("env-probe", "port-2048", "adb", "pass", f"snapshot written: {snapshot}", log)
+    else:
+        add("env-probe", "port-2048", "adb", "fail", f"snapshot missing: {snapshot}", log)
+
+
+def run_env_probe_adb_manual():
+    script = f"{sdcard}/Roms/PORTS/2048.sh"
+    snapshot = f"{pm_data}/.leaf/launch-env-adb.json"
+    if not remote_exists(script, "f"):
+        add("env-probe", "adb-2048", "adb", "skipped", f"probe script missing: {script}")
+        return
+
+    proc = adb_shell(
+        " ".join(
+            [
+                f"cd {sh_quote(sdcard + '/Roms/PORTS')}",
+                "&&",
+                "LEAF_PM_ENV_PROBE=1",
+                "LEAF_PM_ENV_PROBE_MODE=adb",
+                "bash ./2048.sh",
+            ]
+        ),
+        timeout=timeout_s,
+    )
+    log = write_log("env-probe-adb-2048", proc.stdout)
+    if proc.returncode != 0:
+        add("env-probe", "adb-2048", "adb", "fail", f"probe exited {proc.returncode}", log)
+    elif "binary operator expected" in proc.stdout:
+        add("env-probe", "adb-2048", "adb", "warn", "probe completed with shell warning", log)
+    elif remote_exists(snapshot, "f"):
+        add("env-probe", "adb-2048", "adb", "pass", f"snapshot written: {snapshot}", log)
+    else:
+        add("env-probe", "adb-2048", "adb", "fail", f"snapshot missing: {snapshot}", log)
+
+
 def tool_status(tool):
     resolved = command_path(tool, tools_bin)
     if resolved:
@@ -473,6 +563,9 @@ def evaluate_matrix_item(item):
         add(item["category"], item["subject"], "static-readiness", "ready", detail, previous_log)
 
 
+run_env_probe_gui()
+run_env_probe_port()
+run_env_probe_adb_manual()
 run_doctor("doctor-cfw")
 if loop_stress:
     run_doctor("doctor-loop-stress", {"LEAF_PM_DOCTOR_LOOP_STRESS": "1"})

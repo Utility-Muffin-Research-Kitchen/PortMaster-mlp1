@@ -1,5 +1,6 @@
 #include "pm_doctor.h"
 
+#include "pm_env_snapshot.h"
 #include "pm_launcher.h"
 
 #include "cJSON.h"
@@ -24,6 +25,8 @@ typedef enum {
     PM_CHECK_NOT_APP_FIXABLE,
     PM_CHECK_UNKNOWN,
 } pm_check_status;
+
+#define PM_MOUNT_PROBE_MARKER "/tmp/leaf-pm-mount-probe-ok"
 
 static const char *status_text(pm_check_status status)
 {
@@ -804,6 +807,15 @@ static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, 
                       "m=/tmp/leaf-pm-doctor-squashfs-$$; rm -rf \"$m\"; mkdir -p \"$m\" && mount -o loop,ro %s \"$m\" && umount \"$m\"; rc=$?; rmdir \"$m\" 2>/dev/null || true; exit $rc",
                       qimg);
             int rc = capture_shell(cmd, output, sizeof(output));
+            if (rc == 0) {
+                FILE *marker = fopen(PM_MOUNT_PROBE_MARKER, "wb");
+                if (marker) {
+                    fputs("ok\n", marker);
+                    fclose(marker);
+                }
+            } else {
+                unlink(PM_MOUNT_PROBE_MARKER);
+            }
             add_check(r, checks, "kernel.squashfs_mount_probe",
                       rc == 0 ? PM_CHECK_OK : PM_CHECK_FAIL,
                       "required",
@@ -1168,10 +1180,13 @@ static void check_env_contract(const pm_context *ctx, pm_doctor_report *r, cJSON
 {
     char detail[4096];
     pm_format(detail, sizeof(detail),
-              "CFW_NAME=Leaf\nDEVICE_NAME=Miniloong Pocket 1\nDEVICE_CPU=rk3566\n"
+              "CFW_NAME=Leaf\nCFW_VERSION=<Leaf release manifest or manager version>\n"
+              "DEVICE_NAME=Miniloong Pocket 1\nDEVICE_CPU=RK3566\n"
               "DEVICE_ARCH=aarch64\nDEVICE_RAM=1\nDISPLAY_WIDTH=960\nDISPLAY_HEIGHT=720\n"
+              "PM_CAN_MOUNT=<Y only after %s exists>\nTASKSET=<taskset 0xF only after execution probe>\n"
               "SDCARD_PATH=%s\nUSERDATA_PATH=%s\nPORTMASTER_CONTROLFOLDER=%s\n"
               "HM_PORTS_DIR=%s\nHM_SCRIPTS_DIR=%s",
+              PM_MOUNT_PROBE_MARKER,
               ctx->sdcard_path,
               ctx->userdata_path,
               ctx->portmaster_dir,
@@ -1179,6 +1194,159 @@ static void check_env_contract(const pm_context *ctx, pm_doctor_report *r, cJSON
               ctx->ports_dir);
     add_check(r, checks, "env.manager_contract", PM_CHECK_INFO,
               "required", "Expected managed launch environment", detail);
+}
+
+static cJSON *load_launch_snapshot(const pm_context *ctx,
+                                   const char *mode,
+                                   char *path,
+                                   size_t path_size)
+{
+    if (pm_env_snapshot_path(ctx, mode, "json", path, path_size) != 0 ||
+        !pm_file_exists(path)) {
+        return NULL;
+    }
+
+    char read_err[128];
+    char *text = pm_read_text_file(path, 1024 * 1024, read_err, sizeof(read_err));
+    if (!text) {
+        return NULL;
+    }
+    cJSON *root = cJSON_Parse(text);
+    free(text);
+    return root;
+}
+
+static bool launch_snapshot_value(cJSON *root, const char *name, const char **value)
+{
+    if (value) {
+        *value = "";
+    }
+    if (!root || !name) {
+        return false;
+    }
+
+    cJSON *entries = cJSON_GetObjectItemCaseSensitive(root, "entries");
+    if (!cJSON_IsArray(entries)) {
+        return false;
+    }
+
+    cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, entries) {
+        cJSON *entry_name = cJSON_GetObjectItemCaseSensitive(entry, "name");
+        if (!cJSON_IsString(entry_name) || !entry_name->valuestring ||
+            strcmp(entry_name->valuestring, name) != 0) {
+            continue;
+        }
+        cJSON *entry_value = cJSON_GetObjectItemCaseSensitive(entry, "value");
+        if (cJSON_IsString(entry_value) && entry_value->valuestring) {
+            if (value) {
+                *value = entry_value->valuestring;
+            }
+            return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+static void check_env_launch_parity(const pm_context *ctx, pm_doctor_report *r, cJSON *checks)
+{
+    char gui_path[PM_PATH_MAX] = "";
+    char port_path[PM_PATH_MAX] = "";
+    cJSON *gui = load_launch_snapshot(ctx, "gui", gui_path, sizeof(gui_path));
+    cJSON *port = load_launch_snapshot(ctx, "port", port_path, sizeof(port_path));
+
+    if (!gui || !port) {
+        char detail[PM_PATH_MAX * 2 + 256];
+        pm_format(detail, sizeof(detail),
+                  "gui=%s (%s)\nport=%s (%s)\n"
+                  "Generate GUI evidence by launching PortMaster. Generate port evidence with: "
+                  "LEAF_PM_ENV_PROBE=1 <port-script>.sh",
+                  gui_path[0] ? gui_path : "(path unavailable)",
+                  gui ? "present" : "missing",
+                  port_path[0] ? port_path : "(path unavailable)",
+                  port ? "present" : "missing");
+        add_check(r, checks, "env.launch_parity", PM_CHECK_INFO,
+                  "required",
+                  "GUI and port launch snapshots are not both available yet",
+                  detail);
+        cJSON_Delete(gui);
+        cJSON_Delete(port);
+        return;
+    }
+
+    const char *vars[] = {
+        "PLATFORM",
+        "SDCARD_PATH",
+        "USERDATA_PATH",
+        "ROMS_PATH",
+        "IMAGES_PATH",
+        "HOME",
+        "XDG_DATA_HOME",
+        "HM_PORTS_DIR",
+        "HM_SCRIPTS_DIR",
+        "PORTMASTER_CONTROLFOLDER",
+        "CFW_NAME",
+        "CFW_VERSION",
+        "DEVICE_NAME",
+        "DEVICE_CPU",
+        "DEVICE_ARCH",
+        "DEVICE_RAM",
+        "DISPLAY_WIDTH",
+        "DISPLAY_HEIGHT",
+        "ESUDO",
+        "GPTOKEYB",
+        "GPTOKEYB2",
+        "directory",
+        "PM_CAN_MOUNT",
+        "TASKSET",
+        "LEAF_PM_RETROARCH_BIN",
+        "LEAF_PM_RETROARCH_CONFIG",
+        NULL,
+    };
+
+    char detail[8192] = "";
+    int mismatches = 0;
+    for (size_t i = 0; vars[i]; i++) {
+        const char *gui_value = "";
+        const char *port_value = "";
+        bool has_gui = launch_snapshot_value(gui, vars[i], &gui_value);
+        bool has_port = launch_snapshot_value(port, vars[i], &port_value);
+        if (has_gui && has_port && strcmp(gui_value, port_value) == 0) {
+            continue;
+        }
+        mismatches++;
+        if (mismatches <= 32) {
+            appendf(detail, sizeof(detail),
+                    "%s: gui=%s%s%s port=%s%s%s\n",
+                    vars[i],
+                    has_gui ? "'" : "(missing",
+                    has_gui ? gui_value : "",
+                    has_gui ? "'" : ")",
+                    has_port ? "'" : "(missing",
+                    has_port ? port_value : "",
+                    has_port ? "'" : ")");
+        }
+    }
+
+    if (mismatches == 0) {
+        pm_format(detail, sizeof(detail),
+                  "gui=%s\nport=%s\nCompared spec and Leaf path/runtime variables; "
+                  "controller layout exports are intentionally mode-specific.",
+                  gui_path,
+                  port_path);
+    } else if (mismatches > 32) {
+        appendf(detail, sizeof(detail), "...and %d more mismatches\n", mismatches - 32);
+    }
+
+    add_check(r, checks, "env.launch_parity",
+              mismatches == 0 ? PM_CHECK_OK : PM_CHECK_WARN,
+              "required",
+              mismatches == 0 ? "GUI and port launch snapshots agree"
+                              : "GUI and port launch snapshots differ",
+              detail);
+    cJSON_Delete(gui);
+    cJSON_Delete(port);
 }
 
 static void check_no_stock_os_writes(const pm_context *ctx, pm_doctor_report *r, cJSON *checks)
@@ -1288,6 +1456,7 @@ void pm_doctor_run_spec(const pm_context *ctx, pm_doctor_report *report, bool js
     check_graphics_audio(ctx, report, checks);
     check_root_drift(ctx, report, checks);
     check_env_contract(ctx, report, checks);
+    check_env_launch_parity(ctx, report, checks);
 
     if (json && root) {
         finish_json(report, root);

@@ -8,11 +8,13 @@
 #include "pm_controller_layout.h"
 #include "pm_doctor.h"
 #include "pm_downloader.h"
+#include "pm_env_snapshot.h"
 #include "pm_installer.h"
 #include "pm_launcher.h"
 #include "pm_update.h"
 #include "pm_ui.h"
 
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -69,6 +71,30 @@ int main(int argc, char **argv)
             return 1;
         }
         puts(pm_controller_layout_slug(layout));
+        return 0;
+    }
+
+    if (argc > 1 &&
+        (strcmp(argv[1], "--launch-env-json") == 0 ||
+         strcmp(argv[1], "--launch-env-text") == 0)) {
+        const char *mode = argc > 2 ? argv[2] : "latest";
+        const char *ext = strstr(argv[1], "json") ? "json" : "txt";
+        char path[PM_PATH_MAX];
+        if (pm_env_snapshot_path(&ctx, mode, ext, path, sizeof(path)) != 0) {
+            fprintf(stderr, "snapshot path too long\n");
+            return 1;
+        }
+        char read_err[128];
+        char *text = pm_read_text_file(path, 1024 * 1024, read_err, sizeof(read_err));
+        if (!text) {
+            fprintf(stderr, "snapshot not available: %s\n", read_err[0] ? read_err : path);
+            return 1;
+        }
+        fputs(text, stdout);
+        if (text[0] && text[strlen(text) - 1] != '\n') {
+            fputc('\n', stdout);
+        }
+        free(text);
         return 0;
     }
 

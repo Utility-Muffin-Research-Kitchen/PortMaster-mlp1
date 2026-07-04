@@ -2,8 +2,11 @@
 
 #include "pm_artwork.h"
 #include "pm_controller_layout.h"
+#include "pm_env_snapshot.h"
 #include "pm_installer.h"
 #include "pm_util.h"
+
+#include "cJSON.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -36,6 +39,86 @@ static bool pm_env_truthy(const char *name)
            strcmp(value, "0") != 0 &&
            strcmp(value, "false") != 0 &&
            strcmp(value, "no") != 0;
+}
+
+static bool pm_valid_cfw_version(const char *value)
+{
+    return value && value[0] && strcmp(value, "Unknown") != 0;
+}
+
+static bool pm_json_version_from_file(const char *path, char *out, size_t out_size)
+{
+    if (!path || !pm_file_exists(path)) {
+        return false;
+    }
+
+    char read_err[128];
+    char *text = pm_read_text_file(path, 256 * 1024, read_err, sizeof(read_err));
+    if (!text) {
+        return false;
+    }
+
+    cJSON *root = cJSON_Parse(text);
+    free(text);
+    if (!root) {
+        return false;
+    }
+
+    const char *keys[] = { "version", "release_id", NULL };
+    bool ok = false;
+    for (size_t i = 0; keys[i]; i++) {
+        cJSON *item = cJSON_GetObjectItemCaseSensitive(root, keys[i]);
+        if (cJSON_IsString(item) && pm_valid_cfw_version(item->valuestring) &&
+            pm_copy(out, out_size, item->valuestring) == 0) {
+            ok = true;
+            break;
+        }
+    }
+
+    cJSON_Delete(root);
+    return ok;
+}
+
+static void pm_resolve_cfw_version(pm_context *ctx, char *out, size_t out_size)
+{
+    const char *env_version = getenv("CFW_VERSION");
+    if (pm_valid_cfw_version(env_version) &&
+        pm_copy(out, out_size, env_version) == 0) {
+        return;
+    }
+
+    char path[PM_PATH_MAX];
+    if (ctx &&
+        pm_format(path, sizeof(path), "%s/.system/leaf/platforms/%s/release.json",
+                  ctx->sdcard_path, ctx->platform) == 0 &&
+        pm_json_version_from_file(path, out, out_size)) {
+        return;
+    }
+    if (ctx &&
+        pm_format(path, sizeof(path), "%s/.system/leaf/platforms/%s/manifest.json",
+                  ctx->sdcard_path, ctx->platform) == 0 &&
+        pm_json_version_from_file(path, out, out_size)) {
+        return;
+    }
+    if (ctx &&
+        pm_format(path, sizeof(path), "%s/.umrk/%s/release.json",
+                  ctx->sdcard_path, ctx->platform) == 0 &&
+        pm_json_version_from_file(path, out, out_size)) {
+        return;
+    }
+
+    (void)pm_copy(out, out_size, PM_VERSION);
+}
+
+static bool pm_taskset_available(void)
+{
+    char *argv[] = {
+        "sh",
+        "-c",
+        "command -v taskset >/dev/null 2>&1 && taskset 0xF true",
+        NULL,
+    };
+    return pm_run_argv(argv, NULL, 0) == 0;
 }
 
 bool pm_portmaster_is_installed(const pm_context *ctx)
@@ -489,12 +572,27 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     char armhf_root[PM_PATH_MAX];
     bool has_armhf = pm_armhf_compat_available(ctx, armhf_root, sizeof(armhf_root));
     const char *controller_config = pm_controller_layout_gui_sdl_config();
+    char cfw_version[128];
+    pm_resolve_cfw_version(ctx, cfw_version, sizeof(cfw_version));
+    const char *pm_can_mount = pm_file_exists("/tmp/leaf-pm-mount-probe-ok") ? "Y" : "N";
+    char taskset_value[32];
+    if (pm_taskset_available()) {
+        pm_copy(taskset_value, sizeof(taskset_value), "taskset 0xF");
+    } else {
+        pm_copy(taskset_value, sizeof(taskset_value), "");
+    }
     bool allow_upstream_self_update = pm_env_truthy("LEAF_PM_ALLOW_UPSTREAM_SELF_UPDATE");
     if (allow_upstream_self_update) {
         fprintf(stderr, "PortMaster warning: upstream GUI self-update is enabled by developer override\n");
     }
 
     pm_env_override env[] = {
+        { "PLATFORM", ctx->platform },
+        { "SDCARD_PATH", ctx->sdcard_path },
+        { "USERDATA_PATH", ctx->userdata_path },
+        { "LOGS_PATH", ctx->logs_path },
+        { "ROMS_PATH", ctx->roms_path },
+        { "IMAGES_PATH", ctx->images_path },
         { "HOME", ctx->data_dir },
         { "PATH", path_env },
         { "LD_LIBRARY_PATH", ld_env },
@@ -511,7 +609,9 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "PORTMASTER_CONTROLFOLDER", ctx->portmaster_dir },
         { "PORTMASTER_LEAF_DEVICE_INFO", "1" },
         { "LEAF_PM_DISABLE_SELF_UPDATE", allow_upstream_self_update ? "0" : "1" },
+        { "LEAF_PM_LAUNCH_MODE", "gui" },
         { "CFW_NAME", "Leaf" },
+        { "CFW_VERSION", cfw_version },
         { "DEVICE_NAME", "Miniloong Pocket 1" },
         { "DEVICE_CPU", "RK3566" },
         { "DEVICE_ARCH", "aarch64" },
@@ -528,12 +628,70 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "ASPECT_Y", "3" },
         { "ANALOG_STICKS", "2" },
         { "ANALOGSTICKS", "2" },
+        { "PM_CAN_MOUNT", pm_can_mount },
+        { "TASKSET", taskset_value },
         { "PORTMASTER_LEAF_PORT_LAYOUT_SCOPE", "gui" },
         { "PORTMASTER_LEAF_CONTROLLER_LAYOUT", "gui" },
         { "SDL_GAMECONTROLLERCONFIG", controller_config },
         { "sdl_controllerconfig", controller_config },
         { NULL, NULL },
     };
+
+    pm_env_snapshot_entry snapshot[] = {
+        { "PLATFORM", ctx->platform, "leaf-session-env" },
+        { "SDCARD_PATH", ctx->sdcard_path, "leaf-session-env" },
+        { "USERDATA_PATH", ctx->userdata_path, "leaf-session-env" },
+        { "LOGS_PATH", ctx->logs_path, "leaf-session-env" },
+        { "ROMS_PATH", ctx->roms_path, "leaf-session-env" },
+        { "IMAGES_PATH", ctx->images_path, "leaf-session-env" },
+        { "HOME", ctx->data_dir, "manager" },
+        { "XDG_DATA_HOME", ctx->data_dir, "manager" },
+        { "HM_TOOLS_DIR", ctx->data_dir, "manager" },
+        { "HM_PORTS_DIR", ctx->ports_dir, "manager" },
+        { "HM_SCRIPTS_DIR", ctx->ports_dir, "manager" },
+        { "PORTMASTER_CONTROLFOLDER", ctx->portmaster_dir, "manager" },
+        { "PATH", path_env, "shim" },
+        { "LD_LIBRARY_PATH", ld_env, "shim" },
+        { "PYTHONHOME", !uses_system_python ? ctx->runtime_dir : "", "shim" },
+        { "PYTHONPATH", python_path, "shim" },
+        { "LEAF_PM_TOOLS_DIR", has_tools_bin ? tools_bin : "", "shim" },
+        { "LEAF_PM_AARCH64_COMPAT_LIB_DIR", has_compat_libs ? compat_lib_dir : "", "shim" },
+        { "LEAF_PM_NATIVE_COMPAT_LIB_DIR", has_compat_libs ? compat_lib_dir : "", "shim" },
+        { "LEAF_PM_DISABLE_SELF_UPDATE", allow_upstream_self_update ? "0" : "1", "manager" },
+        { "LEAF_PM_LAUNCH_MODE", "gui", "manager" },
+        { "CFW_NAME", "Leaf", "manager" },
+        { "CFW_VERSION", cfw_version, "manager" },
+        { "DEVICE_NAME", "Miniloong Pocket 1", "manager" },
+        { "DEVICE_CPU", "RK3566", "manager" },
+        { "DEVICE_ARCH", "aarch64", "manager" },
+        { "DEVICE_RAM", "1", "manager" },
+        { "DEVICE_HAS_ARMHF", has_armhf ? "Y" : "N", "manager" },
+        { "DEVICE_HAS_AARCH64", "Y", "manager" },
+        { "LEAF_PM_ARMHF_ROOT", has_armhf ? armhf_root : "", "shim" },
+        { "DISPLAY_WIDTH", "960", "manager" },
+        { "DISPLAY_HEIGHT", "720", "manager" },
+        { "DISPLAY_ORIENTATION", "0", "manager" },
+        { "ASPECT_X", "4", "manager" },
+        { "ASPECT_Y", "3", "manager" },
+        { "ANALOG_STICKS", "2", "manager" },
+        { "ANALOGSTICKS", "2", "manager" },
+        { "PM_CAN_MOUNT", pm_can_mount, "manager" },
+        { "TASKSET", taskset_value, "manager" },
+        { "ESUDO", pm_env("ESUDO", ""), "upstream-control" },
+        { "GPTOKEYB", pm_env("GPTOKEYB", ""), "upstream-control" },
+        { "GPTOKEYB2", pm_env("GPTOKEYB2", ""), "upstream-control" },
+        { "directory", pm_env("directory", ""), "upstream-control" },
+        { "PORTMASTER_LEAF_PORT_LAYOUT_SCOPE", "gui", "manager" },
+        { "PORTMASTER_LEAF_CONTROLLER_LAYOUT", "gui", "manager" },
+        { "SDL_GAMECONTROLLERCONFIG", controller_config, "manager" },
+        { "sdl_controllerconfig", controller_config, "manager" },
+        { NULL, NULL, NULL },
+    };
+    char snapshot_err[256];
+    if (pm_env_snapshot_write(ctx, "manager", snapshot,
+                              snapshot_err, sizeof(snapshot_err)) != 0) {
+        fprintf(stderr, "PortMaster env snapshot warning: %s\n", snapshot_err);
+    }
 
     char *argv[] = { "bash", "./PortMaster.sh", NULL };
     int rc = pm_run_argv_env_in_dir(ctx->portmaster_dir, argv, env, err, err_size);

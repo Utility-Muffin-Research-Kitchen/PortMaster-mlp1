@@ -53,6 +53,12 @@ for patch in "${patches[@]}"; do
         continue
       fi
       ;;
+    0008-leaf-quote-esudo-check.patch)
+      if grep -q 'ESUDO:-' "$TREE/control.txt"; then
+        echo "already applied"
+        continue
+      fi
+      ;;
   esac
   (cd "$TREE" && patch --dry-run -p0 -i "$patch" >/dev/null)
 done
