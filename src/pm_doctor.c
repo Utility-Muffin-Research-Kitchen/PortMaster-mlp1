@@ -404,13 +404,20 @@ static void check_tool(const pm_tool_spec *spec, pm_doctor_report *r, cJSON *che
 {
     char path[PM_PATH_MAX];
     if (!find_command(spec->name, path, sizeof(path))) {
-        pm_check_status status = strcmp(spec->severity, "required") == 0
-                                     ? PM_CHECK_FAIL
-                                     : PM_CHECK_WARN;
+        pm_check_status status;
+        if (strcmp(spec->severity, "required") == 0) {
+            status = PM_CHECK_FAIL;
+        } else if (strcmp(spec->severity, "nice_to_have") == 0) {
+            status = PM_CHECK_INFO;
+        } else {
+            status = PM_CHECK_WARN;
+        }
         char id[96];
         pm_format(id, sizeof(id), "tool.%s", spec->name);
         add_check(r, checks, id, status, spec->severity,
-                  "Tool missing from effective PATH", spec->name);
+                  status == PM_CHECK_INFO ? "Optional developer tool missing from effective PATH"
+                                          : "Tool missing from effective PATH",
+                  spec->name);
         return;
     }
 
@@ -486,6 +493,7 @@ static void check_tools(const pm_context *ctx, pm_doctor_report *r, cJSON *check
         { "rsync", "recommended", false },
         { "7z", "recommended", false },
         { "7za", "recommended", false },
+        { "innoextract", "recommended", false },
         { "getconf", "nice_to_have", false },
         { "ldd", "nice_to_have", false },
         { "readelf", "nice_to_have", false },

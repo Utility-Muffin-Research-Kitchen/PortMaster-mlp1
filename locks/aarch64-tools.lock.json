@@ -216,6 +216,19 @@
       "source": "leaf-portmaster-basic-file-shim",
       "license": "MIT",
       "installed_path": "compat/tools/aarch64/bin/file"
+    },
+    "dos2unix": {
+      "name": "dos2unix",
+      "source": "leaf-portmaster-crlf-conversion-shim",
+      "license": "MIT",
+      "installed_path": "compat/tools/aarch64/bin/dos2unix"
+    },
+    "innoextract": {
+      "name": "innoextract",
+      "source": "leaf-portmaster-controlfolder-shim",
+      "target": "PortMaster/innoextract.aarch64",
+      "license": "MIT",
+      "installed_path": "compat/tools/aarch64/bin/innoextract"
     }
   }
 }

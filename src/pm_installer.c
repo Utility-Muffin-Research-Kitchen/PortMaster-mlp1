@@ -581,9 +581,11 @@ static int write_manifest(const pm_context *ctx, const pm_portmaster_source *sou
             "      \"xargs\": \"compat/tools/aarch64/bin/xargs\",\n"
             "      \"grep\": \"compat/tools/aarch64/bin/grep\",\n"
             "      \"dialog\": \"compat/tools/aarch64/bin/dialog\",\n"
+            "      \"dos2unix\": \"compat/tools/aarch64/bin/dos2unix\",\n"
             "      \"xdelta3\": \"compat/tools/aarch64/bin/xdelta3\",\n"
             "      \"7z\": \"compat/tools/aarch64/bin/7z\",\n"
             "      \"7za\": \"compat/tools/aarch64/bin/7za\",\n"
+            "      \"innoextract\": \"compat/tools/aarch64/bin/innoextract\",\n"
             "      \"getconf\": \"compat/tools/aarch64/bin/getconf\",\n"
             "      \"ldd\": \"compat/tools/aarch64/bin/ldd\",\n"
             "      \"readelf\": \"compat/tools/aarch64/bin/readelf\",\n"
@@ -932,8 +934,8 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
 	        "manifest.json"
 	    };
     const char *tools_bin_files[] = {
-        "rsync", "zip", "sed", "find", "xargs", "grep", "dialog", "xdelta3",
-        "7z", "7za", "getconf", "ldd", "readelf", "file", "strace",
+        "rsync", "zip", "sed", "find", "xargs", "grep", "dialog", "dos2unix", "xdelta3",
+        "7z", "7za", "innoextract", "getconf", "ldd", "readelf", "file", "strace",
         "sudo", "doas", "systemctl"
     };
     const char *tools_meta_files[] = { "manifest.json" };

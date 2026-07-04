@@ -382,7 +382,83 @@ case "${1:-}" in
 esac
 EOF
 
-chmod 755 "$OUT_DIR/bin/sudo" "$OUT_DIR/bin/doas" "$OUT_DIR/bin/systemctl"
+cat >"$OUT_DIR/bin/dos2unix" <<'EOF'
+#!/bin/sh
+# Leaf PortMaster app-local dos2unix shim. Covers the common PortMaster patch
+# flow: convert CRLF text files in place or with the dos2unix -n SRC DST form.
+
+convert_to() {
+  src="$1"
+  dst="$2"
+  if [ ! -f "$src" ]; then
+    echo "dos2unix: $src: No such file" >&2
+    return 1
+  fi
+  tmp="${dst}.leaf-dos2unix.$$"
+  trap 'rm -f "$tmp"' EXIT HUP INT TERM
+  cp -p "$src" "$tmp" 2>/dev/null || :
+  tr -d '\r' <"$src" >"$tmp" || return 1
+  mv "$tmp" "$dst"
+}
+
+oldfile=1
+status=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --version|-V)
+      echo "dos2unix leaf-portmaster-shim 1"
+      exit 0
+      ;;
+    --help|-h)
+      echo "usage: dos2unix [options] FILE... | dos2unix -n SRC DST"
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -n|--newfile)
+      oldfile=0
+      shift
+      break
+      ;;
+    -o|--oldfile|-q|--quiet|-k|--keepdate|-f|--force|-s|--safe)
+      shift
+      ;;
+    -c|--convmode)
+      shift
+      [ "$#" -gt 0 ] && shift
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [ "$oldfile" -eq 0 ]; then
+  if [ "$#" -lt 2 ]; then
+    echo "dos2unix: -n requires SRC and DST" >&2
+    exit 64
+  fi
+  convert_to "$1" "$2"
+  exit $?
+fi
+
+if [ "$#" -eq 0 ]; then
+  echo "dos2unix: no files given" >&2
+  exit 64
+fi
+
+for path in "$@"; do
+  convert_to "$path" "$path" || status=1
+done
+exit "$status"
+EOF
+
+chmod 755 "$OUT_DIR/bin/sudo" "$OUT_DIR/bin/doas" "$OUT_DIR/bin/systemctl" "$OUT_DIR/bin/dos2unix"
 
 cat >"$OUT_DIR/bin/xdelta3" <<'EOF'
 #!/bin/sh
@@ -433,7 +509,31 @@ exit 127
 EOF
 cp -f "$OUT_DIR/bin/7z" "$OUT_DIR/bin/7za"
 
-chmod 755 "$OUT_DIR/bin/xdelta3" "$OUT_DIR/bin/7z" "$OUT_DIR/bin/7za"
+cat >"$OUT_DIR/bin/innoextract" <<'EOF'
+#!/bin/sh
+# Leaf PortMaster app-local innoextract shim. Upstream PortMaster ships the real
+# aarch64 innoextract binary in its SD-local control folder.
+control="${PORTMASTER_CONTROLFOLDER:-}"
+if [ -z "$control" ] && [ -n "${LEAF_PM_DATA_DIR:-}" ]; then
+  control="$LEAF_PM_DATA_DIR/PortMaster"
+fi
+if [ -z "$control" ] && [ -n "${PORTMASTER_MLP1_DATA_DIR:-}" ]; then
+  control="$PORTMASTER_MLP1_DATA_DIR/PortMaster"
+fi
+if [ -z "$control" ] && [ -n "${SDCARD_PATH:-}" ]; then
+  control="${SDCARD_PATH%/}/.userdata/${PLATFORM:-mlp1}/portmaster/PortMaster"
+fi
+
+tool="$control/innoextract.aarch64"
+if [ -n "$control" ] && [ -x "$tool" ]; then
+  exec "$tool" "$@"
+fi
+
+echo "leaf-innoextract-shim: PortMaster innoextract.aarch64 binary not found; install PortMaster first" >&2
+exit 127
+EOF
+
+chmod 755 "$OUT_DIR/bin/xdelta3" "$OUT_DIR/bin/7z" "$OUT_DIR/bin/7za" "$OUT_DIR/bin/innoextract"
 
 for tool_path in \
   "$TARGET_SYSROOT/usr/bin/getconf" \
@@ -607,10 +707,14 @@ doas_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/doas" | awk '{print $1}')"
 doas_shim_size="$(wc -c <"$OUT_DIR/bin/doas" | tr -d ' ')"
 systemctl_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/systemctl" | awk '{print $1}')"
 systemctl_shim_size="$(wc -c <"$OUT_DIR/bin/systemctl" | tr -d ' ')"
+dos2unix_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/dos2unix" | awk '{print $1}')"
+dos2unix_shim_size="$(wc -c <"$OUT_DIR/bin/dos2unix" | tr -d ' ')"
 xdelta3_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/xdelta3" | awk '{print $1}')"
 xdelta3_shim_size="$(wc -c <"$OUT_DIR/bin/xdelta3" | tr -d ' ')"
 seven_zip_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/7z" | awk '{print $1}')"
 seven_zip_shim_size="$(wc -c <"$OUT_DIR/bin/7z" | tr -d ' ')"
+innoextract_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/innoextract" | awk '{print $1}')"
+innoextract_shim_size="$(wc -c <"$OUT_DIR/bin/innoextract" | tr -d ' ')"
 getconf_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/getconf" | awk '{print $1}')"
 getconf_binary_size="$(wc -c <"$OUT_DIR/bin/getconf" | tr -d ' ')"
 ldd_script_sha256="$(shasum -a 256 "$OUT_DIR/bin/ldd" | awk '{print $1}')"
@@ -815,6 +919,18 @@ cat >"$OUT_DIR/manifest.json" <<EOF
       }
     },
     {
+      "name": "dos2unix",
+      "version": "leaf-shim-1",
+      "path": "bin/dos2unix",
+      "size": $dos2unix_shim_size,
+      "sha256": "$dos2unix_shim_sha256",
+      "kind": "app-local-crlf-conversion-shim",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    },
+    {
       "name": "getconf",
       "version": "glibc-toolchain-sysroot",
       "path": "bin/getconf",
@@ -902,6 +1018,19 @@ cat >"$OUT_DIR/manifest.json" <<EOF
       "sha256": "$seven_zip_shim_sha256",
       "kind": "app-local-portmaster-binary-shim",
       "target": "PortMaster/7zzs.aarch64",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    },
+    {
+      "name": "innoextract",
+      "version": "portmaster-controlfolder-shim-1",
+      "path": "bin/innoextract",
+      "size": $innoextract_shim_size,
+      "sha256": "$innoextract_shim_sha256",
+      "kind": "app-local-portmaster-binary-shim",
+      "target": "PortMaster/innoextract.aarch64",
       "license": {
         "spdx": "MIT",
         "path": "LICENSE"

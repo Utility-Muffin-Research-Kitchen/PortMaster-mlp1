@@ -552,7 +552,16 @@ else:
     add("fixture", "7z-roundtrip", "synthetic", "skipped", "7z missing")
 
 if innoextract_ok:
-    add("fixture", "innoextract", "presence", "manual", "innoextract present; installer fixture not bundled")
+    run_remote_fixture(
+        "innoextract-version",
+        " && ".join(
+            [
+                f"PATH={sh_quote(tools_bin)}:$PATH",
+                "innoextract --version",
+            ]
+        ),
+        "innoextract executes from app-local PATH; installer extraction fixture not bundled",
+    )
 else:
     add("fixture", "innoextract", "presence", "skipped", "innoextract missing")
 
