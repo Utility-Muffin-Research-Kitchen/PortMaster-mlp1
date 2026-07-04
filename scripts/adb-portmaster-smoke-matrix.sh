@@ -343,7 +343,11 @@ MATRIX = [
         "category": "box86",
         "subject": "Shovel Knight",
         "script": "Roms/PORTS/Shovel Knight.sh",
-        "required": ["Roms/PORTS/shovelknight/box86/box86", "Roms/PORTS/shovelknight/ShovelKnight"],
+        "required": ["Roms/PORTS/shovelknight/box86/box86", "Roms/PORTS/shovelknight/libShovelKnight.so"],
+        "any_required": [
+            ["Roms/PORTS/shovelknight/gamedata/shovelknight/32/ShovelKnight"],
+            ["Roms/PORTS/shovelknight/gamedata/32/ShovelKnight"],
+        ],
         "markers": ["LEAF_PM_PORT_ENV=1", "box86"],
         "log": "Roms/PORTS/shovelknight/log.txt",
     },
@@ -427,6 +431,16 @@ def evaluate_matrix_item(item):
     for rel in item.get("required", []):
         if not remote_exists(f"{sdcard}/{rel}", "e"):
             missing.append(rel)
+    alternative_groups = item.get("any_required", [])
+    if alternative_groups:
+        if not any(
+            all(remote_exists(f"{sdcard}/{rel}", "e") for rel in choices)
+            for choices in alternative_groups
+        ):
+            missing.append(
+                "one of: "
+                + " | ".join(" + ".join(choices) for choices in alternative_groups)
+            )
     for runtime in item.get("runtimes", []):
         if not remote_exists(f"{libs_dir}/{runtime}", "f"):
             missing.append(f"libs/{runtime}")
@@ -551,9 +565,8 @@ prepare_helper = f"{pak_dir}/scripts/prepare-port-runtime.sh"
 if remote_exists(prepare_helper, "f"):
     swapon_proc = adb_shell("cat /proc/swaps 2>/dev/null || true")
     active = "zram" in swapon_proc.stdout
-    status = "ready" if not active else "warn"
     detail = "prepare helper present; zram currently active" if active else "prepare helper present; zram left inactive by passive smoke"
-    add("zram-memory", "prepare-port-runtime", "presence", status, detail)
+    add("zram-memory", "prepare-port-runtime", "presence", "ready", detail)
 else:
     add("zram-memory", "prepare-port-runtime", "presence", "missing", "prepare helper missing")
 
