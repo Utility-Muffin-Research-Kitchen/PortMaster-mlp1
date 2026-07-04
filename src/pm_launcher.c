@@ -439,6 +439,11 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     bool has_tools_bin = pm_join3(tools_bin, sizeof(tools_bin),
                                   ctx->data_dir, "compat/tools", "aarch64/bin") == 0 &&
                          pm_dir_exists(tools_bin);
+    char compat_lib_dir[PM_PATH_MAX];
+    bool has_compat_libs = pm_join3(compat_lib_dir, sizeof(compat_lib_dir),
+                                    ctx->data_dir, "compat/libs", "aarch64") == 0 &&
+                           pm_dir_exists(compat_lib_dir);
+    bool enable_compat_libs = has_compat_libs && pm_env_truthy("LEAF_PM_ENABLE_AARCH64_COMPAT_LIBS");
     char path_env[PM_PATH_MAX * 2];
     char ld_env[PM_PATH_MAX * 2];
     char python_path[PM_PATH_MAX * 2];
@@ -448,8 +453,13 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
                         ctx->runtime_dir, tools_bin, base_path)
             : pm_format(path_env, sizeof(path_env), "%s/bin:%s",
                         ctx->runtime_dir, base_path);
+        int ld_rc = enable_compat_libs
+            ? pm_format(ld_env, sizeof(ld_env), "%s/lib:%s:%s",
+                        ctx->runtime_dir, compat_lib_dir, base_ld)
+            : pm_format(ld_env, sizeof(ld_env), "%s/lib:%s",
+                        ctx->runtime_dir, base_ld);
         if (path_rc != 0 ||
-            pm_format(ld_env, sizeof(ld_env), "%s/lib:%s", ctx->runtime_dir, base_ld) != 0 ||
+            ld_rc != 0 ||
             pm_format(python_path, sizeof(python_path),
                       "%s/lib/python3.10:%s/lib/python3.10/site-packages:%s/lib",
                       ctx->runtime_dir, ctx->runtime_dir, ctx->runtime_dir) != 0) {
@@ -465,7 +475,14 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         } else {
             pm_copy(path_env, sizeof(path_env), base_path);
         }
-        pm_copy(ld_env, sizeof(ld_env), base_ld);
+        if (enable_compat_libs) {
+            if (pm_format(ld_env, sizeof(ld_env), "%s:%s", compat_lib_dir, base_ld) != 0) {
+                snprintf(err, err_size, "runtime environment path too long");
+                return -1;
+            }
+        } else {
+            pm_copy(ld_env, sizeof(ld_env), base_ld);
+        }
         pm_copy(python_path, sizeof(python_path), "");
     }
 
@@ -487,6 +504,8 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         { "XDG_DATA_HOME", ctx->data_dir },
         { "HM_TOOLS_DIR", ctx->data_dir },
         { "LEAF_PM_TOOLS_DIR", has_tools_bin ? tools_bin : "" },
+        { "LEAF_PM_AARCH64_COMPAT_LIB_DIR", has_compat_libs ? compat_lib_dir : "" },
+        { "LEAF_PM_NATIVE_COMPAT_LIB_DIR", has_compat_libs ? compat_lib_dir : "" },
         { "HM_PORTS_DIR", ctx->ports_dir },
         { "HM_SCRIPTS_DIR", ctx->ports_dir },
         { "PORTMASTER_CONTROLFOLDER", ctx->portmaster_dir },

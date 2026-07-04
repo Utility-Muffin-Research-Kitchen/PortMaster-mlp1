@@ -112,6 +112,20 @@ if [ -d "\$LEAF_PM_TOOLS_DIR" ]; then
   esac
 fi
 
+export LEAF_PM_AARCH64_COMPAT_LIB_DIR="\${LEAF_PM_AARCH64_COMPAT_LIB_DIR:-\$LEAF_PM_DATA_DIR/compat/libs/aarch64}"
+export LEAF_PM_NATIVE_COMPAT_LIB_DIR="\${LEAF_PM_NATIVE_COMPAT_LIB_DIR:-\$LEAF_PM_AARCH64_COMPAT_LIB_DIR}"
+leaf_pm_enable_aarch64_compat_libs() {
+  [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
+  [ -d "\${LEAF_PM_AARCH64_COMPAT_LIB_DIR:-}" ] || return 0
+  case ":\${LD_LIBRARY_PATH:-}:" in
+    *:"\$LEAF_PM_AARCH64_COMPAT_LIB_DIR":*) ;;
+    *) export LD_LIBRARY_PATH="\$LEAF_PM_AARCH64_COMPAT_LIB_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
+  esac
+}
+case "\${LEAF_PM_ENABLE_AARCH64_COMPAT_LIBS:-0}" in
+  1|true|yes|TRUE|YES) leaf_pm_enable_aarch64_compat_libs ;;
+esac
+
 export LEAF_PM_EGL_SHIM_DIR="\${LEAF_PM_EGL_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/egl/aarch64}"
 export LEAF_PM_MALI_AARCH64_DIR="\${LEAF_PM_MALI_AARCH64_DIR:-\$LEAF_PM_DATA_DIR/compat/mali/aarch64}"
 leaf_pm_prepare_godot_runtime_env() {

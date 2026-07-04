@@ -570,9 +570,10 @@ static int write_manifest(const pm_context *ctx, const pm_portmaster_source *sou
             "  },\n"
             "  \"runtimes\": {},\n"
             "  \"compat\": {\n"
-            "    \"egl_gles_shim\": \"compat/egl/aarch64/libEGL.so.1\",\n"
-            "    \"aarch64_sdl2_fullscreen_shim\": \"compat/sdl2/aarch64/leaf-sdl2-fullscreen.so\",\n"
-            "    \"native_tools\": {\n"
+	            "    \"egl_gles_shim\": \"compat/egl/aarch64/libEGL.so.1\",\n"
+	            "    \"aarch64_sdl2_fullscreen_shim\": \"compat/sdl2/aarch64/leaf-sdl2-fullscreen.so\",\n"
+	            "    \"aarch64_compat_libs\": \"compat/libs/aarch64\",\n"
+	            "    \"native_tools\": {\n"
             "      \"rsync\": \"compat/tools/aarch64/bin/rsync\",\n"
             "      \"zip\": \"compat/tools/aarch64/bin/zip\",\n"
             "      \"sed\": \"compat/tools/aarch64/bin/sed\",\n"
@@ -874,8 +875,62 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
 {
     const char *egl_files[] = { "libEGL.so.1", "libEGL.so" };
     const char *mali_files[] = { "libmali.so.1", "libmali-hook.so.1" };
-    const char *sdl2_files[] = { "leaf-sdl2-fullscreen.so", "manifest.json" };
-    const char *tools_bin_files[] = {
+	    const char *sdl2_files[] = { "leaf-sdl2-fullscreen.so", "manifest.json" };
+	    const char *aarch64_compat_lib_files[] = {
+	        "libFLAC.so.8",
+	        "libjpeg.so.8",
+	        "libavcodec.so.58",
+	        "libavformat.so.58",
+	        "libavutil.so.56",
+	        "libswresample.so.3",
+	        "libswscale.so.5",
+	        "libvpx.so.6",
+	        "libwebp.so.6",
+	        "libaom.so.0",
+	        "libdav1d.so.4",
+	        "libcodec2.so.0.9",
+	        "libx264.so.160",
+	        "libx265.so.192",
+	        "libwavpack.so.1",
+	        "libwebpmux.so.3",
+	        "librsvg-2.so.2",
+	        "libzvbi.so.0",
+	        "libsnappy.so.1",
+	        "libgsm.so.1",
+	        "libmp3lame.so.0",
+	        "libopenjp2.so.7",
+	        "libshine.so.3",
+	        "libtwolame.so.0",
+	        "libxvidcore.so.4",
+	        "libva.so.2",
+	        "libgme.so.0",
+	        "libopenmpt.so.0",
+	        "libchromaprint.so.1",
+	        "libbluray.so.2",
+	        "librabbitmq.so.4",
+	        "libsrt-gnutls.so.1.4",
+	        "libssh-gcrypt.so.4",
+	        "libzmq.so.5",
+	        "libva-drm.so.2",
+	        "libva-x11.so.2",
+	        "libvdpau.so.1",
+	        "libsoxr.so.0",
+	        "libnorm.so.1",
+	        "libpgm-5.3.so.0",
+	        "libsodium.so.23",
+	        "libudfread.so.0",
+	        "libXfixes.so.3",
+	        "liblzma.so.5",
+	        "libgcrypt.so.20",
+	        "libgpg-error.so.0",
+	        "libgssapi_krb5.so.2",
+	        "libkrb5.so.3",
+	        "libk5crypto.so.3",
+	        "libkrb5support.so.0",
+	        "libkeyutils.so.1",
+	        "manifest.json"
+	    };
+	    const char *tools_bin_files[] = {
         "rsync", "zip", "sed", "find", "xargs", "grep", "dialog", "xdelta3",
         "7z", "7za", "getconf", "ldd", "readelf", "file",
         "sudo", "doas", "systemctl"
@@ -906,8 +961,8 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
         return -1;
     }
 
-    if (copy_compat_asset_set(ctx,
-                              "compat/sdl2",
+	    if (copy_compat_asset_set(ctx,
+	                              "compat/sdl2",
                               "aarch64",
                               "compat/sdl2",
                               "aarch64",
@@ -915,11 +970,23 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               sizeof(sdl2_files) / sizeof(sdl2_files[0]),
                               err,
                               err_size) != 0) {
-        return -1;
-    }
+	        return -1;
+	    }
 
-    if (copy_compat_asset_set(ctx,
-                              "compat/tools",
+	    if (copy_compat_asset_set(ctx,
+	                              "compat/libs",
+	                              "aarch64",
+	                              "compat/libs",
+	                              "aarch64",
+	                              aarch64_compat_lib_files,
+	                              sizeof(aarch64_compat_lib_files) / sizeof(aarch64_compat_lib_files[0]),
+	                              err,
+	                              err_size) != 0) {
+	        return -1;
+	    }
+
+	    if (copy_compat_asset_set(ctx,
+	                              "compat/tools",
                               "aarch64/bin",
                               "compat/tools",
                               "aarch64/bin",

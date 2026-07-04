@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "product": "portmaster-mlp1-aarch64-compat-libs",
+  "architecture": "aarch64",
+  "install_dir": "$USERDATA_PATH/portmaster/compat/libs/aarch64",
+  "policy": {
+    "stock_os_emmc": "never write persistent files to stock OS/eMMC",
+    "delivery": "optional PortMaster.pak asset copied to SD userdata during install/repatch",
+    "runtime": "not globally loaded; ports opt in with LEAF_PM_ENABLE_AARCH64_COMPAT_LIBS=1 or leaf_pm_enable_aarch64_compat_libs"
+  },
+  "builder": {
+    "script": "scripts/build-aarch64-compat-libs-pack.sh",
+    "make_target": "build-aarch64-compat-libs",
+    "output": "build/mlp1/compat/libs/aarch64"
+  },
+  "sources": [
+    {
+      "distro": "Debian 11 bullseye",
+      "architecture": "arm64",
+      "repos": [
+        "http://deb.debian.org/debian bullseye main",
+        "http://deb.debian.org/debian bullseye-updates main",
+        "http://security.debian.org/debian-security bullseye-security main"
+      ],
+      "reason": "Provides the PortMaster CFW spec's older FFmpeg-era media SONAMEs such as libavcodec.so.58, libwebp.so.6, libx264.so.160, and libx265.so.192."
+    },
+    {
+      "distro": "Ubuntu 20.04 focal",
+      "package": "libjpeg-turbo8",
+      "version": "2.0.3-0ubuntu1.20.04.3",
+      "architecture": "arm64",
+      "url": "http://ports.ubuntu.com/ubuntu-ports/pool/main/libj/libjpeg-turbo/libjpeg-turbo8_2.0.3-0ubuntu1.20.04.3_arm64.deb",
+      "sha256": "9cd60a19f70399f4a828c7849bc7f18e53c059112100264e568486774eefcc17",
+      "reason": "Debian bullseye provides libjpeg.so.62; the checked older PortMaster set asks for libjpeg.so.8."
+    }
+  ],
+  "required_sonames": [
+    "libFLAC.so.8",
+    "libjpeg.so.8",
+    "libavcodec.so.58",
+    "libavformat.so.58",
+    "libavutil.so.56",
+    "libswresample.so.3",
+    "libswscale.so.5",
+    "libvpx.so.6",
+    "libwebp.so.6",
+    "libaom.so.0",
+    "libdav1d.so.4",
+    "libcodec2.so.0.9",
+    "libx264.so.160",
+    "libx265.so.192",
+    "libwavpack.so.1"
+  ],
+  "dependency_sonames": [
+    "libwebpmux.so.3",
+    "librsvg-2.so.2",
+    "libzvbi.so.0",
+    "libsnappy.so.1",
+    "libgsm.so.1",
+    "libmp3lame.so.0",
+    "libopenjp2.so.7",
+    "libshine.so.3",
+    "libtwolame.so.0",
+    "libxvidcore.so.4",
+    "libva.so.2",
+    "libgme.so.0",
+    "libopenmpt.so.0",
+    "libchromaprint.so.1",
+    "libbluray.so.2",
+    "librabbitmq.so.4",
+    "libsrt-gnutls.so.1.4",
+    "libssh-gcrypt.so.4",
+    "libzmq.so.5",
+    "libva-drm.so.2",
+    "libva-x11.so.2",
+    "libvdpau.so.1",
+    "libsoxr.so.0",
+    "libnorm.so.1",
+    "libpgm-5.3.so.0",
+    "libsodium.so.23",
+    "libudfread.so.0",
+    "libXfixes.so.3",
+    "liblzma.so.5",
+    "libgcrypt.so.20",
+    "libgpg-error.so.0",
+    "libgssapi_krb5.so.2",
+    "libkrb5.so.3",
+    "libk5crypto.so.3",
+    "libkrb5support.so.0",
+    "libkeyutils.so.1"
+  ]
+}

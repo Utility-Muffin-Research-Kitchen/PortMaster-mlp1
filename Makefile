@@ -57,7 +57,7 @@ ifeq ($(shell uname -s),Darwin)
 LDLIBS_COMMON += -lobjc
 endif
 
-.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke update-failure-fixtures fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-tools spruce-bin-closure clean
+.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke update-failure-fixtures fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
 
 all: native
 
@@ -89,6 +89,7 @@ package-build:
 		"$(PACKAGE_DIR)/compat/armhf" "$(PACKAGE_DIR)/compat/egl/aarch64" \
 		"$(PACKAGE_DIR)/compat/mali/aarch64" \
 		"$(PACKAGE_DIR)/compat/sdl2/aarch64" \
+		"$(PACKAGE_DIR)/compat/libs/aarch64" \
 		"$(PACKAGE_DIR)/compat/tools/aarch64/bin" \
 		"$(PACKAGE_DIR)/LICENSES"
 	@cp -f "$(BIN)" "$(PACKAGE_DIR)/bin/$(APP_ID)"
@@ -101,6 +102,7 @@ package-build:
 	@if [ -d "$(BUILD)/compat/egl/aarch64" ]; then cp -f "$(BUILD)"/compat/egl/aarch64/* "$(PACKAGE_DIR)/compat/egl/aarch64/"; fi
 	@if [ -d "$(BUILD)/compat/mali/aarch64" ]; then cp -f "$(BUILD)"/compat/mali/aarch64/* "$(PACKAGE_DIR)/compat/mali/aarch64/"; fi
 	@if [ -d "$(BUILD)/compat/sdl2/aarch64" ]; then cp -f "$(BUILD)"/compat/sdl2/aarch64/* "$(PACKAGE_DIR)/compat/sdl2/aarch64/"; fi
+	@if [ -d "$(BUILD)/compat/libs/aarch64" ]; then cp -f "$(BUILD)"/compat/libs/aarch64/* "$(PACKAGE_DIR)/compat/libs/aarch64/"; fi
 	@if [ -d "$(BUILD)/compat/tools/aarch64" ]; then cp -Rf "$(BUILD)"/compat/tools/aarch64/. "$(PACKAGE_DIR)/compat/tools/aarch64/"; fi
 	@if [ -f LICENSE ]; then cp -f LICENSE "$(PACKAGE_DIR)/LICENSE"; fi
 	@if [ -d LICENSES ]; then cp -Rf LICENSES/. "$(PACKAGE_DIR)/LICENSES/"; fi
@@ -110,7 +112,7 @@ package-build:
 	@if [ -f "$(PACKAGE_DIR)/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so" ]; then chmod 755 "$(PACKAGE_DIR)/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so"; fi
 	@find "$(PACKAGE_DIR)" -type f | sort
 
-package-mlp1: mlp1 build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-tools
+package-mlp1: mlp1 build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-tools build-aarch64-compat-libs
 	@$(MAKE) BUILD="$(MLP1_BUILD)" PLATFORM=mlp1 BIN="$(MLP1_BIN)" package-build
 
 package-platform:
@@ -156,6 +158,9 @@ build-aarch64-sdl2-fullscreen:
 
 build-aarch64-tools:
 	@MLP1_TOOLCHAIN_IMAGE="$(MLP1_TOOLCHAIN_IMAGE)" bash scripts/build-aarch64-tools-pack.sh
+
+build-aarch64-compat-libs:
+	@bash scripts/build-aarch64-compat-libs-pack.sh
 
 spruce-bin-closure:
 	@python3 scripts/generate-spruce-bin-closure.py

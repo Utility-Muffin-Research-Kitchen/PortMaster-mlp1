@@ -831,7 +831,6 @@ static void check_storage(const pm_context *ctx, pm_doctor_report *r, cJSON *che
 
 static void check_libraries(const pm_context *ctx, pm_doctor_report *r, cJSON *checks)
 {
-    (void)ctx;
     static const char *required[] = {
         "libc.so.6",
         "libstdc++.so.6",
@@ -865,18 +864,32 @@ static void check_libraries(const pm_context *ctx, pm_doctor_report *r, cJSON *c
         "libx265.so.192",
         "libwavpack.so.1",
     };
-    static const char *dirs[] = {
+    static const char *system_dirs[] = {
         "/usr/lib",
         "/lib",
         "/usr/lib/aarch64-linux-gnu",
         "/lib/aarch64-linux-gnu",
     };
+    const char *older_dirs[sizeof(system_dirs) / sizeof(system_dirs[0]) + 1];
+    size_t older_dir_count = 0;
+    for (size_t i = 0; i < sizeof(system_dirs) / sizeof(system_dirs[0]); i++) {
+        older_dirs[older_dir_count++] = system_dirs[i];
+    }
+    char compat_lib_dir[PM_PATH_MAX];
+    if (ctx &&
+        pm_join3(compat_lib_dir, sizeof(compat_lib_dir),
+                 ctx->data_dir, "compat/libs", "aarch64") == 0 &&
+        pm_dir_exists(compat_lib_dir)) {
+        older_dirs[older_dir_count++] = compat_lib_dir;
+    } else {
+        compat_lib_dir[0] = '\0';
+    }
 
     for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
         char found[PM_PATH_MAX] = "";
-        for (size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); d++) {
+        for (size_t d = 0; d < sizeof(system_dirs) / sizeof(system_dirs[0]); d++) {
             char path[PM_PATH_MAX];
-            if (pm_join(path, sizeof(path), dirs[d], required[i]) == 0 &&
+            if (pm_join(path, sizeof(path), system_dirs[d], required[i]) == 0 &&
                 pm_file_exists(path)) {
                 pm_copy(found, sizeof(found), path);
                 break;
@@ -895,9 +908,9 @@ static void check_libraries(const pm_context *ctx, pm_doctor_report *r, cJSON *c
     char missing[2048] = "";
     for (size_t i = 0; i < sizeof(older) / sizeof(older[0]); i++) {
         bool found = false;
-        for (size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); d++) {
+        for (size_t d = 0; d < older_dir_count; d++) {
             char path[PM_PATH_MAX];
-            if (pm_join(path, sizeof(path), dirs[d], older[i]) == 0 &&
+            if (pm_join(path, sizeof(path), older_dirs[d], older[i]) == 0 &&
                 pm_file_exists(path)) {
                 found = true;
                 break;
@@ -913,7 +926,11 @@ static void check_libraries(const pm_context *ctx, pm_doctor_report *r, cJSON *c
               "recommended",
               missing_older == 0 ? "Older compatibility sonames are present"
                                  : "Some older compatibility sonames are missing",
-              missing_older == 0 ? "System library paths cover the checked set." : missing);
+              missing_older == 0
+                  ? (compat_lib_dir[0]
+                         ? "System and app-local compatibility paths cover the checked set."
+                         : "System library paths cover the checked set.")
+                  : missing);
 }
 
 static void check_graphics_audio(const pm_context *ctx, pm_doctor_report *r, cJSON *checks)
