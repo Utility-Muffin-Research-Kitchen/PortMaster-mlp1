@@ -245,7 +245,41 @@ static bool pm_armhf_scan_report_exists(pm_context *ctx)
            pm_file_exists(path);
 }
 
-static bool pm_refresh_armhf_port_wrappers(pm_context *ctx)
+static bool pm_text_file_contains(const char *path, const char *needle, size_t max_bytes)
+{
+    if (!path || !needle || !needle[0] || !pm_file_exists(path)) {
+        return false;
+    }
+
+    char err[128];
+    char *text = pm_read_text_file(path, max_bytes, err, sizeof(err));
+    if (!text) {
+        return false;
+    }
+    bool found = strstr(text, needle) != NULL;
+    free(text);
+    return found;
+}
+
+static bool pm_armhf_scan_artifacts_match_context(pm_context *ctx)
+{
+    if (!ctx) {
+        return false;
+    }
+
+    char scan_path[PM_PATH_MAX];
+    char hook_path[PM_PATH_MAX];
+    if (pm_join(scan_path, sizeof(scan_path), ctx->leaf_dir, "armhf-scan.json") != 0 ||
+        pm_join(hook_path, sizeof(hook_path), ctx->portmaster_dir, "leaf-armhf-env.sh") != 0) {
+        return false;
+    }
+
+    return pm_text_file_contains(scan_path, ctx->ports_dir, 256 * 1024) &&
+           pm_text_file_contains(scan_path, ctx->portmaster_dir, 256 * 1024) &&
+           pm_text_file_contains(hook_path, ctx->data_dir, 1024 * 1024);
+}
+
+bool pm_refresh_armhf_port_wrappers(pm_context *ctx)
 {
     char script[PM_PATH_MAX];
     if (!ctx ||
@@ -374,9 +408,11 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     uint64_t stored_ports_stamp = 0;
     bool have_ports_stamp_before = pm_ports_tree_stamp(ctx, &ports_stamp_before);
     bool have_stored_ports_stamp = pm_read_port_scan_stamp(ctx, &stored_ports_stamp);
+    bool scan_artifacts_match_context = pm_armhf_scan_artifacts_match_context(ctx);
     bool scanned_before_launch = false;
     if (pm_env_truthy("LEAF_PM_SCAN_BEFORE_LAUNCH") ||
         !pm_armhf_scan_report_exists(ctx) ||
+        !scan_artifacts_match_context ||
         !have_ports_stamp_before ||
         !have_stored_ports_stamp ||
         ports_stamp_before != stored_ports_stamp) {

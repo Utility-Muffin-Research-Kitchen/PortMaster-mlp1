@@ -12,6 +12,7 @@ bool pm_portmaster_runtime_available(const pm_context *ctx,
                                      size_t runtime_path_size,
                                      bool *uses_system_python);
 bool pm_portmaster_launch_ready(const pm_context *ctx, char *reason, size_t reason_size);
+bool pm_refresh_armhf_port_wrappers(pm_context *ctx);
 int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size);
 void pm_request_jawaka_library_rescan(pm_context *ctx);
 

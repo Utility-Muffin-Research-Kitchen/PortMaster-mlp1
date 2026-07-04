@@ -139,6 +139,15 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (argc > 1 && strcmp(argv[1], "--refresh-port-wrappers") == 0) {
+        if (!pm_refresh_armhf_port_wrappers(&ctx)) {
+            fprintf(stderr, "port wrapper refresh failed\n");
+            return 1;
+        }
+        puts("PortMaster port wrappers refreshed");
+        return 0;
+    }
+
     if (argc > 1 && strcmp(argv[1], "--check-portmaster-update") == 0) {
         pm_portmaster_update_status status;
         char err[512];
