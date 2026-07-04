@@ -15,13 +15,22 @@ fi
 
 userdata_path="${USERDATA_PATH:-$sdcard_path/.userdata/$platform}"
 data_dir="${PORTMASTER_MLP1_DATA_DIR:-$userdata_path/portmaster}"
+tools_bin="${LEAF_PM_TOOLS_DIR:-$data_dir/compat/tools/aarch64/bin}"
+if [ -d "$tools_bin" ]; then
+  case ":${PATH:-}:" in
+    *:"$tools_bin":*) ;;
+    *) export PATH="$tools_bin:${PATH:-/usr/bin:/usr/sbin:/bin:/sbin}" ;;
+  esac
+fi
 controlfolder="${PORTMASTER_CONTROLFOLDER:-$data_dir/PortMaster}"
 compat_root="${LEAF_PM_ARMHF_ROOT:-$data_dir/compat/armhf}"
+aarch64_compat_lib_dir="${LEAF_PM_AARCH64_COMPAT_LIB_DIR:-$data_dir/compat/libs/aarch64}"
+aarch64_compat_optout="${LEAF_PM_AARCH64_COMPAT_LIBS_OPTOUT:-$data_dir/compat-libs-optout.txt}"
 ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=6
+RULESET_VERSION=7
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -76,7 +85,12 @@ if [ -f "$aarch64_sdl2_fullscreen_shim" ]; then
   aarch64_sdl2_fullscreen_available=1
   chmod 755 "$aarch64_sdl2_fullscreen_shim" 2>/dev/null || true
 fi
-manifest_key="$RULESET_VERSION|$scan_mode|$compat_available|$sdl2_fullscreen_available|$aarch64_sdl2_fullscreen_available|$ports_dir"
+aarch64_compat_libs_available=0
+if [ -d "$aarch64_compat_lib_dir" ]; then
+  aarch64_compat_libs_available=1
+  chmod 755 "$aarch64_compat_lib_dir"/lib*.so* 2>/dev/null || true
+fi
+manifest_key="$RULESET_VERSION|$scan_mode|$compat_available|$sdl2_fullscreen_available|$aarch64_sdl2_fullscreen_available|$aarch64_compat_libs_available|$ports_dir"
 
 write_leaf_hook() {
   hook_writer="$script_dir/write-leaf-runtime-hook.sh"
@@ -381,7 +395,7 @@ sdl2_arch_csv_for_port() {
 
 script_sdl2_cache_tag() {
   local file="$1"
-  local port arch_csv
+  local port arch_csv compat_csv unresolved_csv
   port="$(script_port_dir "$file" || true)"
   if [ -z "$port" ]; then
     printf 'no-gamedir'
@@ -389,14 +403,264 @@ script_sdl2_cache_tag() {
   fi
   if is_godot_script "$file" || is_ship_of_harkinian_script "$file" ||
      is_sdl2_fullscreen_optout_port "$port"; then
-    printf '%s:optout' "$port"
+    printf '%s:optout|compat:-|unresolved:-' "$port"
     return 0
   fi
   arch_csv="$(sdl2_arch_csv_for_port "$port")"
-  if [ -z "$arch_csv" ]; then
-    printf '%s:-' "$port"
+  [ -n "$arch_csv" ] || arch_csv="-"
+  compat_csv="${port_aarch64_compat_needed[$port]:--}"
+  unresolved_csv="${port_aarch64_unresolved[$port]:--}"
+  if is_aarch64_compat_libs_optout_port "$port"; then
+    compat_csv="optout"
+  fi
+  printf '%s:%s|compat:%s|unresolved:%s' "$port" "$arch_csv" "$compat_csv" "$unresolved_csv"
+}
+
+csv_has_value() {
+  local csv="$1"
+  local value="$2"
+  case ",$csv," in
+    *,"$value",*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+csv_append_unique() {
+  local csv="$1"
+  local value="$2"
+  if [ -z "$value" ]; then
+    printf '%s' "$csv"
+  elif [ -z "$csv" ] || [ "$csv" = "-" ]; then
+    printf '%s' "$value"
+  elif csv_has_value "$csv" "$value"; then
+    printf '%s' "$csv"
   else
-    printf '%s:%s' "$port" "$arch_csv"
+    printf '%s,%s' "$csv" "$value"
+  fi
+}
+
+record_port_aarch64_compat_soname() {
+  local port="$1"
+  local soname="$2"
+  [ -n "$port" ] && [ -n "$soname" ] || return 0
+  port_aarch64_compat_needed["$port"]="$(csv_append_unique "${port_aarch64_compat_needed[$port]:-}" "$soname")"
+  aarch64_compat_sonames_seen["$soname"]=1
+}
+
+record_port_aarch64_unresolved_soname() {
+  local port="$1"
+  local soname="$2"
+  [ -n "$port" ] && [ -n "$soname" ] || return 0
+  port_aarch64_unresolved["$port"]="$(csv_append_unique "${port_aarch64_unresolved[$port]:-}" "$soname")"
+  aarch64_unresolved_sonames_seen["$soname"]=1
+}
+
+is_aarch64_compat_libs_optout_port() {
+  local port="$1"
+  [ -n "$port" ] || return 1
+  [ -f "$aarch64_compat_optout" ] || return 1
+  awk -v port="$port" '
+    /^[[:space:]]*(#|$)/ { next }
+    {
+      line = $0
+      sub(/[[:space:]]*#.*/, "", line)
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "*" || line == port) {
+        found = 1
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$aarch64_compat_optout"
+}
+
+load_aarch64_compat_sonames() {
+  local manifest name
+  [ "$aarch64_compat_libs_available" -eq 1 ] || return 0
+  manifest="$aarch64_compat_lib_dir/manifest.json"
+  if [ -f "$manifest" ]; then
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      aarch64_compat_sonames["$name"]="manifest"
+    done < <(sed -n 's/^[[:space:]]*"name":[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" 2>/dev/null || true)
+  fi
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    aarch64_compat_sonames["$name"]="file"
+  done < <(find "$aarch64_compat_lib_dir" -maxdepth 1 -type f -name 'lib*.so*' -exec basename {} \; 2>/dev/null || true)
+}
+
+readelf_needed_sonames() {
+  local file="$1"
+  command -v readelf >/dev/null 2>&1 || return 1
+  LC_ALL=C readelf -d "$file" 2>/dev/null |
+    sed -n 's/.*Shared library:[[:space:]]*\[\([^]]*\)\].*/\1/p'
+}
+
+soname_in_port_local_tree() {
+  local port="$1"
+  local soname="$2"
+  local port_path found
+  case "$soname" in
+    ""|*/*) return 1 ;;
+  esac
+  port_path="$ports_dir/$port"
+  [ -d "$port_path" ] || return 1
+  [ -e "$port_path/$soname" ] && return 0
+  found="$(find "$port_path" -maxdepth 5 -type f -name "$soname" -print -quit 2>/dev/null || true)"
+  [ -n "$found" ]
+}
+
+soname_in_stock_paths() {
+  local soname="$1"
+  local dir
+  for dir in /usr/lib /lib /usr/local/lib /usr/lib/aarch64-linux-gnu /lib/aarch64-linux-gnu; do
+    [ -e "$dir/$soname" ] && return 0
+  done
+  return 1
+}
+
+resolve_aarch64_soname_source() {
+  local port="$1"
+  local soname="$2"
+  if soname_in_port_local_tree "$port" "$soname"; then
+    printf 'port'
+  elif soname_in_stock_paths "$soname"; then
+    printf 'stock'
+  elif [ -n "${aarch64_compat_sonames[$soname]+x}" ]; then
+    printf 'compat'
+  else
+    printf 'missing'
+  fi
+}
+
+aarch64_needed_tag_for_file() {
+  local file="$1"
+  local port soname source needed compat_csv missing_csv
+  port="$(port_dir_for "$file" || true)"
+  if [ -z "$port" ]; then
+    printf '-'
+    return 0
+  fi
+  if is_aarch64_compat_libs_optout_port "$port"; then
+    printf 'optout'
+    return 0
+  fi
+  if ! command -v readelf >/dev/null 2>&1; then
+    printf 'no-readelf'
+    return 0
+  fi
+  needed="$(readelf_needed_sonames "$file" || true)"
+  [ -n "$needed" ] || {
+    printf '-'
+    return 0
+  }
+  compat_csv=""
+  missing_csv=""
+  while IFS= read -r soname; do
+    [ -n "$soname" ] || continue
+    source="$(resolve_aarch64_soname_source "$port" "$soname")"
+    case "$source" in
+      compat)
+        compat_csv="$(csv_append_unique "$compat_csv" "$soname")"
+        ;;
+      missing)
+        missing_csv="$(csv_append_unique "$missing_csv" "$soname")"
+        ;;
+    esac
+  done <<<"$needed"
+  if [ -n "$compat_csv" ] || [ -n "$missing_csv" ]; then
+    printf 'c=%s;m=%s' "$compat_csv" "$missing_csv"
+  else
+    printf '-'
+  fi
+}
+
+apply_manifest_needed_tag() {
+  local file="$1"
+  local tag="$2"
+  local port part compat_csv missing_csv soname
+  local -a parts=()
+  local -a compat_parts=()
+  local -a missing_parts=()
+  case "$tag" in
+    ""|-|optout|no-readelf) return 0 ;;
+  esac
+  port="$(port_dir_for "$file" || true)"
+  [ -n "$port" ] || return 0
+  compat_csv=""
+  missing_csv=""
+  IFS=';' read -r -a parts <<<"$tag"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      c=*) compat_csv="${part#c=}" ;;
+      m=*) missing_csv="${part#m=}" ;;
+    esac
+  done
+  if [ -n "$compat_csv" ]; then
+    IFS=',' read -r -a compat_parts <<<"$compat_csv"
+    for soname in "${compat_parts[@]}"; do
+      record_port_aarch64_compat_soname "$port" "$soname"
+    done
+  fi
+  if [ -n "$missing_csv" ]; then
+    IFS=',' read -r -a missing_parts <<<"$missing_csv"
+    for soname in "${missing_parts[@]}"; do
+      record_port_aarch64_unresolved_soname "$port" "$soname"
+    done
+  fi
+}
+
+json_csv_string_array() {
+  local csv="$1"
+  local sep=""
+  local soname
+  local -a sonames=()
+  printf '['
+  IFS=',' read -r -a sonames <<<"$csv"
+  for soname in "${sonames[@]}"; do
+    [ -n "$soname" ] || continue
+    printf '%s"%s"' "$sep" "$(json_escape "$soname")"
+    sep=', '
+  done
+  printf ']'
+}
+
+json_port_soname_array() {
+  local field="$1"
+  local kind="$2"
+  local first=1
+  local port csv sep
+  local -a ports=()
+  printf '  "%s": [' "$field"
+  case "$kind" in
+    compat) ports=("${!port_aarch64_compat_needed[@]}") ;;
+    unresolved) ports=("${!port_aarch64_unresolved[@]}") ;;
+    *) ports=() ;;
+  esac
+  if [ "${#ports[@]}" -gt 0 ]; then
+    printf '\n'
+    while IFS= read -r port; do
+      [ -n "$port" ] || continue
+      case "$kind" in
+        compat) csv="${port_aarch64_compat_needed[$port]:-}" ;;
+        unresolved) csv="${port_aarch64_unresolved[$port]:-}" ;;
+        *) csv="" ;;
+      esac
+      [ -n "$csv" ] || continue
+      if [ "$first" -eq 1 ]; then
+        sep=''
+        first=0
+      else
+        sep=",\n"
+      fi
+      printf '%b    {"port": "%s", "sonames": ' "$sep" "$(json_escape "$port")"
+      json_csv_string_array "$csv"
+      printf '}'
+    done < <(printf '%s\n' "${ports[@]}" | sort)
+    printf '\n  ],\n'
+  else
+    printf '],\n'
   fi
 }
 
@@ -977,6 +1241,83 @@ normalize_sdl2_fullscreen_env_script() {
   printf 'sdl2-fullscreen-env-error'
 }
 
+normalize_aarch64_compat_libs_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) printf 'not-shell'; return 0 ;;
+  esac
+
+  port="$(script_port_dir "$file" || true)"
+  if [ -z "$port" ]; then
+    printf 'aarch64-compat-libs-no-gamedir'
+    return 0
+  fi
+  if is_aarch64_compat_libs_optout_port "$port"; then
+    printf 'aarch64-compat-libs-opted-out'
+    return 0
+  fi
+  if [ -z "${port_aarch64_compat_needed[$port]:-}" ]; then
+    printf 'aarch64-compat-libs-not-needed'
+    return 0
+  fi
+  if [ "$aarch64_compat_libs_available" -ne 1 ]; then
+    printf 'aarch64-compat-libs-missing-pack'
+    return 0
+  fi
+  if grep -q 'LEAF_PM_AARCH64_COMPAT_LIBS_VERSION=1' "$file" 2>/dev/null; then
+    printf 'aarch64-compat-libs-already'
+    return 0
+  fi
+
+  tmp="$file.tmp.$$"
+  if awk '
+    NR == FNR {
+      if ($0 ~ /^[[:space:]]*get_controls([[:space:]]|$)/) {
+        has_get_controls = 1
+      }
+      next
+    }
+    function insert_block() {
+      print ""
+      print "# LEAF_PM_AARCH64_COMPAT_LIBS=1"
+      print "# LEAF_PM_AARCH64_COMPAT_LIBS_VERSION=1"
+      print "if declare -f leaf_pm_enable_aarch64_compat_libs >/dev/null 2>&1; then"
+      print "  leaf_pm_enable_aarch64_compat_libs"
+      print "fi"
+      inserted = 1
+      changed = 1
+    }
+    {
+      print
+      if (!inserted && has_get_controls && $0 ~ /^[[:space:]]*get_controls([[:space:]]|$)/) {
+        insert_block()
+      } else if (!inserted && !has_get_controls && $0 ~ /source[[:space:]].*control[.]txt/) {
+        insert_block()
+      }
+    }
+    END {
+      if (!inserted) {
+        exit 2
+      }
+    }
+  ' "$file" "$file" >"$tmp"; then
+    mv "$tmp" "$file"
+    chmod 755 "$file" 2>/dev/null || true
+    printf 'aarch64-compat-libs-patched'
+    return 0
+  else
+    rc=$?
+  fi
+
+  rm -f "$tmp"
+  if [ "$rc" -eq 2 ]; then
+    printf 'aarch64-compat-libs-missing-anchor'
+    return 0
+  fi
+  printf 'aarch64-compat-libs-error'
+}
+
 runtime_compat_gothic_machismo_gles_script() {
   file="$1"
   if ! is_gothic_machismo_script "$file"; then
@@ -1553,10 +1894,18 @@ declare -A manifest_interpreter=()
 declare -A manifest_sha=()
 declare -A manifest_action=()
 declare -A manifest_sdl2_tag=()
+declare -A manifest_needed_tag=()
 declare -A manifest_outcomes=()
 declare -A manifest_script_sdl2_tag=()
 declare -A port_sdl2_aarch64=()
 declare -A port_sdl2_armhf=()
+declare -A aarch64_compat_sonames=()
+declare -A port_aarch64_compat_needed=()
+declare -A port_aarch64_unresolved=()
+declare -A aarch64_compat_sonames_seen=()
+declare -A aarch64_unresolved_sonames_seen=()
+
+load_aarch64_compat_sonames
 
 stat_one_line() {
   local file="$1"
@@ -1630,17 +1979,17 @@ refresh_file_stat() {
 }
 
 load_manifest() {
-  local magic key_line line type size mtime kind interpreter sha action sdl2_tag outcomes path extra tab
+  local magic key_line line type size mtime kind interpreter sha action sdl2_tag needed_tag outcomes path extra tab
   tab=$'\t'
   [ -f "$manifest_path" ] || return 1
   {
     IFS= read -r magic || return 1
     IFS= read -r key_line || return 1
-    [ "$magic" = "#leaf-armhf-scan-manifest${tab}2" ] || return 1
+    [ "$magic" = "#leaf-armhf-scan-manifest${tab}3" ] || return 1
     [ "$key_line" = "#key${tab}$manifest_key" ] || return 1
     while IFS= read -r line; do
       [ -n "$line" ] || continue
-      IFS=$'\t' read -r type size mtime kind interpreter sha action sdl2_tag path extra <<<"$line"
+      IFS=$'\t' read -r type size mtime kind interpreter sha action sdl2_tag needed_tag path extra <<<"$line"
       if [ "$type" = "E" ]; then
         [ -z "${extra:-}" ] || return 1
         [ -n "$path" ] || return 1
@@ -1653,6 +2002,7 @@ load_manifest() {
         [ "$sha" = "-" ] && sha=""
         [ "$action" = "-" ] && action=""
         [ "$sdl2_tag" = "-" ] && sdl2_tag=""
+        [ "$needed_tag" = "-" ] && needed_tag=""
         manifest_type["$path"]="E"
         manifest_size["$path"]="$size"
         manifest_mtime["$path"]="$mtime"
@@ -1661,6 +2011,7 @@ load_manifest() {
         manifest_sha["$path"]="$sha"
         manifest_action["$path"]="$action"
         manifest_sdl2_tag["$path"]="$sdl2_tag"
+        manifest_needed_tag["$path"]="$needed_tag"
         continue
       fi
 
@@ -1702,7 +2053,7 @@ can_use_manifest_entry() {
 
 manifest_write_header() {
   [ "$manifest_write_enabled" -eq 1 ] || return 0
-  printf '#leaf-armhf-scan-manifest\t2\n' >"$manifest_tmp"
+  printf '#leaf-armhf-scan-manifest\t3\n' >"$manifest_tmp"
   printf '#key\t%s\n' "$manifest_key" >>"$manifest_tmp"
 }
 
@@ -1732,11 +2083,13 @@ manifest_record_elf() {
   local sha="$4"
   local action="$5"
   local sdl2_tag="${6:-}"
+  local needed_tag="${7:-}"
   local field_kind="$kind"
   local field_interpreter="$interpreter"
   local field_sha="$sha"
   local field_action="$action"
   local field_sdl2_tag="$sdl2_tag"
+  local field_needed_tag="$needed_tag"
   [ "$manifest_write_enabled" -eq 1 ] || return 0
   path_has_manifest_unsafe_chars "$file" && return 0
   [ -n "${file_size[$file]+x}" ] || return 0
@@ -1745,7 +2098,8 @@ manifest_record_elf() {
   [ -n "$field_sha" ] || field_sha="-"
   [ -n "$field_action" ] || field_action="-"
   [ -n "$field_sdl2_tag" ] || field_sdl2_tag="-"
-  printf 'E\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  [ -n "$field_needed_tag" ] || field_needed_tag="-"
+  printf 'E\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "${file_size[$file]}" \
     "${file_mtime[$file]}" \
     "$field_kind" \
@@ -1753,6 +2107,7 @@ manifest_record_elf() {
     "$field_sha" \
     "$field_action" \
     "$field_sdl2_tag" \
+    "$field_needed_tag" \
     "$file" >>"$manifest_tmp"
 }
 
@@ -1832,6 +2187,12 @@ script_cache_action() {
     sdl2-fullscreen-env-no-gamedir) printf 'sdl2-fullscreen-env-no-gamedir' ;;
     sdl2-fullscreen-env-missing-shim) printf 'sdl2-fullscreen-env-missing-shim' ;;
     sdl2-fullscreen-env-opted-out) printf 'sdl2-fullscreen-env-opted-out' ;;
+    aarch64-compat-libs-patched) printf 'aarch64-compat-libs-already' ;;
+    aarch64-compat-libs-already) printf 'aarch64-compat-libs-already' ;;
+    aarch64-compat-libs-not-needed) printf 'aarch64-compat-libs-not-needed' ;;
+    aarch64-compat-libs-no-gamedir) printf 'aarch64-compat-libs-no-gamedir' ;;
+    aarch64-compat-libs-opted-out) printf 'aarch64-compat-libs-opted-out' ;;
+    aarch64-compat-libs-missing-pack) printf 'aarch64-compat-libs-missing-pack' ;;
     runtime-compat-gothic-machismo-gles-patched) printf 'runtime-compat-gothic-machismo-gles-already' ;;
     runtime-compat-gothic-machismo-gles-already) printf 'runtime-compat-gothic-machismo-gles-already' ;;
     runtime-compat-soh-display-patched) printf 'runtime-compat-soh-display-already' ;;
@@ -1840,7 +2201,7 @@ script_cache_action() {
     runtime-compat-love-11-5-libs-already) printf 'runtime-compat-love-11-5-libs-already' ;;
     lowercase-path-move-patched) printf 'lowercase-path-move-already' ;;
     lowercase-path-move-already) printf 'lowercase-path-move-already' ;;
-    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error)
+    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error|aarch64-compat-libs-missing-anchor|aarch64-compat-libs-error)
       return 1
       ;;
     *) printf '' ;;
@@ -1893,6 +2254,20 @@ record_script_action() {
       ;;
     sdl2-fullscreen-env-error)
       sdl2_fullscreen_env_errors=$((sdl2_fullscreen_env_errors + 1))
+      errors=$((errors + 1))
+      ;;
+    aarch64-compat-libs-patched) aarch64_compat_libs_patched=$((aarch64_compat_libs_patched + 1)) ;;
+    aarch64-compat-libs-already) aarch64_compat_libs_already=$((aarch64_compat_libs_already + 1)) ;;
+    aarch64-compat-libs-not-needed) aarch64_compat_libs_not_needed=$((aarch64_compat_libs_not_needed + 1)) ;;
+    aarch64-compat-libs-no-gamedir) aarch64_compat_libs_no_gamedir=$((aarch64_compat_libs_no_gamedir + 1)) ;;
+    aarch64-compat-libs-opted-out) aarch64_compat_libs_opted_out=$((aarch64_compat_libs_opted_out + 1)) ;;
+    aarch64-compat-libs-missing-pack) aarch64_compat_libs_missing_pack=$((aarch64_compat_libs_missing_pack + 1)) ;;
+    aarch64-compat-libs-missing-anchor)
+      aarch64_compat_libs_missing_anchor=$((aarch64_compat_libs_missing_anchor + 1))
+      errors=$((errors + 1))
+      ;;
+    aarch64-compat-libs-error)
+      aarch64_compat_libs_errors=$((aarch64_compat_libs_errors + 1))
       errors=$((errors + 1))
       ;;
     runtime-compat-gothic-machismo-gles-patched)
@@ -1977,11 +2352,16 @@ replay_elf_manifest_entry() {
   local sha="${manifest_sha[$file]:-}"
   local action="${manifest_action[$file]:-}"
   local sdl2_tag="${manifest_sdl2_tag[$file]:-}"
+  local needed_tag="${manifest_needed_tag[$file]:-}"
 
   apply_manifest_sdl2_tag "$file" "$sdl2_tag"
+  apply_manifest_needed_tag "$file" "$needed_tag"
 
   case "$action" in
     ignored)
+      if [ -n "$kind" ]; then
+        aarch64_elfs_seen=$((aarch64_elfs_seen + 1))
+      fi
       ;;
     wrapper-present)
       already=$((already + 1))
@@ -2040,6 +2420,7 @@ if [ "$manifest_read_enabled" -eq 1 ]; then
     manifest_sha=()
     manifest_action=()
     manifest_sdl2_tag=()
+    manifest_needed_tag=()
     manifest_outcomes=()
     manifest_script_sdl2_tag=()
     cache_state="cold"
@@ -2082,6 +2463,7 @@ fi
 printf 'path\tkind\tinterpreter\tsha256\taction\n' >"$tmp_records"
 
 seen=0
+aarch64_elfs_seen=0
 shell_scripts_seen=0
 files_skipped=0
 files_processed=0
@@ -2111,6 +2493,14 @@ sdl2_fullscreen_env_missing_shim=0
 sdl2_fullscreen_env_opted_out=0
 sdl2_fullscreen_env_missing_anchor=0
 sdl2_fullscreen_env_errors=0
+aarch64_compat_libs_patched=0
+aarch64_compat_libs_already=0
+aarch64_compat_libs_not_needed=0
+aarch64_compat_libs_no_gamedir=0
+aarch64_compat_libs_opted_out=0
+aarch64_compat_libs_missing_pack=0
+aarch64_compat_libs_missing_anchor=0
+aarch64_compat_libs_errors=0
 sdl2_fullscreen_ports_aarch64=0
 sdl2_fullscreen_ports_armhf=0
 weston_cleanup_patched=0
@@ -2147,7 +2537,8 @@ while IFS= read -r -d '' file; do
       "${manifest_interpreter[$file]:-}" \
       "${manifest_sha[$file]:-}" \
       "${manifest_action[$file]:-}" \
-      "${manifest_sdl2_tag[$file]:-}"
+      "${manifest_sdl2_tag[$file]:-}" \
+      "${manifest_needed_tag[$file]:-}"
     continue
   fi
 
@@ -2158,6 +2549,7 @@ while IFS= read -r -d '' file; do
       action="wrapper-present"
       original="$(wrapper_path_for "$file")"
       sdl2_tag="-"
+      needed_tag="-"
       if [ -f "$original" ]; then
         original_header="$(elf_header_hex "$original")"
         if is_armhf_elf "$original_header" && elf_links_sdl2 "$original"; then
@@ -2177,18 +2569,22 @@ while IFS= read -r -d '' file; do
       sha="$(file_sha256 "$file")"
       printf '%s\t%s\t%s\t%s\t%s\n' "$file" "wrapper" "" "$sha" "$action" >>"$tmp_records"
       refresh_file_stat "$file" || true
-      manifest_record_elf "$file" "wrapper" "" "$sha" "wrapper-present" "$sdl2_tag"
+      manifest_record_elf "$file" "wrapper" "" "$sha" "wrapper-present" "$sdl2_tag" "$needed_tag"
     else
       kind=""
       sdl2_tag="-"
+      needed_tag="-"
       if is_aarch64_elf "$header"; then
+        aarch64_elfs_seen=$((aarch64_elfs_seen + 1))
         kind="$(elf_kind "$header")"
         if elf_links_sdl2 "$file"; then
           tag_file_sdl2_arch "$file" "aarch64"
           sdl2_tag="sdl2-aarch64"
         fi
+        needed_tag="$(aarch64_needed_tag_for_file "$file")"
+        apply_manifest_needed_tag "$file" "$needed_tag"
       fi
-      manifest_record_elf "$file" "$kind" "" "" "ignored" "$sdl2_tag"
+      manifest_record_elf "$file" "$kind" "" "" "ignored" "$sdl2_tag" "$needed_tag"
     fi
     continue
   fi
@@ -2226,13 +2622,13 @@ while IFS= read -r -d '' file; do
     wrapped|rewrapped)
       refresh_file_stat "$file" || true
       post_sha="$(file_sha256 "$file")"
-      manifest_record_elf "$file" "wrapper" "" "$post_sha" "wrapper-present" "$sdl2_tag"
+      manifest_record_elf "$file" "wrapper" "" "$post_sha" "wrapper-present" "$sdl2_tag" "-"
       ;;
     error)
       ;;
     *)
       refresh_file_stat "$file" || true
-      manifest_record_elf "$file" "$kind" "$interpreter" "$sha" "$action" "$sdl2_tag"
+      manifest_record_elf "$file" "$kind" "$interpreter" "$sha" "$action" "$sdl2_tag" "-"
       ;;
   esac
 done <"$elf_candidates"
@@ -2261,6 +2657,7 @@ while IFS= read -r -d '' file; do
   handle_script_action "$(normalize_godot_direct_sdl2_script "$file")"
   handle_script_action "$(normalize_godot_frt_sdl2_script "$file")"
   handle_script_action "$(normalize_sdl2_fullscreen_env_script "$file")"
+  handle_script_action "$(normalize_aarch64_compat_libs_script "$file")"
 
   while IFS= read -r runtime_compat_action; do
     handle_script_action "$runtime_compat_action"
@@ -2295,6 +2692,10 @@ cat >"$tmp_json" <<EOF
   "sdl2_fullscreen_available": $([ "$sdl2_fullscreen_available" -eq 1 ] && printf 'true' || printf 'false'),
   "aarch64_sdl2_fullscreen_shim": "$(json_escape "$aarch64_sdl2_fullscreen_shim")",
   "aarch64_sdl2_fullscreen_available": $([ "$aarch64_sdl2_fullscreen_available" -eq 1 ] && printf 'true' || printf 'false'),
+  "aarch64_compat_lib_dir": "$(json_escape "$aarch64_compat_lib_dir")",
+  "aarch64_compat_libs_available": $([ "$aarch64_compat_libs_available" -eq 1 ] && printf 'true' || printf 'false'),
+  "aarch64_compat_lib_sonames_available": ${#aarch64_compat_sonames[@]},
+  "aarch64_compat_libs_optout": "$(json_escape "$aarch64_compat_optout")",
   "sdl2_fullscreen_ports_aarch64": $sdl2_fullscreen_ports_aarch64,
   "sdl2_fullscreen_ports_armhf": $sdl2_fullscreen_ports_armhf,
   "sdl2_fullscreen_ports_both": $sdl2_fullscreen_ports_both,
@@ -2304,6 +2705,11 @@ cat >"$tmp_json" <<EOF
   "files_skipped": $files_skipped,
   "files_processed": $files_processed,
   "cache": "$(json_escape "$cache_state")",
+  "aarch64_elfs_seen": $aarch64_elfs_seen,
+  "aarch64_compat_lib_ports": ${#port_aarch64_compat_needed[@]},
+  "aarch64_compat_lib_sonames_seen": ${#aarch64_compat_sonames_seen[@]},
+  "aarch64_unresolved_soname_ports": ${#port_aarch64_unresolved[@]},
+  "aarch64_unresolved_sonames_seen": ${#aarch64_unresolved_sonames_seen[@]},
   "armhf_elfs_seen": $seen,
   "armhf_execs_wrapped": $wrapped,
   "armhf_execs_already_normalized": $already,
@@ -2338,6 +2744,14 @@ cat >"$tmp_json" <<EOF
   "sdl2_fullscreen_env_scripts_opted_out": $sdl2_fullscreen_env_opted_out,
   "sdl2_fullscreen_env_scripts_missing_anchor": $sdl2_fullscreen_env_missing_anchor,
   "sdl2_fullscreen_env_script_errors": $sdl2_fullscreen_env_errors,
+  "aarch64_compat_lib_scripts_patched": $aarch64_compat_libs_patched,
+  "aarch64_compat_lib_scripts_already_patched": $aarch64_compat_libs_already,
+  "aarch64_compat_lib_scripts_not_needed": $aarch64_compat_libs_not_needed,
+  "aarch64_compat_lib_scripts_no_gamedir": $aarch64_compat_libs_no_gamedir,
+  "aarch64_compat_lib_scripts_opted_out": $aarch64_compat_libs_opted_out,
+  "aarch64_compat_lib_scripts_missing_pack": $aarch64_compat_libs_missing_pack,
+  "aarch64_compat_lib_scripts_missing_anchor": $aarch64_compat_libs_missing_anchor,
+  "aarch64_compat_lib_script_errors": $aarch64_compat_libs_errors,
   "godot_weston_cleanup_scripts_patched": $weston_cleanup_patched,
   "godot_weston_cleanup_scripts_already_patched": $weston_cleanup_already,
   "godot_weston_cleanup_scripts_missing_cleanup": $weston_cleanup_missing,
@@ -2356,6 +2770,9 @@ cat >"$tmp_json" <<EOF
   "lowercase_path_move_script_errors": $lowercase_path_move_errors,
   "godot_egl_scripts_patched": $godot_patched,
   "godot_egl_scripts_already_patched": $godot_already,
+$(json_port_soname_array "aarch64_compat_lib_port_sonames" "compat")
+$(json_port_soname_array "unresolved_sonames" "unresolved")
+  "readelf_available": $(command -v readelf >/dev/null 2>&1 && printf 'true' || printf 'false'),
   "errors": $errors
 }
 EOF
@@ -2365,4 +2782,4 @@ if [ "$manifest_write_enabled" -eq 1 ]; then
   mv "$manifest_tmp" "$manifest_path"
 fi
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"

@@ -1411,6 +1411,88 @@ static void check_root_drift(const pm_context *ctx, pm_doctor_report *r, cJSON *
     }
 }
 
+static void check_unresolved_sonames(const pm_context *ctx, pm_doctor_report *r, cJSON *checks)
+{
+    char scan_path[PM_PATH_MAX];
+    if (pm_join(scan_path, sizeof(scan_path), ctx->leaf_dir, "armhf-scan.json") != 0 ||
+        !pm_file_exists(scan_path)) {
+        add_check(r, checks, "lib.unresolved_sonames", PM_CHECK_INFO,
+                  "info", "No armhf scan report exists yet", ctx->leaf_dir);
+        return;
+    }
+
+    char err[128];
+    char *text = pm_read_text_file(scan_path, 512 * 1024, err, sizeof(err));
+    if (!text) {
+        add_check(r, checks, "lib.unresolved_sonames", PM_CHECK_INFO,
+                  "info", "Could not read unresolved SONAME inventory", scan_path);
+        return;
+    }
+
+    cJSON *root = cJSON_Parse(text);
+    free(text);
+    if (!root) {
+        add_check(r, checks, "lib.unresolved_sonames", PM_CHECK_INFO,
+                  "info", "Could not parse unresolved SONAME inventory", scan_path);
+        return;
+    }
+
+    cJSON *items = cJSON_GetObjectItemCaseSensitive(root, "unresolved_sonames");
+    if (!cJSON_IsArray(items)) {
+        add_check(r, checks, "lib.unresolved_sonames", PM_CHECK_INFO,
+                  "info", "Scan report predates unresolved SONAME inventory", scan_path);
+        cJSON_Delete(root);
+        return;
+    }
+
+    int ports = cJSON_GetArraySize(items);
+    char detail[4096] = "";
+    appendf(detail, sizeof(detail), "scan=%s", scan_path);
+
+    int shown_ports = 0;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, items) {
+        if (shown_ports >= 12) {
+            appendf(detail, sizeof(detail), "\n...and %d more port%s",
+                    ports - shown_ports, ports - shown_ports == 1 ? "" : "s");
+            break;
+        }
+        cJSON *port = cJSON_GetObjectItemCaseSensitive(item, "port");
+        cJSON *sonames = cJSON_GetObjectItemCaseSensitive(item, "sonames");
+        if (!cJSON_IsString(port) || !port->valuestring || !cJSON_IsArray(sonames)) {
+            continue;
+        }
+
+        appendf(detail, sizeof(detail), "\n%s: ", port->valuestring);
+        int shown_sonames = 0;
+        int total_sonames = cJSON_GetArraySize(sonames);
+        cJSON *soname = NULL;
+        cJSON_ArrayForEach(soname, sonames) {
+            if (!cJSON_IsString(soname) || !soname->valuestring) {
+                continue;
+            }
+            if (shown_sonames >= 8) {
+                appendf(detail, sizeof(detail), "%s...and %d more",
+                        shown_sonames > 0 ? ", " : "",
+                        total_sonames - shown_sonames);
+                break;
+            }
+            appendf(detail, sizeof(detail), "%s%s",
+                    shown_sonames > 0 ? ", " : "",
+                    soname->valuestring);
+            shown_sonames++;
+        }
+        shown_ports++;
+    }
+
+    add_check(r, checks, "lib.unresolved_sonames", PM_CHECK_INFO,
+              "info",
+              ports > 0 ? "Latest scan found unresolved aarch64 port SONAMEs"
+                        : "Latest scan has no unresolved aarch64 port SONAMEs",
+              detail);
+    cJSON_Delete(root);
+}
+
 static void check_env_contract(const pm_context *ctx, pm_doctor_report *r, cJSON *checks)
 {
     char detail[4096];
@@ -1690,6 +1772,7 @@ void pm_doctor_run_spec(const pm_context *ctx, pm_doctor_report *report, bool js
     check_libraries(ctx, report, checks);
     check_graphics_audio(ctx, report, checks);
     check_root_drift(ctx, report, checks);
+    check_unresolved_sonames(ctx, report, checks);
     check_env_contract(ctx, report, checks);
     check_env_launch_parity(ctx, report, checks);
 

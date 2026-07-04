@@ -28,6 +28,8 @@ firmware does not provide. The MLP1 pak currently source-builds and ships:
   `$USERDATA_PATH/portmaster/compat/tools/aarch64/bin/rsync`
 - `zip` 3.0 for aarch64, installed at
   `$USERDATA_PATH/portmaster/compat/tools/aarch64/bin/zip`
+- `readelf` from the MLP1 Buildroot/binutils toolchain, installed at
+  `$USERDATA_PATH/portmaster/compat/tools/aarch64/bin/readelf`
 
 The generated PortMaster hook prepends that directory to `PATH` for port
 launchers that source upstream `control.txt`. The binaries are built with the
@@ -108,9 +110,11 @@ again after upstream PortMaster exits:
 - refresh `PortMaster/leaf-armhf-env.sh` through `scripts/write-leaf-runtime-hook.sh`
 - source that hook from upstream `control.txt`
 - scan `$ROMS_PATH/PORTS` for 32-bit ARM ELFs using ELF headers, not `file` or
-  `readelf`, because those tools are not present on stock MLP1 firmware
+  `readelf`, so armhf wrapping does not depend on stock MLP1 firmware tools
 - wrap dynamic armhf executables that name `/lib/ld-linux-armhf.so.3`
 - leave armhf shared objects untouched and report them
+- scan tagged native aarch64 ELFs with the managed SD-local `readelf` when it is
+  available, to inventory `DT_NEEDED` libraries for app-local compatibility
 
 The scanner has two layers of speed control. The Leaf wrapper first checks a
 cheap top-level `Roms/PORTS` stamp and skips the scanner entirely when no port
@@ -119,9 +123,10 @@ tree entry changed. When a scan is needed, `scan-and-fix-port-elfs.sh` uses
 size, mtime, and path. The manifest key includes the script's internal
 `RULESET_VERSION`, scan mode, compat availability, SDL fullscreen shim
 availability, and `ports_dir`, so changing those inputs naturally forces a cold
-scan. Manifest format v2 also records per-ELF SDL2 fullscreen tags and the
-per-script SDL2 tag used when a launcher was patched or skipped; this prevents a
-binary-only port update from leaving an unchanged `.sh` cached as non-SDL2.
+scan. Manifest format v3 also records per-ELF SDL2 fullscreen tags, per-ELF
+aarch64 compatibility SONAME tags, and the per-script tag used when a launcher
+was patched or skipped; this prevents a binary-only port update from leaving an
+unchanged `.sh` cached as non-SDL2 or non-compat.
 `LEAF_PM_SCAN_NO_CACHE=1` ignores the existing manifest but writes a fresh one;
 `LEAF_PM_FULL_PORT_SCAN=1` disables manifest reads and writes for an exhaustive
 diagnostic scan.
@@ -283,6 +288,37 @@ The scan JSON reports generic SDL2 coverage through
 `sdl2_fullscreen_env_scripts_*` counters for patched, already patched,
 non-SDL2, no-`GAMEDIR`, missing-shim, opt-out, missing-anchor, and error
 outcomes.
+
+Native aarch64 ports can also depend on older Debian SONAMEs that are absent
+from the stock MLP1 rootfs, such as `libwebp.so.6`, `libavformat.so.58`, or
+`libjpeg.so.8`. The aarch64 compatibility library pack installs those files
+under `$USERDATA_PATH/portmaster/compat/libs/aarch64` and the generated hook
+exposes `leaf_pm_enable_aarch64_compat_libs`. The scanner does not enable that
+path globally. Instead, it reads each tagged native aarch64 ELF's `DT_NEEDED`
+entries with the managed `readelf`, resolves them in this order:
+
+- the installed port's own tree, so bundled libraries win
+- stock aarch64 library directories such as `/usr/lib` and `/lib`
+- the SD-installed aarch64 compatibility library pack
+
+If a needed SONAME resolves only in the app-local compatibility pack, the
+scanner injects a per-launcher `LEAF_PM_AARCH64_COMPAT_LIBS=1` block after the
+normal PortMaster/control setup anchor. That block calls
+`leaf_pm_enable_aarch64_compat_libs`, which prepends only
+`$USERDATA_PATH/portmaster/compat/libs/aarch64` to `LD_LIBRARY_PATH`. No stock
+rootfs/eMMC path is modified, and the change exists only in SD-installed
+launcher scripts and process environment for that port launch. Add the port
+directory name, or `*`, to
+`$USERDATA_PATH/portmaster/compat-libs-optout.txt` to prevent automatic
+injection for diagnostics.
+
+The scan JSON reports this native compatibility pass through
+`aarch64_elfs_seen`, `aarch64_compat_lib_ports`,
+`aarch64_compat_lib_port_sonames`, `unresolved_sonames`,
+`aarch64_compat_lib_scripts_*`, and `readelf_available`. `portmaster --doctor`
+also surfaces `lib.unresolved_sonames` as an informational row so missing
+SONAMEs can be triaged without treating them as stock-OS drift or an app setup
+failure.
 
 The Godot hook also prefers an SD-installed aarch64 Mali userspace bundle when
 `$USERDATA_PATH/portmaster/compat/mali/aarch64/libmali.so.1` is present. This
