@@ -86,6 +86,17 @@ The staged candidate validator checks that `PortMaster.sh`, `pugwash`,
 `control.txt`, `device_info.txt`, and HarbourMaster `hardware.py` contain the
 expected Leaf markers before the live tree is touched.
 
+When opening upstream support or review threads, attach a current support bundle
+instead of asking maintainers to infer device state from screenshots:
+
+```sh
+./launch.sh --support-bundle /tmp/leaf-pm-support.zip
+```
+
+The bundle contains doctor output, launch-env snapshots, smoke evidence, scan
+reports, log tails, kernel/storage summaries, and installed lock/manifest
+versions without copying save data or stock rootfs state.
+
 Use `LEAF_PM_FORCE_UPDATE_CHECK=1` to force a fresh metadata poll,
 `LEAF_PM_SKIP_UPDATE_CHECK=1` to skip the manager-owned startup check,
 `LEAF_PM_UPDATE_VERSION_URL` to point at test metadata, and

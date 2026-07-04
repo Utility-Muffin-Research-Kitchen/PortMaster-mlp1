@@ -326,6 +326,34 @@ $USERDATA_PATH/portmaster/.leaf/armhf-scan.tsv
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.manifest
 ```
 
+## Support bundle
+
+For handoff to a Leaf tester or PortMaster maintainer, the optional pak can
+aggregate the existing diagnostics into one zip:
+
+```sh
+./launch.sh --support-bundle /tmp/leaf-pm-support.zip
+```
+
+If no path is supplied, the bundle is written under
+`$USERDATA_PATH/portmaster/.leaf/support/`. The command stages temporary files
+under that same SD/userdata support directory, then writes only the requested
+zip path. It does not recurse through broad userdata, save data, PulseAudio
+cookies, backups, staging downloads, or full runtime trees.
+
+The bundle includes doctor CFW JSON/text, UI state text, launch-env snapshots,
+Leaf manifests/update state, armhf scan reports, smoke matrix reports and logs,
+PortMaster manager/upstream log tails, recent port log tails, kernel/os/storage
+summaries, installed pak listings, and lock/manifest versions for the installed
+packs. It also includes a README with the standard SSH debug flow:
+
+- install or launch `SSHServer.pak` from `Apps/mlp1` when network shell access
+  is needed
+- prepend the app-local tools path:
+  `export PATH="$USERDATA_PATH/portmaster/compat/tools/aarch64/bin:$PATH"`
+- rerun probes from `PortMaster.pak`, such as `./launch.sh --doctor-cfw-text`
+  or `LEAF_PM_ENV_PROBE=1` on a port script
+
 ## Active smoke evidence
 
 `scripts/adb-portmaster-smoke-matrix.sh` keeps passive readiness rows by

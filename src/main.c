@@ -109,6 +109,36 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (argc > 1 && strcmp(argv[1], "--support-bundle") == 0) {
+        char script[PM_PATH_MAX];
+        if (pm_join3(script, sizeof(script), ctx.pak_dir,
+                     "scripts", "create-support-bundle.sh") != 0 ||
+            !pm_file_exists(script)) {
+            fprintf(stderr, "support bundle script missing\n");
+            return 1;
+        }
+        pm_env_override env[] = {
+            { "PLATFORM", ctx.platform },
+            { "SDCARD_PATH", ctx.sdcard_path },
+            { "USERDATA_PATH", ctx.userdata_path },
+            { "PORTMASTER_MLP1_PAK_DIR", ctx.pak_dir },
+            { "PORTMASTER_MLP1_DATA_DIR", ctx.data_dir },
+            { "PORTMASTER_CONTROLFOLDER", ctx.portmaster_dir },
+            { NULL, NULL },
+        };
+        char err[512];
+        char *argv_support[3] = { script, NULL, NULL };
+        if (argc > 2 && argv[2][0]) {
+            argv_support[1] = argv[2];
+        }
+        if (pm_run_argv_env_in_dir(ctx.pak_dir, argv_support, env,
+                                   err, sizeof(err)) != 0) {
+            fprintf(stderr, "support bundle failed: %s\n", err);
+            return 1;
+        }
+        return 0;
+    }
+
     if (argc > 2 && strcmp(argv[1], "--set-controller-layout") == 0) {
         pm_controller_layout layout = PM_CONTROLLER_LAYOUT_X360;
         char err[512];
