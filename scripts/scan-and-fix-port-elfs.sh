@@ -497,18 +497,36 @@ readelf_needed_sonames() {
     sed -n 's/.*Shared library:[[:space:]]*\[\([^]]*\)\].*/\1/p'
 }
 
+load_port_lib_index() {
+  local port="$1"
+  local port_path file base key
+  [ -n "${port_lib_index_loaded[$port]+x}" ] && return 0
+  port_lib_index_loaded["$port"]=1
+  port_path="$ports_dir/$port"
+  [ -d "$port_path" ] || return 0
+
+  while IFS= read -r -d '' file; do
+    base="${file##*/}"
+    [ -n "$base" ] || continue
+    key="$port|$base"
+    port_lib_index["$key"]=1
+  done < <(find "$port_path" -maxdepth 5 -type f -name '*.so*' -print0 2>/dev/null || true)
+}
+
 soname_in_port_local_tree() {
   local port="$1"
   local soname="$2"
-  local port_path found
+  local port_path key
+  [ -n "$port" ] || return 1
   case "$soname" in
     ""|*/*) return 1 ;;
   esac
   port_path="$ports_dir/$port"
   [ -d "$port_path" ] || return 1
   [ -e "$port_path/$soname" ] && return 0
-  found="$(find "$port_path" -maxdepth 5 -type f -name "$soname" -print -quit 2>/dev/null || true)"
-  [ -n "$found" ]
+  load_port_lib_index "$port"
+  key="$port|$soname"
+  [ -n "${port_lib_index[$key]+x}" ]
 }
 
 soname_in_stock_paths() {
@@ -1900,6 +1918,8 @@ declare -A manifest_script_sdl2_tag=()
 declare -A port_sdl2_aarch64=()
 declare -A port_sdl2_armhf=()
 declare -A aarch64_compat_sonames=()
+declare -A port_lib_index_loaded=()
+declare -A port_lib_index=()
 declare -A port_aarch64_compat_needed=()
 declare -A port_aarch64_unresolved=()
 declare -A aarch64_compat_sonames_seen=()

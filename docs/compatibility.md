@@ -151,9 +151,18 @@ game executable.
 The hook also wraps upstream `bind_directories` and `bind_files` after
 `control.txt` is sourced. The wrappers create only the parent path requested by
 the port at bind time, and strip a trailing slash from the destination before
-symlinking when `PM_CAN_MOUNT=N`. This keeps Pyxel, Ren'Py, AGS, and similar
-ports on app-local SD/userdata save/config paths without precreating
-port-specific directories and without touching stock eMMC/rootfs.
+symlinking when `PM_CAN_MOUNT=N`. `PM_CAN_MOUNT` defaults to upstream-compatible
+`Y`; the only automatic downgrade is a reboot-clean
+`/tmp/leaf-pm-mount-probe-failed` marker written by an explicit doctor mount
+probe failure. This keeps Pyxel, Ren'Py, AGS, and similar ports on app-local
+SD/userdata save/config paths without precreating port-specific directories and
+without touching stock eMMC/rootfs.
+
+Launch-env snapshots are diagnostic evidence, not launch-critical state. Normal
+port launches write the mode-specific snapshot at most once per boot using a
+`/tmp/leaf-pm-env-snapshot-*` marker; `LEAF_PM_ENV_PROBE=1` forces a fresh
+snapshot and also refreshes the unqualified `launch-env.*` files for support
+bundles and parity checks.
 
 Installed `.sh` port launchers also receive a small `LEAF_PM_PORT_ENV=1`
 normalization block before they source upstream `control.txt`. That block

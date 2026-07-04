@@ -85,7 +85,7 @@ bind_directories() {
   _leaf_pm_bind_target="\${1%/}"
   [ -n "\$_leaf_pm_bind_target" ] || _leaf_pm_bind_target="\$1"
   leaf_pm_bind_target_parent "\$_leaf_pm_bind_target"
-  if [ "\${PM_CAN_MOUNT:-N}" = "Y" ]; then
+  if [ "\${PM_CAN_MOUNT:-Y}" = "Y" ]; then
     [ -L "\$_leaf_pm_bind_target" ] && rm -f "\$_leaf_pm_bind_target" && echo "removed previous symlink \$_leaf_pm_bind_target"
     if [ -d "\$2" ]; then
       mkdir -p "\$_leaf_pm_bind_target"
@@ -105,7 +105,7 @@ bind_files() {
   _leaf_pm_bind_target="\${1%/}"
   [ -n "\$_leaf_pm_bind_target" ] || _leaf_pm_bind_target="\$1"
   leaf_pm_bind_target_parent "\$_leaf_pm_bind_target"
-  if [ "\${PM_CAN_MOUNT:-N}" = "Y" ]; then
+  if [ "\${PM_CAN_MOUNT:-Y}" = "Y" ]; then
     [ -L "\$_leaf_pm_bind_target" ] && rm -f "\$_leaf_pm_bind_target" && echo "removed previous symlink \$_leaf_pm_bind_target"
     if [ -f "\$2" ]; then
       touch "\$_leaf_pm_bind_target"
@@ -340,10 +340,10 @@ if [ -z "\${CFW_VERSION:-}" ] || [ "\$CFW_VERSION" = "Unknown" ]; then
 fi
 export CFW_NAME="\${CFW_NAME:-Leaf}"
 
-if [ -f /tmp/leaf-pm-mount-probe-ok ]; then
-  export PM_CAN_MOUNT=Y
-else
+if [ -f /tmp/leaf-pm-mount-probe-failed ]; then
   export PM_CAN_MOUNT=N
+else
+  export PM_CAN_MOUNT="\${PM_CAN_MOUNT:-Y}"
 fi
 
 if command -v taskset >/dev/null 2>&1 && taskset 0xF true >/dev/null 2>&1; then
@@ -444,8 +444,19 @@ leaf_pm_write_launch_env_snapshot() {
   esac
   _leaf_pm_snapshot_slug="\$(printf '%s' "\$_leaf_pm_snapshot_mode" | sed 's/[^A-Za-z0-9_-]/_/g')"
   [ -n "\$_leaf_pm_snapshot_slug" ] || _leaf_pm_snapshot_slug="port"
+  _leaf_pm_snapshot_force=0
+  case "\${LEAF_PM_ENV_PROBE:-0}" in
+    1|true|yes|TRUE|YES) _leaf_pm_snapshot_force=1 ;;
+  esac
+  _leaf_pm_snapshot_marker="/tmp/leaf-pm-env-snapshot-\$_leaf_pm_snapshot_slug"
+  if [ "\$_leaf_pm_snapshot_force" -ne 1 ] && [ -f "\$_leaf_pm_snapshot_marker" ]; then
+    return 0
+  fi
   leaf_pm_write_snapshot_pair "\$_leaf_pm_snapshot_mode" "launch-env-\$_leaf_pm_snapshot_slug" || return 1
-  leaf_pm_write_snapshot_pair "\$_leaf_pm_snapshot_mode" "launch-env" || return 1
+  if [ "\$_leaf_pm_snapshot_force" -eq 1 ]; then
+    leaf_pm_write_snapshot_pair "\$_leaf_pm_snapshot_mode" "launch-env" || return 1
+  fi
+  touch "\$_leaf_pm_snapshot_marker" 2>/dev/null || true
 }
 
 if declare -f get_controls >/dev/null 2>&1; then

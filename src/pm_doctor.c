@@ -28,6 +28,7 @@ typedef enum {
 } pm_check_status;
 
 #define PM_MOUNT_PROBE_MARKER "/tmp/leaf-pm-mount-probe-ok"
+#define PM_MOUNT_PROBE_FAILED_MARKER "/tmp/leaf-pm-mount-probe-failed"
 #define PM_SQUASHFS_MAGIC 0x73717368u
 
 static const char *status_text(pm_check_status status)
@@ -1043,6 +1044,7 @@ static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, 
                       qimg);
             int rc = capture_shell(cmd, output, sizeof(output));
             if (rc == 0) {
+                unlink(PM_MOUNT_PROBE_FAILED_MARKER);
                 FILE *marker = fopen(PM_MOUNT_PROBE_MARKER, "wb");
                 if (marker) {
                     fputs("ok\n", marker);
@@ -1050,6 +1052,11 @@ static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, 
                 }
             } else {
                 unlink(PM_MOUNT_PROBE_MARKER);
+                FILE *marker = fopen(PM_MOUNT_PROBE_FAILED_MARKER, "wb");
+                if (marker) {
+                    fputs("failed\n", marker);
+                    fclose(marker);
+                }
             }
             add_check(r, checks, "kernel.squashfs_mount_probe",
                       rc == 0 ? PM_CHECK_OK : PM_CHECK_FAIL,
@@ -1500,9 +1507,10 @@ static void check_env_contract(const pm_context *ctx, pm_doctor_report *r, cJSON
               "CFW_NAME=Leaf\nCFW_VERSION=<Leaf release manifest or manager version>\n"
               "DEVICE_NAME=Miniloong Pocket 1\nDEVICE_CPU=RK3566\n"
               "DEVICE_ARCH=aarch64\nDEVICE_RAM=1\nDISPLAY_WIDTH=960\nDISPLAY_HEIGHT=720\n"
-              "PM_CAN_MOUNT=<Y only after %s exists>\nTASKSET=<taskset 0xF only after execution probe>\n"
+              "PM_CAN_MOUNT=<Y unless %s exists; successful probe writes %s>\nTASKSET=<taskset 0xF only after execution probe>\n"
               "SDCARD_PATH=%s\nUSERDATA_PATH=%s\nPORTMASTER_CONTROLFOLDER=%s\n"
               "HM_PORTS_DIR=%s\nHM_SCRIPTS_DIR=%s",
+              PM_MOUNT_PROBE_FAILED_MARKER,
               PM_MOUNT_PROBE_MARKER,
               ctx->sdcard_path,
               ctx->userdata_path,

@@ -574,7 +574,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     const char *controller_config = pm_controller_layout_gui_sdl_config();
     char cfw_version[128];
     pm_resolve_cfw_version(ctx, cfw_version, sizeof(cfw_version));
-    const char *pm_can_mount = pm_file_exists("/tmp/leaf-pm-mount-probe-ok") ? "Y" : "N";
+    const char *pm_can_mount = pm_file_exists("/tmp/leaf-pm-mount-probe-failed") ? "N" : "Y";
     char taskset_value[32];
     if (pm_taskset_available()) {
         pm_copy(taskset_value, sizeof(taskset_value), "taskset 0xF");
