@@ -202,6 +202,68 @@ chmod 755 "$OUT_DIR/bin/grep"
 mkdir -p "$BUILD_DIR/licenses/grep"
 cp -f "$grep_src_dir/COPYING" "$BUILD_DIR/licenses/grep/COPYING"
 
+ncurses_version="$(read_lock tools.ncurses.version)"
+ncurses_url="$(read_lock tools.ncurses.source.url)"
+ncurses_expected_size="$(read_lock tools.ncurses.source.size)"
+ncurses_expected_sha256="$(read_lock tools.ncurses.source.sha256)"
+ncurses_tarball="$(download_source "ncurses-$ncurses_version.tar.gz" "$ncurses_url" "$ncurses_expected_size" "$ncurses_expected_sha256")"
+ncurses_src_dir="$container_work/ncurses-$ncurses_version"
+ncurses_prefix="$container_work/ncurses-prefix"
+mkdir -p "$ncurses_src_dir"
+tar -xf "$ncurses_tarball" -C "$ncurses_src_dir" --strip-components=1
+(
+  cd "$ncurses_src_dir"
+  ./configure \
+    --host=aarch64-buildroot-linux-gnu \
+    --prefix="$ncurses_prefix" \
+    --without-shared \
+    --with-normal \
+    --without-debug \
+    --without-cxx \
+    --without-cxx-binding \
+    --without-ada \
+    --without-manpages \
+    --without-progs \
+    --without-tests \
+    --enable-widec \
+    --disable-db-install
+  make -j"$(nproc)" libs
+  make install.libs install.includes
+)
+
+mkdir -p "$BUILD_DIR/licenses/ncurses"
+cp -f "$ncurses_src_dir/COPYING" "$BUILD_DIR/licenses/ncurses/COPYING"
+
+dialog_version="$(read_lock tools.dialog.version)"
+dialog_url="$(read_lock tools.dialog.source.url)"
+dialog_expected_size="$(read_lock tools.dialog.source.size)"
+dialog_expected_sha256="$(read_lock tools.dialog.source.sha256)"
+dialog_tarball="$(download_source "dialog-$dialog_version.tgz" "$dialog_url" "$dialog_expected_size" "$dialog_expected_sha256")"
+dialog_src_dir="$container_work/dialog-$dialog_version"
+mkdir -p "$dialog_src_dir"
+tar -xf "$dialog_tarball" -C "$dialog_src_dir" --strip-components=1
+(
+  cd "$dialog_src_dir"
+  CPPFLAGS="-I$ncurses_prefix/include -I$ncurses_prefix/include/ncursesw" \
+  LDFLAGS="-L$ncurses_prefix/lib" \
+  LIBS="-lncursesw" \
+    ./configure \
+      --host=aarch64-buildroot-linux-gnu \
+      --prefix=/usr \
+      --with-ncursesw \
+      --with-curses-dir="$ncurses_prefix" \
+      --disable-nls \
+      CC=aarch64-buildroot-linux-gnu-gcc \
+      CFLAGS="-Os"
+  make -j"$(nproc)" dialog
+  aarch64-buildroot-linux-gnu-strip dialog
+)
+
+cp -f "$dialog_src_dir/dialog" "$OUT_DIR/bin/dialog"
+chmod 755 "$OUT_DIR/bin/dialog"
+mkdir -p "$BUILD_DIR/licenses/dialog"
+cp -f "$dialog_src_dir/COPYING" "$BUILD_DIR/licenses/dialog/COPYING"
+
 cat >"$OUT_DIR/bin/sudo" <<'EOF'
 #!/bin/sh
 # Leaf PortMaster app-local sudo shim. The MLP1 launch session already runs as
@@ -292,6 +354,57 @@ EOF
 
 chmod 755 "$OUT_DIR/bin/sudo" "$OUT_DIR/bin/doas" "$OUT_DIR/bin/systemctl"
 
+cat >"$OUT_DIR/bin/xdelta3" <<'EOF'
+#!/bin/sh
+# Leaf PortMaster app-local xdelta3 shim. Upstream PortMaster ships the real
+# aarch64 xdelta3 binary in its SD-local control folder.
+control="${PORTMASTER_CONTROLFOLDER:-}"
+if [ -z "$control" ] && [ -n "${LEAF_PM_DATA_DIR:-}" ]; then
+  control="$LEAF_PM_DATA_DIR/PortMaster"
+fi
+if [ -z "$control" ] && [ -n "${PORTMASTER_MLP1_DATA_DIR:-}" ]; then
+  control="$PORTMASTER_MLP1_DATA_DIR/PortMaster"
+fi
+if [ -z "$control" ] && [ -n "${SDCARD_PATH:-}" ]; then
+  control="${SDCARD_PATH%/}/.userdata/${PLATFORM:-mlp1}/portmaster/PortMaster"
+fi
+
+tool="$control/xdelta3"
+if [ -n "$control" ] && [ -x "$tool" ]; then
+  exec "$tool" "$@"
+fi
+
+echo "leaf-xdelta3-shim: PortMaster xdelta3 binary not found; install PortMaster first" >&2
+exit 127
+EOF
+
+cat >"$OUT_DIR/bin/7z" <<'EOF'
+#!/bin/sh
+# Leaf PortMaster app-local 7z shim. Upstream PortMaster ships 7zzs.aarch64 in
+# its SD-local control folder; expose it under the common 7z/7za names.
+control="${PORTMASTER_CONTROLFOLDER:-}"
+if [ -z "$control" ] && [ -n "${LEAF_PM_DATA_DIR:-}" ]; then
+  control="$LEAF_PM_DATA_DIR/PortMaster"
+fi
+if [ -z "$control" ] && [ -n "${PORTMASTER_MLP1_DATA_DIR:-}" ]; then
+  control="$PORTMASTER_MLP1_DATA_DIR/PortMaster"
+fi
+if [ -z "$control" ] && [ -n "${SDCARD_PATH:-}" ]; then
+  control="${SDCARD_PATH%/}/.userdata/${PLATFORM:-mlp1}/portmaster/PortMaster"
+fi
+
+tool="$control/7zzs.aarch64"
+if [ -n "$control" ] && [ -x "$tool" ]; then
+  exec "$tool" "$@"
+fi
+
+echo "leaf-7z-shim: PortMaster 7zzs.aarch64 binary not found; install PortMaster first" >&2
+exit 127
+EOF
+cp -f "$OUT_DIR/bin/7z" "$OUT_DIR/bin/7za"
+
+chmod 755 "$OUT_DIR/bin/xdelta3" "$OUT_DIR/bin/7z" "$OUT_DIR/bin/7za"
+
 rsync_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/rsync" | awk '{print $1}')"
 rsync_binary_size="$(wc -c <"$OUT_DIR/bin/rsync" | tr -d ' ')"
 rsync_license_sha256="$(shasum -a 256 "$LICENSE_DIR/COPYING" | awk '{print $1}')"
@@ -309,12 +422,20 @@ findutils_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/findutils/COPYING
 grep_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/grep" | awk '{print $1}')"
 grep_binary_size="$(wc -c <"$OUT_DIR/bin/grep" | tr -d ' ')"
 grep_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/grep/COPYING" | awk '{print $1}')"
+ncurses_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/ncurses/COPYING" | awk '{print $1}')"
+dialog_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/dialog" | awk '{print $1}')"
+dialog_binary_size="$(wc -c <"$OUT_DIR/bin/dialog" | tr -d ' ')"
+dialog_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/dialog/COPYING" | awk '{print $1}')"
 sudo_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/sudo" | awk '{print $1}')"
 sudo_shim_size="$(wc -c <"$OUT_DIR/bin/sudo" | tr -d ' ')"
 doas_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/doas" | awk '{print $1}')"
 doas_shim_size="$(wc -c <"$OUT_DIR/bin/doas" | tr -d ' ')"
 systemctl_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/systemctl" | awk '{print $1}')"
 systemctl_shim_size="$(wc -c <"$OUT_DIR/bin/systemctl" | tr -d ' ')"
+xdelta3_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/xdelta3" | awk '{print $1}')"
+xdelta3_shim_size="$(wc -c <"$OUT_DIR/bin/xdelta3" | tr -d ' ')"
+seven_zip_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/7z" | awk '{print $1}')"
+seven_zip_shim_size="$(wc -c <"$OUT_DIR/bin/7z" | tr -d ' ')"
 
 cat >"$OUT_DIR/manifest.json" <<EOF
 {
@@ -425,6 +546,39 @@ cat >"$OUT_DIR/manifest.json" <<EOF
       }
     },
     {
+      "name": "dialog",
+      "version": "$dialog_version",
+      "path": "bin/dialog",
+      "size": $dialog_binary_size,
+      "sha256": "$dialog_binary_sha256",
+      "source": {
+        "url": "$dialog_url",
+        "size": $dialog_expected_size,
+        "sha256": "$dialog_expected_sha256"
+      },
+      "license": {
+        "spdx": "LGPL-2.1-only",
+        "path": "LICENSES/dialog/COPYING",
+        "sha256": "$dialog_license_sha256"
+      },
+      "static_dependencies": [
+        {
+          "name": "ncurses",
+          "version": "$ncurses_version",
+          "source": {
+            "url": "$ncurses_url",
+            "size": $ncurses_expected_size,
+            "sha256": "$ncurses_expected_sha256"
+          },
+          "license": {
+            "spdx": "MIT",
+            "path": "LICENSES/ncurses/COPYING",
+            "sha256": "$ncurses_license_sha256"
+          }
+        }
+      ]
+    },
+    {
       "name": "sudo",
       "version": "leaf-shim-1",
       "path": "bin/sudo",
@@ -455,6 +609,45 @@ cat >"$OUT_DIR/manifest.json" <<EOF
       "size": $systemctl_shim_size,
       "sha256": "$systemctl_shim_sha256",
       "kind": "app-local-systemd-compat-shim",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    },
+    {
+      "name": "xdelta3",
+      "version": "portmaster-controlfolder-shim-1",
+      "path": "bin/xdelta3",
+      "size": $xdelta3_shim_size,
+      "sha256": "$xdelta3_shim_sha256",
+      "kind": "app-local-portmaster-binary-shim",
+      "target": "PortMaster/xdelta3",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    },
+    {
+      "name": "7z",
+      "version": "portmaster-controlfolder-shim-1",
+      "path": "bin/7z",
+      "size": $seven_zip_shim_size,
+      "sha256": "$seven_zip_shim_sha256",
+      "kind": "app-local-portmaster-binary-shim",
+      "target": "PortMaster/7zzs.aarch64",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    },
+    {
+      "name": "7za",
+      "version": "portmaster-controlfolder-shim-1",
+      "path": "bin/7za",
+      "size": $seven_zip_shim_size,
+      "sha256": "$seven_zip_shim_sha256",
+      "kind": "app-local-portmaster-binary-shim",
+      "target": "PortMaster/7zzs.aarch64",
       "license": {
         "spdx": "MIT",
         "path": "LICENSE"

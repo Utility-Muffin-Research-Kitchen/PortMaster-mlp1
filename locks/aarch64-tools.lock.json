@@ -117,6 +117,58 @@
         "--disable-perl-regexp"
       ],
       "installed_path": "compat/tools/aarch64/bin/grep"
+    },
+    "ncurses": {
+      "name": "ncurses",
+      "version": "6.5",
+      "source": {
+        "url": "https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.5.tar.gz",
+        "size": 3688489,
+        "sha256": "136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6"
+      },
+      "license": {
+        "spdx": "MIT",
+        "source_path": "COPYING",
+        "installed_path": "LICENSES/ncurses/COPYING"
+      },
+      "configure": [
+        "--host=aarch64-buildroot-linux-gnu",
+        "--prefix=<build-private>",
+        "--without-shared",
+        "--with-normal",
+        "--without-debug",
+        "--without-cxx",
+        "--without-cxx-binding",
+        "--without-ada",
+        "--without-manpages",
+        "--without-progs",
+        "--without-tests",
+        "--enable-widec",
+        "--disable-db-install"
+      ],
+      "used_by": "dialog"
+    },
+    "dialog": {
+      "name": "dialog",
+      "version": "1.3-20260107",
+      "source": {
+        "url": "https://invisible-island.net/archives/dialog/dialog-1.3-20260107.tgz",
+        "size": 584313,
+        "sha256": "78b3dd18d95e50f0be8f9b9c1e7cffe28c9bf1cdf20d5b3ef17279c4da35c5b5"
+      },
+      "license": {
+        "spdx": "LGPL-2.1-only",
+        "source_path": "COPYING",
+        "installed_path": "LICENSES/dialog/COPYING"
+      },
+      "configure": [
+        "--host=aarch64-buildroot-linux-gnu",
+        "--prefix=/usr",
+        "--with-ncursesw",
+        "--with-curses-dir=<build-private>",
+        "--disable-nls"
+      ],
+      "installed_path": "compat/tools/aarch64/bin/dialog"
     }
   }
 }
