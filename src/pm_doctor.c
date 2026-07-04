@@ -603,6 +603,7 @@ static void check_tools(const pm_context *ctx, pm_doctor_report *r, cJSON *check
         { "systemctl", "required", false },
         { "dos2unix", "recommended", false },
         { "leaf-squashfs-check", "recommended", false },
+        { "squashfuse", "recommended", false },
         { "xdelta3", "recommended", false },
         { "dialog", "recommended", false },
         { "rsync", "recommended", false },

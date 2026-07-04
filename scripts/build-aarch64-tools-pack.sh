@@ -70,7 +70,7 @@ download_source() {
   printf '%s\n' "$tarball"
 }
 
-mkdir -p "$WORK_DIR/downloads" "$OUT_DIR/bin" "$LICENSE_DIR"
+mkdir -p "$WORK_DIR/downloads" "$OUT_DIR/bin" "$OUT_DIR/lib" "$LICENSE_DIR"
 
 container_work="$(mktemp -d /tmp/leaf-aarch64-tools.XXXXXX)"
 trap 'rm -rf "$container_work"' EXIT
@@ -294,6 +294,180 @@ chmod 755 "$OUT_DIR/bin/dialog"
 mkdir -p "$BUILD_DIR/licenses/dialog"
 cp -f "$dialog_src_dir/COPYING" "$BUILD_DIR/licenses/dialog/COPYING"
 
+zstd_version="$(read_lock tools.zstd.version)"
+zstd_url="$(read_lock tools.zstd.source.url)"
+zstd_expected_size="$(read_lock tools.zstd.source.size)"
+zstd_expected_sha256="$(read_lock tools.zstd.source.sha256)"
+zstd_tarball="$(download_source "zstd-$zstd_version.tar.gz" "$zstd_url" "$zstd_expected_size" "$zstd_expected_sha256")"
+zstd_src_dir="$container_work/zstd-$zstd_version"
+squashfuse_prefix="$container_work/squashfuse-prefix"
+mkdir -p "$zstd_src_dir" "$squashfuse_prefix"
+tar -xf "$zstd_tarball" -C "$zstd_src_dir" --strip-components=1
+(
+  cd "$zstd_src_dir"
+  make -C lib -j"$(nproc)" \
+    CC=aarch64-buildroot-linux-gnu-gcc \
+    AR=aarch64-buildroot-linux-gnu-ar \
+    RANLIB=aarch64-buildroot-linux-gnu-ranlib \
+    PREFIX="$squashfuse_prefix" \
+    BUILD_SHARED=yes \
+    BUILD_STATIC=yes \
+    install
+)
+mkdir -p "$BUILD_DIR/licenses/zstd"
+cp -f "$zstd_src_dir/LICENSE" "$BUILD_DIR/licenses/zstd/LICENSE"
+
+lz4_version="$(read_lock tools.lz4.version)"
+lz4_url="$(read_lock tools.lz4.source.url)"
+lz4_expected_size="$(read_lock tools.lz4.source.size)"
+lz4_expected_sha256="$(read_lock tools.lz4.source.sha256)"
+lz4_tarball="$(download_source "lz4-$lz4_version.tar.gz" "$lz4_url" "$lz4_expected_size" "$lz4_expected_sha256")"
+lz4_src_dir="$container_work/lz4-$lz4_version"
+mkdir -p "$lz4_src_dir"
+tar -xf "$lz4_tarball" -C "$lz4_src_dir" --strip-components=1
+(
+  cd "$lz4_src_dir"
+  make -C lib -j"$(nproc)" \
+    CC=aarch64-buildroot-linux-gnu-gcc \
+    AR=aarch64-buildroot-linux-gnu-ar \
+    PREFIX="$squashfuse_prefix" \
+    BUILD_SHARED=yes \
+    BUILD_STATIC=yes \
+    install
+)
+mkdir -p "$BUILD_DIR/licenses/lz4"
+cp -f "$lz4_src_dir/lib/LICENSE" "$BUILD_DIR/licenses/lz4/LICENSE"
+
+xz_version="$(read_lock tools.xz.version)"
+xz_url="$(read_lock tools.xz.source.url)"
+xz_expected_size="$(read_lock tools.xz.source.size)"
+xz_expected_sha256="$(read_lock tools.xz.source.sha256)"
+xz_tarball="$(download_source "xz-$xz_version.tar.gz" "$xz_url" "$xz_expected_size" "$xz_expected_sha256")"
+xz_src_dir="$container_work/xz-$xz_version"
+mkdir -p "$xz_src_dir"
+tar -xf "$xz_tarball" -C "$xz_src_dir" --strip-components=1
+(
+  cd "$xz_src_dir"
+  ./configure \
+    --host=aarch64-buildroot-linux-gnu \
+    --prefix="$squashfuse_prefix" \
+    --disable-nls \
+    --disable-xz \
+    --disable-xzdec \
+    --disable-lzmadec \
+    --disable-lzmainfo \
+    --disable-doc \
+    --disable-scripts \
+    --enable-shared \
+    --enable-static \
+    CC=aarch64-buildroot-linux-gnu-gcc \
+    CFLAGS="-Os"
+  make -j"$(nproc)"
+  make install
+)
+mkdir -p "$BUILD_DIR/licenses/xz"
+cp -f "$xz_src_dir/COPYING" "$BUILD_DIR/licenses/xz/COPYING"
+
+libfuse_version="$(read_lock tools.libfuse.version)"
+libfuse_url="$(read_lock tools.libfuse.source.url)"
+libfuse_expected_size="$(read_lock tools.libfuse.source.size)"
+libfuse_expected_sha256="$(read_lock tools.libfuse.source.sha256)"
+libfuse_tarball="$(download_source "fuse-$libfuse_version.tar.gz" "$libfuse_url" "$libfuse_expected_size" "$libfuse_expected_sha256")"
+libfuse_src_dir="$container_work/fuse-$libfuse_version"
+libfuse_build_dir="$container_work/fuse-build"
+libfuse_dest_dir="$container_work/fuse-dest"
+meson_cross_file="$container_work/aarch64-meson-cross.txt"
+mkdir -p "$libfuse_src_dir"
+tar -xf "$libfuse_tarball" -C "$libfuse_src_dir" --strip-components=1
+cat >"$meson_cross_file" <<EOF
+[binaries]
+c = 'aarch64-buildroot-linux-gnu-gcc'
+ar = 'aarch64-buildroot-linux-gnu-ar'
+strip = 'aarch64-buildroot-linux-gnu-strip'
+pkg-config = '$TOOLCHAIN_ROOT/bin/pkg-config'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'aarch64'
+cpu = 'aarch64'
+endian = 'little'
+
+[properties]
+sys_root = '$TARGET_SYSROOT'
+pkg_config_libdir = '$TARGET_SYSROOT/usr/lib/pkgconfig'
+EOF
+meson setup "$libfuse_build_dir" "$libfuse_src_dir" \
+  --cross-file "$meson_cross_file" \
+  --prefix="$squashfuse_prefix" \
+  --libdir=lib \
+  --buildtype=minsize \
+  -Dexamples=false \
+  -Dtests=false \
+  -Dutils=false \
+  -Duseroot=false \
+  -Dudevrulesdir=/tmp \
+  -Dinitscriptdir= \
+  -Ddisable-mtab=true
+ninja -C "$libfuse_build_dir"
+DESTDIR="$libfuse_dest_dir" ninja -C "$libfuse_build_dir" install
+cp -a "$libfuse_dest_dir$squashfuse_prefix"/. "$squashfuse_prefix"/
+mkdir -p "$BUILD_DIR/licenses/libfuse"
+cp -f "$libfuse_src_dir/LICENSE" "$BUILD_DIR/licenses/libfuse/LICENSE"
+
+squashfuse_version="$(read_lock tools.squashfuse.version)"
+squashfuse_url="$(read_lock tools.squashfuse.source.url)"
+squashfuse_expected_size="$(read_lock tools.squashfuse.source.size)"
+squashfuse_expected_sha256="$(read_lock tools.squashfuse.source.sha256)"
+squashfuse_tarball="$(download_source "squashfuse-$squashfuse_version.tar.gz" "$squashfuse_url" "$squashfuse_expected_size" "$squashfuse_expected_sha256")"
+squashfuse_src_dir="$container_work/squashfuse-$squashfuse_version"
+mkdir -p "$squashfuse_src_dir"
+tar -xf "$squashfuse_tarball" -C "$squashfuse_src_dir" --strip-components=1
+(
+  cd "$squashfuse_src_dir"
+  ./autogen.sh
+  PKG_CONFIG_PATH="$squashfuse_prefix/lib/pkgconfig" \
+  CPPFLAGS="-I$squashfuse_prefix/include -I$squashfuse_prefix/include/fuse3" \
+  LDFLAGS="-L$squashfuse_prefix/lib" \
+    ./configure \
+      --host=aarch64-buildroot-linux-gnu \
+      --prefix="$squashfuse_prefix" \
+      --disable-demo \
+      --disable-high-level \
+      --enable-multithreading \
+      CC=aarch64-buildroot-linux-gnu-gcc \
+      CFLAGS="-Os"
+  make -j"$(nproc)"
+  aarch64-buildroot-linux-gnu-strip squashfuse_ll
+)
+mkdir -p "$BUILD_DIR/licenses/squashfuse"
+cp -f "$squashfuse_src_dir/LICENSE" "$BUILD_DIR/licenses/squashfuse/LICENSE"
+
+cp -f "$squashfuse_src_dir/squashfuse_ll" "$OUT_DIR/bin/squashfuse_ll.bin"
+patchelf --set-rpath '$ORIGIN/../lib' "$OUT_DIR/bin/squashfuse_ll.bin"
+cp -f "$squashfuse_prefix/lib/libfuse3.so.$libfuse_version" "$OUT_DIR/lib/libfuse3.so.4"
+cp -f "$squashfuse_prefix/lib/libzstd.so.$zstd_version" "$OUT_DIR/lib/libzstd.so.1"
+cp -f "$squashfuse_prefix/lib/liblz4.so.$lz4_version" "$OUT_DIR/lib/liblz4.so.1"
+cp -f "$squashfuse_prefix/lib/liblzma.so.$xz_version" "$OUT_DIR/lib/liblzma.so.5"
+aarch64-buildroot-linux-gnu-strip \
+  "$OUT_DIR/lib/libfuse3.so.4" \
+  "$OUT_DIR/lib/libzstd.so.1" \
+  "$OUT_DIR/lib/liblz4.so.1" \
+  "$OUT_DIR/lib/liblzma.so.5" 2>/dev/null || true
+
+cat >"$OUT_DIR/bin/squashfuse" <<'EOF'
+#!/bin/sh
+# Leaf PortMaster app-local squashfuse wrapper. Libraries live beside the
+# optional pak's tools, so the stock OS library search path is left untouched.
+_leaf_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+_leaf_lib_dir="$(CDPATH= cd -- "$_leaf_dir/../lib" && pwd)"
+LD_LIBRARY_PATH="$_leaf_lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH
+exec "$_leaf_dir/squashfuse_ll.bin" "$@"
+EOF
+chmod 755 "$OUT_DIR/bin/squashfuse" "$OUT_DIR/bin/squashfuse_ll.bin" \
+  "$OUT_DIR/lib/libfuse3.so.4" "$OUT_DIR/lib/libzstd.so.1" \
+  "$OUT_DIR/lib/liblz4.so.1" "$OUT_DIR/lib/liblzma.so.5"
+
 cat >"$OUT_DIR/bin/sudo" <<'EOF'
 #!/bin/sh
 # Leaf PortMaster app-local sudo shim. The MLP1 launch session already runs as
@@ -328,6 +502,56 @@ done
 [ "$#" -gt 0 ] || exit 0
 _leaf_sudo_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 _leaf_squashfs_check="$_leaf_sudo_dir/leaf-squashfs-check"
+_leaf_squashfuse="$_leaf_sudo_dir/squashfuse"
+
+_leaf_squashfs_status() {
+  [ -x "$_leaf_squashfs_check" ] || return 0
+  LEAF_PM_SQUASHFS_CHECK_QUIET=1 "$_leaf_squashfs_check" "$1"
+}
+
+_leaf_report_squashfs_status() {
+  [ -x "$_leaf_squashfs_check" ] || return 0
+  "$_leaf_squashfs_check" "$1"
+}
+
+_leaf_find_squashfs_mount_args() {
+  _leaf_mount_img=""
+  _leaf_mount_target=""
+  _leaf_skip_next=0
+  _leaf_seen_mount=0
+
+  for _leaf_arg in "$@"; do
+    if [ "$_leaf_seen_mount" -eq 0 ]; then
+      _leaf_seen_mount=1
+      continue
+    fi
+    if [ "$_leaf_skip_next" -eq 1 ]; then
+      _leaf_skip_next=0
+      continue
+    fi
+    case "$_leaf_arg" in
+      -o|-t|-U|-L|--options|--types)
+        _leaf_skip_next=1
+        continue
+        ;;
+      -*)
+        continue
+        ;;
+    esac
+
+    if [ -z "$_leaf_mount_img" ]; then
+      case "$_leaf_arg" in
+        *.squashfs)
+          _leaf_mount_img="$_leaf_arg"
+          continue
+          ;;
+      esac
+    elif [ -z "$_leaf_mount_target" ]; then
+      _leaf_mount_target="$_leaf_arg"
+      break
+    fi
+  done
+}
 
 case "${1##*/}" in
   harbourmaster)
@@ -345,20 +569,44 @@ case "${1##*/}" in
     "$@"
     _leaf_rc=$?
     if [ "$_leaf_rc" -eq 0 ] && [ -n "$_leaf_runtime" ] && [ -x "$_leaf_squashfs_check" ]; then
-      "$_leaf_squashfs_check" "$_leaf_runtime" || exit $?
+      _leaf_squashfs_status "$_leaf_runtime"
+      _leaf_check_rc=$?
+      case "$_leaf_check_rc" in
+        0)
+          ;;
+        66)
+          if [ ! -x "$_leaf_squashfuse" ]; then
+            _leaf_report_squashfs_status "$_leaf_runtime" || exit $?
+          fi
+          ;;
+        *)
+          _leaf_report_squashfs_status "$_leaf_runtime" || exit $?
+          ;;
+      esac
     fi
     exit "$_leaf_rc"
     ;;
   mount)
     if [ -x "$_leaf_squashfs_check" ]; then
-      for _leaf_arg in "$@"; do
-        case "$_leaf_arg" in
-          *.squashfs)
-            "$_leaf_squashfs_check" "$_leaf_arg" || exit $?
-            break
+      _leaf_find_squashfs_mount_args "$@"
+      if [ -n "$_leaf_mount_img" ]; then
+        _leaf_squashfs_status "$_leaf_mount_img"
+        _leaf_check_rc=$?
+        case "$_leaf_check_rc" in
+          0)
+            ;;
+          66)
+            if [ -x "$_leaf_squashfuse" ] && [ -n "$_leaf_mount_target" ]; then
+              echo "Leaf PortMaster: kernel cannot mount '${_leaf_mount_img##*/}'; using app-local squashfuse at $_leaf_mount_target" >&2
+              exec "$_leaf_squashfuse" -o ro "$_leaf_mount_img" "$_leaf_mount_target"
+            fi
+            _leaf_report_squashfs_status "$_leaf_mount_img" || exit $?
+            ;;
+          *)
+            _leaf_report_squashfs_status "$_leaf_mount_img" || exit $?
             ;;
         esac
-      done
+      fi
     fi
     ;;
 esac
@@ -429,8 +677,13 @@ _leaf_pm_config_has() {
   zcat /proc/config.gz 2>/dev/null | grep -Eq "^${_leaf_pm_symbol}=(y|m)$"
 }
 
+_leaf_pm_log() {
+  [ "${LEAF_PM_SQUASHFS_CHECK_QUIET:-0}" = "1" ] && return 0
+  echo "$*" >&2
+}
+
 if [ "$#" -lt 1 ]; then
-  echo "Leaf PortMaster: leaf-squashfs-check requires a runtime image path" >&2
+  _leaf_pm_log "Leaf PortMaster: leaf-squashfs-check requires a runtime image path"
   exit 64
 fi
 
@@ -443,11 +696,11 @@ fi
 
 set -- $(od -An -tu1 -N22 "$_leaf_pm_path" 2>/dev/null)
 if [ "$#" -lt 22 ]; then
-  echo "Leaf PortMaster: cannot read squashfs header: $_leaf_pm_path" >&2
+  _leaf_pm_log "Leaf PortMaster: cannot read squashfs header: $_leaf_pm_path"
   exit 65
 fi
 if [ "$1" != "104" ] || [ "$2" != "115" ] || [ "$3" != "113" ] || [ "$4" != "115" ]; then
-  echo "Leaf PortMaster: bad squashfs magic: $_leaf_pm_path" >&2
+  _leaf_pm_log "Leaf PortMaster: bad squashfs magic: $_leaf_pm_path"
   exit 65
 fi
 
@@ -457,7 +710,7 @@ _leaf_pm_name="$(_leaf_pm_name_for_id "$_leaf_pm_id")"
 _leaf_pm_symbol="$(_leaf_pm_symbol_for_id "$_leaf_pm_id" 2>/dev/null || true)"
 
 if [ -z "$_leaf_pm_symbol" ]; then
-  echo "Leaf PortMaster: runtime squashfs '${_leaf_pm_path##*/}' uses unknown compression id $_leaf_pm_id; refusing a likely-broken mount." >&2
+  _leaf_pm_log "Leaf PortMaster: runtime squashfs '${_leaf_pm_path##*/}' uses unknown compression id $_leaf_pm_id; refusing a likely-broken mount."
   exit 65
 fi
 
@@ -471,8 +724,8 @@ if [ "$_leaf_pm_config_rc" -eq 2 ]; then
   exit 0
 fi
 
-echo "Leaf PortMaster: runtime squashfs '${_leaf_pm_path##*/}' uses $_leaf_pm_name (id $_leaf_pm_id), but this kernel lacks $_leaf_pm_symbol; squashfuse fallback is not installed yet." >&2
-exit 65
+_leaf_pm_log "Leaf PortMaster: runtime squashfs '${_leaf_pm_path##*/}' uses $_leaf_pm_name (id $_leaf_pm_id), but this kernel lacks $_leaf_pm_symbol; app-local squashfuse fallback is required."
+exit 66
 EOF
 
 cat >"$OUT_DIR/bin/doas" <<'EOF'
@@ -849,6 +1102,23 @@ ncurses_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/ncurses/COPYING" | 
 dialog_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/dialog" | awk '{print $1}')"
 dialog_binary_size="$(wc -c <"$OUT_DIR/bin/dialog" | tr -d ' ')"
 dialog_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/dialog/COPYING" | awk '{print $1}')"
+squashfuse_wrapper_sha256="$(shasum -a 256 "$OUT_DIR/bin/squashfuse" | awk '{print $1}')"
+squashfuse_wrapper_size="$(wc -c <"$OUT_DIR/bin/squashfuse" | tr -d ' ')"
+squashfuse_binary_sha256="$(shasum -a 256 "$OUT_DIR/bin/squashfuse_ll.bin" | awk '{print $1}')"
+squashfuse_binary_size="$(wc -c <"$OUT_DIR/bin/squashfuse_ll.bin" | tr -d ' ')"
+libfuse_binary_sha256="$(shasum -a 256 "$OUT_DIR/lib/libfuse3.so.4" | awk '{print $1}')"
+libfuse_binary_size="$(wc -c <"$OUT_DIR/lib/libfuse3.so.4" | tr -d ' ')"
+zstd_binary_sha256="$(shasum -a 256 "$OUT_DIR/lib/libzstd.so.1" | awk '{print $1}')"
+zstd_binary_size="$(wc -c <"$OUT_DIR/lib/libzstd.so.1" | tr -d ' ')"
+lz4_binary_sha256="$(shasum -a 256 "$OUT_DIR/lib/liblz4.so.1" | awk '{print $1}')"
+lz4_binary_size="$(wc -c <"$OUT_DIR/lib/liblz4.so.1" | tr -d ' ')"
+xz_binary_sha256="$(shasum -a 256 "$OUT_DIR/lib/liblzma.so.5" | awk '{print $1}')"
+xz_binary_size="$(wc -c <"$OUT_DIR/lib/liblzma.so.5" | tr -d ' ')"
+squashfuse_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/squashfuse/LICENSE" | awk '{print $1}')"
+libfuse_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/libfuse/LICENSE" | awk '{print $1}')"
+zstd_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/zstd/LICENSE" | awk '{print $1}')"
+lz4_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/lz4/LICENSE" | awk '{print $1}')"
+xz_license_sha256="$(shasum -a 256 "$BUILD_DIR/licenses/xz/COPYING" | awk '{print $1}')"
 sudo_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/sudo" | awk '{print $1}')"
 sudo_shim_size="$(wc -c <"$OUT_DIR/bin/sudo" | tr -d ' ')"
 doas_shim_sha256="$(shasum -a 256 "$OUT_DIR/bin/doas" | awk '{print $1}')"
@@ -1031,6 +1301,99 @@ cat >"$OUT_DIR/manifest.json" <<EOF
           }
         }
       ]
+    },
+    {
+      "name": "squashfuse",
+      "version": "$squashfuse_version",
+      "path": "bin/squashfuse",
+      "size": $squashfuse_wrapper_size,
+      "sha256": "$squashfuse_wrapper_sha256",
+      "kind": "app-local-squashfs-fuse-wrapper",
+      "source": {
+        "url": "$squashfuse_url",
+        "size": $squashfuse_expected_size,
+        "sha256": "$squashfuse_expected_sha256"
+      },
+      "binary": {
+        "path": "bin/squashfuse_ll.bin",
+        "size": $squashfuse_binary_size,
+        "sha256": "$squashfuse_binary_sha256"
+      },
+      "runtime_libraries": [
+        {
+          "name": "libfuse3",
+          "version": "$libfuse_version",
+          "path": "lib/libfuse3.so.4",
+          "size": $libfuse_binary_size,
+          "sha256": "$libfuse_binary_sha256",
+          "source": {
+            "url": "$libfuse_url",
+            "size": $libfuse_expected_size,
+            "sha256": "$libfuse_expected_sha256"
+          },
+          "license": {
+            "spdx": "LGPL-2.1-only",
+            "path": "LICENSES/libfuse/LICENSE",
+            "sha256": "$libfuse_license_sha256"
+          }
+        },
+        {
+          "name": "libzstd",
+          "version": "$zstd_version",
+          "path": "lib/libzstd.so.1",
+          "size": $zstd_binary_size,
+          "sha256": "$zstd_binary_sha256",
+          "source": {
+            "url": "$zstd_url",
+            "size": $zstd_expected_size,
+            "sha256": "$zstd_expected_sha256"
+          },
+          "license": {
+            "spdx": "BSD-3-Clause OR GPL-2.0-only",
+            "path": "LICENSES/zstd/LICENSE",
+            "sha256": "$zstd_license_sha256"
+          }
+        },
+        {
+          "name": "liblz4",
+          "version": "$lz4_version",
+          "path": "lib/liblz4.so.1",
+          "size": $lz4_binary_size,
+          "sha256": "$lz4_binary_sha256",
+          "source": {
+            "url": "$lz4_url",
+            "size": $lz4_expected_size,
+            "sha256": "$lz4_expected_sha256"
+          },
+          "license": {
+            "spdx": "BSD-2-Clause OR GPL-2.0-only",
+            "path": "LICENSES/lz4/LICENSE",
+            "sha256": "$lz4_license_sha256"
+          }
+        },
+        {
+          "name": "liblzma",
+          "version": "$xz_version",
+          "path": "lib/liblzma.so.5",
+          "size": $xz_binary_size,
+          "sha256": "$xz_binary_sha256",
+          "source": {
+            "url": "$xz_url",
+            "size": $xz_expected_size,
+            "sha256": "$xz_expected_sha256"
+          },
+          "license": {
+            "spdx": "0BSD AND LGPL-2.1-or-later",
+            "path": "LICENSES/xz/COPYING",
+            "sha256": "$xz_license_sha256"
+          }
+        }
+      ],
+      "license": {
+        "spdx": "BSD-2-Clause",
+        "path": "LICENSES/squashfuse/LICENSE",
+        "sha256": "$squashfuse_license_sha256"
+      }
     },
     {
       "name": "sudo",

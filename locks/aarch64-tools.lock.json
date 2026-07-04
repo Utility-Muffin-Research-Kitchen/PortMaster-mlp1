@@ -190,6 +190,88 @@
         "--disable-nls"
       ],
       "installed_path": "compat/tools/aarch64/bin/dialog"
+    },
+    "zstd": {
+      "name": "zstd",
+      "version": "1.5.7",
+      "source": {
+        "url": "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz",
+        "size": 2434947,
+        "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3"
+      },
+      "license": {
+        "spdx": "BSD-3-Clause OR GPL-2.0-only",
+        "source_path": "LICENSE",
+        "installed_path": "LICENSES/zstd/LICENSE"
+      },
+      "used_by": "squashfuse"
+    },
+    "lz4": {
+      "name": "lz4",
+      "version": "1.10.0",
+      "source": {
+        "url": "https://github.com/lz4/lz4/archive/refs/tags/v1.10.0.tar.gz",
+        "size": 387114,
+        "sha256": "537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b"
+      },
+      "license": {
+        "spdx": "BSD-2-Clause OR GPL-2.0-only",
+        "source_path": "lib/LICENSE",
+        "installed_path": "LICENSES/lz4/LICENSE"
+      },
+      "used_by": "squashfuse"
+    },
+    "xz": {
+      "name": "xz",
+      "version": "5.8.1",
+      "source": {
+        "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.gz",
+        "size": 2587189,
+        "sha256": "507825b599356c10dca1cd720c9d0d0c9d5400b9de300af00e4d1ea150795543"
+      },
+      "license": {
+        "spdx": "0BSD AND LGPL-2.1-or-later",
+        "source_path": "COPYING",
+        "installed_path": "LICENSES/xz/COPYING"
+      },
+      "used_by": "squashfuse"
+    },
+    "libfuse": {
+      "name": "libfuse",
+      "version": "3.17.4",
+      "source": {
+        "url": "https://github.com/libfuse/libfuse/releases/download/fuse-3.17.4/fuse-3.17.4.tar.gz",
+        "size": 7307414,
+        "sha256": "df9e40ae927b73dc702d0bce7925c0c618af47ad0b13204fbf2be66e54d8528b"
+      },
+      "license": {
+        "spdx": "LGPL-2.1-only",
+        "source_path": "LICENSE",
+        "installed_path": "LICENSES/libfuse/LICENSE"
+      },
+      "used_by": "squashfuse"
+    },
+    "squashfuse": {
+      "name": "squashfuse",
+      "version": "0.6.2",
+      "source": {
+        "url": "https://github.com/vasi/squashfuse/archive/refs/tags/0.6.2.tar.gz",
+        "size": 76586,
+        "sha256": "ae194df463ac5a9cbb25f94021d44bfb14dc21a0fc577e16348eca2fdc77c83b"
+      },
+      "license": {
+        "spdx": "BSD-2-Clause",
+        "source_path": "LICENSE",
+        "installed_path": "LICENSES/squashfuse/LICENSE"
+      },
+      "configure": [
+        "--host=aarch64-buildroot-linux-gnu",
+        "--prefix=<build-private>",
+        "--disable-demo",
+        "--disable-high-level",
+        "--enable-multithreading"
+      ],
+      "installed_path": "compat/tools/aarch64/bin/squashfuse"
     }
   },
   "toolchain_artifacts": {

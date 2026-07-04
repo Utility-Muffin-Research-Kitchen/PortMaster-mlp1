@@ -349,24 +349,27 @@ MLP1 had seven installed runtime images, all gzip/id 1, and the row passed with
 (`zstd (id 6, kernel missing)`) and was removed immediately afterward.
 
 For port-visible failures, the app-local tools pack installs
-`leaf-squashfs-check` and routes the `sudo` shim through it for two cases:
+`leaf-squashfs-check`, `squashfuse`, and the private shared libraries needed
+by `squashfuse` under `$USERDATA_PATH/portmaster/compat/tools/aarch64`. The
+fallback is loaded only through the optional `PortMaster.pak` tool path; it
+does not install commands, libraries, kernel modules, or mount configuration on
+the stock OS/eMMC.
+
+The `sudo` shim routes through the preflight for two cases:
 
 - after `$ESUDO .../harbourmaster ... runtime_check <runtime>.squashfs`
-  succeeds, so a newly downloaded unsupported runtime is reported immediately
-- before `$ESUDO mount .../*.squashfs ...`, so unsupported images produce a
-  clear Leaf PortMaster log line and exit before the kernel mount path can emit
-  a generic `wrong fs type` error
+  succeeds, so a newly downloaded unsupported runtime is noticed immediately
+  while still allowing launch to continue when the app-local fallback is present
+- before `$ESUDO mount .../*.squashfs ...`, so kernel-supported images continue
+  to use the normal stock kernel mount path, while zstd/lz4 images are mounted
+  through app-local `squashfuse`
 
 The helper is SD/userdata-local and is only on PATH when the optional
-`PortMaster.pak` has installed its tools. On 2026-07-04 a synthetic zstd header
-returned exit 65 through direct `leaf-squashfs-check`, through `sudo mount`,
-and through a fake post-`runtime_check` command, with the message
-`uses zstd (id 6), but this kernel lacks CONFIG_SQUASHFS_ZSTD`.
-
-The next compatibility step is an app-local `squashfuse` fallback for zstd/lz4.
-Until that lands, detection is intentionally conservative: zstd/lz4 images are
-reported as unsupported rather than silently trying a kernel mount that cannot
-work on stock MLP1.
+`PortMaster.pak` has installed its tools. Unsupported-but-known formats return
+exit 66 from `leaf-squashfs-check`, which lets `sudo mount` distinguish "use
+fallback" from corrupt/unknown images. The fallback creates only the requested
+runtime mount in the current launch session; it is cleared by unmounting or by
+reboot and leaves the stock OS untouched.
 
 ## Support bundle
 
