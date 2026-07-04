@@ -326,6 +326,33 @@ $USERDATA_PATH/portmaster/.leaf/armhf-scan.tsv
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.manifest
 ```
 
+## Runtime squashfs formats
+
+MLP1 stock firmware exposes squashfs with gzip/zlib, lzo, and xz compression
+support through the kernel config. It does not expose `CONFIG_SQUASHFS_ZSTD`
+or `CONFIG_SQUASHFS_LZ4`, so zstd/lz4 runtime images must not be treated as
+kernel-mountable on this device.
+
+The CFW doctor reads each installed runtime image under
+`$USERDATA_PATH/portmaster/PortMaster/libs/*.squashfs` directly from the
+squashfs superblock and reports the compression id in
+`kernel.squashfs_runtime_formats`. Supported ids are `1=gzip`, `2=lzma`,
+`3=lzo`, `4=xz`, `5=lz4`, and `6=zstd`. Unsupported installed images produce a
+doctor FAIL with the exact image name and format instead of leaving the user to
+debug a later mount error.
+
+The smoke matrix also publishes that doctor check as a dedicated
+`doctor/kernel.squashfs_runtime_formats` TSV row. On 2026-07-04 the connected
+MLP1 had seven installed runtime images, all gzip/id 1, and the row passed with
+`unsupported=0 unreadable=0 unknown=0`. A temporary SD-only synthetic
+`leaf-test-zstd.squashfs` header produced the expected FAIL
+(`zstd (id 6, kernel missing)`) and was removed immediately afterward.
+
+The next compatibility step is an app-local `squashfuse` fallback for zstd/lz4.
+Until that lands, detection is intentionally conservative: zstd/lz4 images are
+reported as unsupported rather than silently trying a kernel mount that cannot
+work on stock MLP1.
+
 ## Support bundle
 
 For handoff to a Leaf tester or PortMaster maintainer, the optional pak can

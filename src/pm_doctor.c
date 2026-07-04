@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,7 @@ typedef enum {
 } pm_check_status;
 
 #define PM_MOUNT_PROBE_MARKER "/tmp/leaf-pm-mount-probe-ok"
+#define PM_SQUASHFS_MAGIC 0x73717368u
 
 static const char *status_text(pm_check_status status)
 {
@@ -140,6 +142,115 @@ static void trim_trailing(char *s)
 static bool contains(const char *haystack, const char *needle)
 {
     return haystack && needle && strstr(haystack, needle) != NULL;
+}
+
+static const char *squashfs_compression_name(unsigned id)
+{
+    switch (id) {
+        case 1: return "gzip";
+        case 2: return "lzma";
+        case 3: return "lzo";
+        case 4: return "xz";
+        case 5: return "lz4";
+        case 6: return "zstd";
+        default: return "unknown";
+    }
+}
+
+static bool config_has_enabled(const char *config, const char *name)
+{
+    char y[64];
+    char m[64];
+    if (!config || !name ||
+        pm_format(y, sizeof(y), "%s=y", name) != 0 ||
+        pm_format(m, sizeof(m), "%s=m", name) != 0) {
+        return false;
+    }
+    return contains(config, y) || contains(config, m);
+}
+
+typedef enum {
+    PM_KERNEL_SUPPORT_NO = 0,
+    PM_KERNEL_SUPPORT_YES,
+    PM_KERNEL_SUPPORT_UNKNOWN,
+} pm_kernel_support;
+
+static pm_kernel_support squashfs_kernel_support(unsigned id,
+                                                 const char *config,
+                                                 bool has_readable_config,
+                                                 bool has_squashfs)
+{
+    if (!has_squashfs) {
+        return PM_KERNEL_SUPPORT_NO;
+    }
+    if (!has_readable_config) {
+        return PM_KERNEL_SUPPORT_UNKNOWN;
+    }
+
+    const char *symbol = NULL;
+    switch (id) {
+        case 1: symbol = "CONFIG_SQUASHFS_ZLIB"; break;
+        case 2: symbol = "CONFIG_SQUASHFS_LZMA"; break;
+        case 3: symbol = "CONFIG_SQUASHFS_LZO"; break;
+        case 4: symbol = "CONFIG_SQUASHFS_XZ"; break;
+        case 5: symbol = "CONFIG_SQUASHFS_LZ4"; break;
+        case 6: symbol = "CONFIG_SQUASHFS_ZSTD"; break;
+        default: return PM_KERNEL_SUPPORT_NO;
+    }
+
+    return config_has_enabled(config, symbol) ? PM_KERNEL_SUPPORT_YES
+                                             : PM_KERNEL_SUPPORT_NO;
+}
+
+static int read_squashfs_compression_id(const char *path,
+                                        unsigned *id,
+                                        char *err,
+                                        size_t err_size)
+{
+    if (err && err_size > 0) {
+        err[0] = '\0';
+    }
+    if (id) {
+        *id = 0;
+    }
+    if (!path || !id) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "%s", "missing squashfs path");
+        }
+        return -1;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "open failed: %s", strerror(errno));
+        }
+        return -1;
+    }
+
+    unsigned char header[22];
+    size_t got = fread(header, 1, sizeof(header), fp);
+    fclose(fp);
+    if (got != sizeof(header)) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "short squashfs header");
+        }
+        return -1;
+    }
+
+    uint32_t magic = (uint32_t)header[0] |
+                     ((uint32_t)header[1] << 8) |
+                     ((uint32_t)header[2] << 16) |
+                     ((uint32_t)header[3] << 24);
+    if (magic != PM_SQUASHFS_MAGIC) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "bad squashfs magic 0x%08x", magic);
+        }
+        return -1;
+    }
+
+    *id = (unsigned)header[20] | ((unsigned)header[21] << 8);
+    return 0;
 }
 
 static int shell_quote(char *out, size_t out_size, const char *value)
@@ -666,6 +777,123 @@ static bool find_runtime_squashfs(const pm_context *ctx, char *out, size_t out_s
     return best[0] && pm_copy(out, out_size, best) == 0;
 }
 
+static void check_runtime_squashfs_formats(const pm_context *ctx,
+                                           pm_doctor_report *r,
+                                           cJSON *checks,
+                                           const char *squashfs_config,
+                                           bool has_readable_config,
+                                           bool has_squashfs)
+{
+    char libs_dir[PM_PATH_MAX];
+    if (!ctx || pm_join(libs_dir, sizeof(libs_dir), ctx->portmaster_dir, "libs") != 0) {
+        add_check(r, checks, "kernel.squashfs_runtime_formats", PM_CHECK_UNKNOWN,
+                  "required",
+                  "Could not resolve PortMaster runtime libs directory",
+                  ctx ? ctx->portmaster_dir : "");
+        return;
+    }
+
+    DIR *dir = opendir(libs_dir);
+    if (!dir) {
+        add_check(r, checks, "kernel.squashfs_runtime_formats", PM_CHECK_INFO,
+                  "required",
+                  "No installed PortMaster runtime squashfs images found",
+                  libs_dir);
+        return;
+    }
+
+    int total = 0;
+    int unsupported = 0;
+    int unknown_support = 0;
+    int unreadable = 0;
+    char detail[16384] = "";
+    bool truncated = false;
+
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        size_t len = strlen(ent->d_name);
+        if (len <= 9 || strcmp(ent->d_name + len - 9, ".squashfs") != 0) {
+            continue;
+        }
+
+        char path[PM_PATH_MAX];
+        if (pm_join(path, sizeof(path), libs_dir, ent->d_name) != 0) {
+            continue;
+        }
+
+        struct stat st;
+        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+            continue;
+        }
+
+        total++;
+        unsigned compression_id = 0;
+        char err[128];
+        if (read_squashfs_compression_id(path, &compression_id, err, sizeof(err)) != 0) {
+            unreadable++;
+            if (appendf(detail, sizeof(detail), "%s: unreadable (%s)\n",
+                        ent->d_name, err[0] ? err : "unknown error") != 0) {
+                truncated = true;
+                break;
+            }
+            continue;
+        }
+
+        pm_kernel_support support = squashfs_kernel_support(compression_id,
+                                                            squashfs_config,
+                                                            has_readable_config,
+                                                            has_squashfs);
+        const char *support_text = "kernel missing";
+        if (support == PM_KERNEL_SUPPORT_YES) {
+            support_text = "kernel ok";
+        } else if (support == PM_KERNEL_SUPPORT_UNKNOWN) {
+            support_text = "kernel support unknown";
+            unknown_support++;
+        } else {
+            unsupported++;
+        }
+
+        if (appendf(detail, sizeof(detail), "%s: %s (id %u, %s)\n",
+                    ent->d_name,
+                    squashfs_compression_name(compression_id),
+                    compression_id,
+                    support_text) != 0) {
+            truncated = true;
+            break;
+        }
+    }
+    closedir(dir);
+
+    if (truncated) {
+        appendf(detail, sizeof(detail), "... detail truncated\n");
+    }
+
+    if (total == 0) {
+        add_check(r, checks, "kernel.squashfs_runtime_formats", PM_CHECK_INFO,
+                  "required",
+                  "No installed PortMaster runtime squashfs images found",
+                  libs_dir);
+        return;
+    }
+
+    pm_check_status status = PM_CHECK_OK;
+    const char *summary = "All installed runtime squashfs images use kernel-supported compression";
+    if (unsupported > 0 || unreadable > 0) {
+        status = PM_CHECK_FAIL;
+        summary = "One or more installed runtime squashfs images cannot be proven mountable";
+    } else if (unknown_support > 0) {
+        status = PM_CHECK_WARN;
+        summary = "Installed runtime squashfs formats detected, but kernel decompressor coverage is unknown";
+    }
+
+    char full_detail[sizeof(detail) + PM_PATH_MAX + 160];
+    pm_format(full_detail, sizeof(full_detail),
+              "libs: %s\nimages=%d unsupported=%d unreadable=%d unknown=%d\n%s",
+              libs_dir, total, unsupported, unreadable, unknown_support, detail);
+    add_check(r, checks, "kernel.squashfs_runtime_formats", status,
+              "required", summary, full_detail);
+}
+
 static int doctor_loop_stress_count(void)
 {
     const char *value = getenv("LEAF_PM_DOCTOR_LOOP_STRESS_COUNT");
@@ -688,8 +916,9 @@ static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, 
 {
     char squashfs_config[2048] = "";
     bool has_squashfs_config = false;
-    if (pm_file_exists("/proc/config.gz")) {
-        capture_shell("zcat /proc/config.gz 2>/dev/null | grep -E 'CONFIG_SQUASHFS(=|_(ZLIB|LZO|XZ|ZSTD|LZ4)=)'",
+    bool has_readable_squashfs_config = pm_file_exists("/proc/config.gz");
+    if (has_readable_squashfs_config) {
+        capture_shell("zcat /proc/config.gz 2>/dev/null | grep -E 'CONFIG_SQUASHFS(=|_(ZLIB|LZMA|LZO|XZ|ZSTD|LZ4)=)'",
                       squashfs_config, sizeof(squashfs_config));
         has_squashfs_config = contains(squashfs_config, "CONFIG_SQUASHFS=y") ||
                               contains(squashfs_config, "CONFIG_SQUASHFS=m");
@@ -727,6 +956,10 @@ static void check_mounts_and_kernel(const pm_context *ctx, pm_doctor_report *r, 
         add_check(r, checks, "kernel.squashfs_compression", PM_CHECK_UNKNOWN,
                   "required", "Kernel config is not readable", "/proc/config.gz");
     }
+
+    check_runtime_squashfs_formats(ctx, r, checks, squashfs_config,
+                                   has_readable_squashfs_config,
+                                   has_squashfs || has_squashfs_config);
 
     char runtime_helper[PM_PATH_MAX];
     bool has_runtime_helper = port_runtime_helper_available(ctx, runtime_helper,

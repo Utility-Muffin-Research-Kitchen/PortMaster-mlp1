@@ -235,10 +235,10 @@ def run_doctor(name, extra_env=None):
     doc = first_json_object(proc.stdout)
     if proc.returncode != 0:
         add("doctor", name, "adb", "fail", f"doctor exited {proc.returncode}", log)
-        return
+        return None
     if doc is None:
         add("doctor", name, "adb", "warn", "doctor exited 0 but JSON was not parsed", log)
-        return
+        return None
     issues = json_count(doc, "issues", "issue_count", "error_count")
     warnings = json_count(doc, "warnings", "warning_count")
     if issues is None:
@@ -252,6 +252,31 @@ def run_doctor(name, extra_env=None):
     else:
         status = "pass"
     add("doctor", name, "adb", status, f"issues={issues} warnings={warnings}", log)
+    return doc
+
+
+def add_doctor_check_row(doc, check_id):
+    if not doc:
+        add("doctor", check_id, "json-check", "skipped", "doctor JSON unavailable")
+        return
+    for check in doc.get("checks", []):
+        if check.get("id") != check_id:
+            continue
+        status = check.get("status", "unknown")
+        row_status = {
+            "ok": "pass",
+            "warn": "warn",
+            "fail": "fail",
+            "unknown": "warn",
+            "info": "skipped",
+            "app_local_ok": "ready",
+            "not_app_fixable": "ready",
+        }.get(status, "warn")
+        summary = check.get("summary", "")
+        detail = check.get("detail", "")
+        add("doctor", check_id, "json-check", row_status, f"{summary}; {detail}")
+        return
+    add("doctor", check_id, "json-check", "warn", "doctor check not found")
 
 
 def run_remote_fixture(name, command, success_detail, missing_detail=None):
@@ -792,7 +817,8 @@ exit "$status"
 run_env_probe_gui()
 run_env_probe_port()
 run_env_probe_adb_manual()
-run_doctor("doctor-cfw")
+doctor_doc = run_doctor("doctor-cfw")
+add_doctor_check_row(doctor_doc, "kernel.squashfs_runtime_formats")
 if loop_stress:
     run_doctor("doctor-loop-stress", {"LEAF_PM_DOCTOR_LOOP_STRESS": "1"})
 else:
