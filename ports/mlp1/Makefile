@@ -9,7 +9,7 @@ CJSON    ?= /workspace/Jawaka/third_party/cjson
 OUT      := $(APP)/build/mlp1/bin/portmaster-mlp1
 EGL_SHIM := $(APP)/build/mlp1/compat/egl/aarch64/libEGL.so.1
 SRC      := $(wildcard $(APP)/src/*.c)
-VERSION  ?= 0.1.1
+VERSION  ?= 0.1.2
 
 PKG_CONFIG_SYSROOT_DIR := $(SYSROOT)
 PKG_CONFIG_LIBDIR := $(SYSROOT)/usr/lib/pkgconfig:$(SYSROOT)/usr/share/pkgconfig
@@ -28,7 +28,7 @@ LDFLAGS := -L$(SYSROOT)/usr/lib -lSDL2 -lSDL2_ttf -lSDL2_image \
 .PHONY: all clean
 all: $(OUT) $(EGL_SHIM)
 
-$(OUT): $(SRC) $(CJSON)/cJSON.c
+$(OUT): $(SRC) $(CJSON)/cJSON.c Makefile
 	mkdir -p $(dir $(OUT))
 	$(CC) $(CFLAGS) -o $(OUT) $(SRC) $(CJSON)/cJSON.c $(LDFLAGS)
 

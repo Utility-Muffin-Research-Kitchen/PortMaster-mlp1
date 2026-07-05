@@ -142,14 +142,14 @@
       "kind": "cpython-runtime",
       "version": "3.10.16",
       "filename": "portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip",
-      "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.1/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip",
+      "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.2/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.zip",
       "size": 16711964,
       "installed_size": 47285806,
       "installed_file_count": 771,
       "sha256": "f8c1ae5cd6f4d46e7295692b15675cf98c274357a6d44271e95eaab91df1444b",
       "manifest": {
         "filename": "portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json",
-        "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.1/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json",
+        "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.2/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.10.16.json",
         "size": 3401,
         "sha256": "599fb1b12061592651f561fd6c207b432d5108ed28922fcd9d95505c9fdc2e5c"
       }

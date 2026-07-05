@@ -96,7 +96,7 @@ LIST_INSTALLED="$TMP_ROOT/list-installed.tsv"
 
 run_smoke list >"$LIST_AVAILABLE"
 expect_contains "$LIST_AVAILABLE" \
-    $'available\torg.umrk.portmaster\t0.1.1\t' \
+    $'available\torg.umrk.portmaster\t0.1.2\t' \
     "local catalog did not expose PortMaster"
 expect_contains "$LIST_AVAILABLE" \
     $'managed=0\tpath=Apps/mlp1/PortMaster.pak' \
@@ -105,14 +105,14 @@ expect_contains "$LIST_AVAILABLE" \
 run_smoke install org.umrk.portmaster >/dev/null
 run_smoke list >"$LIST_INSTALLED"
 expect_contains "$LIST_INSTALLED" \
-    $'installed\torg.umrk.portmaster\t0.1.1\tinstalled=0.1.1' \
+    $'installed\torg.umrk.portmaster\t0.1.2\tinstalled=0.1.2' \
     "Pak Rat did not install PortMaster from the local catalog"
 
 test -x "$SD_ROOT/Apps/mlp1/PortMaster.pak/launch.sh" ||
     fail_with_output "installed PortMaster launch.sh is not executable"
 test -x "$SD_ROOT/Apps/mlp1/PortMaster.pak/bin/portmaster-mlp1" ||
     fail_with_output "installed PortMaster binary is not executable"
-grep -F '"pak_version": "0.1.1"' "$SD_ROOT/Apps/mlp1/PortMaster.pak/pak.json" >/dev/null ||
+grep -F '"pak_version": "0.1.2"' "$SD_ROOT/Apps/mlp1/PortMaster.pak/pak.json" >/dev/null ||
     fail_with_output "installed PortMaster pak.json version was unexpected"
 
 if grep -F "$BASE_URL" "$SD_ROOT/Apps/mlp1/PortMaster.pak/locks/ui-runtime.lock.json" >/dev/null; then

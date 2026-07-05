@@ -597,7 +597,7 @@ with open(box86_path, "r", encoding="utf-8") as fp:
 manifest = {
     "version": version,
     "built_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-    "minimum_manager_version": "0.1.1",
+    "minimum_manager_version": "0.1.2",
     "sources": sources,
     "mali": mali,
     "box86": box86,

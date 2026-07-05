@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 APP_ID := portmaster-mlp1
 PAK_NAME := PortMaster
-VERSION := 0.1.1
+VERSION := 0.1.2
 BUILD ?= build
 PLATFORM ?= mac
 WORKSPACE_ROOT ?= $(abspath ..)
@@ -63,7 +63,7 @@ all: native
 
 native: $(APP_BIN)
 
-$(APP_BIN): $(SRC) $(CJSON_SRC)
+$(APP_BIN): $(SRC) $(CJSON_SRC) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(CFLAGS_COMMON) -o "$@" $(SRC) $(CJSON_SRC) $(LDLIBS_COMMON)
 
