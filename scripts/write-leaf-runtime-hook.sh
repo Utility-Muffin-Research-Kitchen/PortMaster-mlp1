@@ -181,16 +181,26 @@ export LEAF_PM_MALI_AARCH64_DIR="\${LEAF_PM_MALI_AARCH64_DIR:-\$LEAF_PM_DATA_DIR
 leaf_pm_prepare_godot_runtime_env() {
   [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
   export LEAF_PM_SKIP_WESTONPACK_CLEANUP="\${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}"
+  _leaf_pm_godot_cmd="\${1:-}"
+  _leaf_pm_godot_use_mali_default=1
+  case "\${_leaf_pm_godot_cmd##*/}" in
+    frt_*) _leaf_pm_godot_use_mali_default=0 ;;
+  esac
+  _leaf_pm_godot_use_mali="\${LEAF_PM_GODOT_USE_MALI_COMPAT:-\$_leaf_pm_godot_use_mali_default}"
   _leaf_pm_wayland_runtime="\${LEAF_PM_WAYLAND_RUNTIME_DIR:-\${XDG_RUNTIME_DIR:-/var/run}}"
   _leaf_pm_wayland_display="\${LEAF_PM_WAYLAND_DISPLAY:-\${WAYLAND_DISPLAY:-wayland-0}}"
   _leaf_pm_egl_shim="\${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1"
-  if [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ]; then
-    export LEAF_PM_MALI_LIB="\$LEAF_PM_MALI_AARCH64_DIR/libmali.so.1"
-    case ":\${LD_LIBRARY_PATH:-}:" in
-      *:"\$LEAF_PM_MALI_AARCH64_DIR":*) ;;
-      *) export LD_LIBRARY_PATH="\$LEAF_PM_MALI_AARCH64_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
-    esac
-  fi
+  case "\$_leaf_pm_godot_use_mali" in
+    1|true|yes|TRUE|YES)
+      if [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ]; then
+        export LEAF_PM_MALI_LIB="\$LEAF_PM_MALI_AARCH64_DIR/libmali.so.1"
+        case ":\${LD_LIBRARY_PATH:-}:" in
+          *:"\$LEAF_PM_MALI_AARCH64_DIR":*) ;;
+          *) export LD_LIBRARY_PATH="\$LEAF_PM_MALI_AARCH64_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
+        esac
+      fi
+      ;;
+  esac
   if [ -f "\$_leaf_pm_egl_shim" ]; then
     case ":\${LD_LIBRARY_PATH:-}:" in
       *:"\$LEAF_PM_EGL_SHIM_DIR":*) ;;
@@ -226,7 +236,7 @@ leaf_pm_run_godot_wayland_runtime() {
   [ "\$#" -gt 0 ] || return 127
   _leaf_pm_godot_cmd="\$1"
   shift
-  leaf_pm_prepare_godot_runtime_env
+  leaf_pm_prepare_godot_runtime_env "\$_leaf_pm_godot_cmd"
   if leaf_pm_args_have_display_driver "\$@"; then
     "\$_leaf_pm_godot_cmd" "\$@"
     return \$?
@@ -238,7 +248,7 @@ leaf_pm_run_godot_sdl2_runtime() {
   [ "\$#" -gt 0 ] || return 127
   _leaf_pm_godot_cmd="\$1"
   shift
-  leaf_pm_prepare_godot_runtime_env
+  leaf_pm_prepare_godot_runtime_env "\$_leaf_pm_godot_cmd"
   _leaf_pm_direct_resolution="\${LEAF_PM_GODOT_DIRECT_RESOLUTION:-960x720}"
   if [ -n "\$_leaf_pm_direct_resolution" ] && ! leaf_pm_args_have_window_mode "\$@"; then
     "\$_leaf_pm_godot_cmd" --resolution "\$_leaf_pm_direct_resolution" "\$@"

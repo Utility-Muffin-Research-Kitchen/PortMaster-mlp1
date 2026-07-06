@@ -213,8 +213,9 @@ Some ports, such as Songo #5, launch a custom Godot/SDL2 runtime directly
 instead of using Westonpack. The scanner wraps those direct
 `"$GAMEDIR/runtime/$runtime" --main-pack ...` commands with
 `leaf_pm_run_godot_sdl2_runtime`, while keeping the original command as a
-fallback. That helper applies the same SD-managed Mali/EGL/Wayland environment
-and, when the port did not provide its own window sizing flags, adds
+fallback. That helper applies the SD-managed EGL/Wayland environment and, for
+non-FRT runtimes, the bundled Mali compatibility path. When the port did not
+provide its own window sizing flags, it adds
 `--resolution 960x720`. It intentionally does not add Godot fullscreen (`-f`),
 because that path fills the MLP1's native portrait `720x960` KMS framebuffer and
 can mangle landscape content.
@@ -226,7 +227,9 @@ fixes the pre-mount cleanup to unmount the SD/userdata mountpoint rather than
 the squashfs file, and wraps the final launch in
 `leaf_pm_run_godot_sdl2_runtime`. The mountpoint is under
 `$USERDATA_PATH/portmaster` through the generated hook's `HOME`; no stock
-rootfs/eMMC paths are modified.
+rootfs/eMMC paths are modified. FRT launches keep the stock MLP1 Mali library by
+default because the bundled Mali compatibility library fails SDL window creation
+for these older Godot runtimes with `Could not get EGL display`.
 
 For Gothic/Machismo launchers such as Mina the Hollower, the scanner patches a
 small runtime compatibility block that defaults `GOTHIC_BACKEND=gles` on
