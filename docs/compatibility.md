@@ -301,6 +301,13 @@ specific display state to maintain. Fast scan covers common one-level,
 `bin/`, `lib/`, and `libs/` binaries; use `LEAF_PM_FULL_PORT_SCAN=1` for a
 diagnostic scan when a port's main binary sits deeper in its tree.
 
+Pyxel source launchers are patched through a source-level compatibility rule
+instead of the generic SDL2 preload. The scanner adds a helper that computes the
+largest integer `display_scale` that fits `DISPLAY_WIDTH`/`DISPLAY_HEIGHT`, then
+calls `pyxel.fullscreen(True)`. This keeps the fix in Pyxel's own display API,
+because the runtime's Rust extension does not expose `SDL_CreateWindow` through
+a normal SDL2 symbol path for preloading.
+
 The scan JSON reports generic SDL2 coverage through
 `sdl2_fullscreen_ports_aarch64`, `sdl2_fullscreen_ports_armhf`,
 `sdl2_fullscreen_ports_both`, and the

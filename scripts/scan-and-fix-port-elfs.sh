@@ -31,7 +31,7 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=9
+RULESET_VERSION=10
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -344,6 +344,42 @@ is_love_runtime_script() {
     *) return 1 ;;
   esac
   grep -Eq '(^|[[:space:];|&])(\./)?love([[:space:];|&]|$)|[$][{]?GAMEDIR[}]?/love|liblove-11[.]5[.]so|love_11[.]5' "$file" 2>/dev/null
+}
+
+is_pyxel_runtime_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) return 1 ;;
+  esac
+  grep -Eq 'pyxel_.*[.]squashfs|/bin/pyxel|pyxel[[:space:]]+run' "$file" 2>/dev/null
+}
+
+pyxel_source_entrypoint_for_script() {
+  local file="$1"
+  local port pkg path
+  port="$(script_port_dir "$file" || true)"
+  [ -n "$port" ] || return 1
+  pkg="$(awk '
+    /^[[:space:]]*PYXEL_PKG=/ {
+      line = $0
+      sub(/^[^=]*=/, "", line)
+      sub(/[[:space:]]*#.*/, "", line)
+      gsub(/"/, "", line)
+      gsub(/\047/, "", line)
+      gsub(/^[[:space:]]+/, "", line)
+      gsub(/[[:space:]]+$/, "", line)
+      print line
+      exit
+    }
+  ' "$file")"
+  case "$pkg" in
+    *.py) ;;
+    *) return 1 ;;
+  esac
+  path="$ports_dir/$port/gamedata/$pkg"
+  [ -f "$path" ] || return 1
+  printf '%s' "$path"
 }
 
 is_sdl2_fullscreen_optout_port() {
@@ -1859,6 +1895,175 @@ runtime_compat_love_11_5_libs_script() {
   printf 'runtime-compat-love-11-5-libs-error'
 }
 
+runtime_compat_pyxel_fullscreen_script() {
+  file="$1"
+  if ! is_pyxel_runtime_script "$file"; then
+    printf 'not-pyxel-runtime'
+    return 0
+  fi
+
+  main_py="$(pyxel_source_entrypoint_for_script "$file" || true)"
+  if [ -z "$main_py" ]; then
+    printf 'runtime-compat-pyxel-fullscreen-no-source'
+    return 0
+  fi
+  if [ ! -f "$main_py" ]; then
+    printf 'runtime-compat-pyxel-fullscreen-missing-anchor'
+    return 0
+  fi
+
+  main_ready=0
+  script_ready=0
+  if grep -q 'LEAF_PM_RUNTIME_COMPAT_PYXEL_FULLSCREEN_VERSION=1' "$main_py" 2>/dev/null &&
+     grep -q 'LEAF_PM_RUNTIME_COMPAT_PYXEL_FULLSCREEN_VERSION=1' "$file" 2>/dev/null; then
+    printf 'runtime-compat-pyxel-fullscreen-already'
+    return 0
+  fi
+  if grep -q 'LEAF_PM_RUNTIME_COMPAT_PYXEL_FULLSCREEN_VERSION=1' "$main_py" 2>/dev/null; then
+    main_ready=1
+  fi
+  if grep -q 'LEAF_PM_RUNTIME_COMPAT_PYXEL_FULLSCREEN_VERSION=1' "$file" 2>/dev/null; then
+    script_ready=1
+  fi
+
+  if [ "$main_ready" -ne 1 ]; then
+    tmp="$main_py.tmp.$$"
+    if awk '
+      {
+        if ($0 ~ /LEAF_PM_RUNTIME_COMPAT_PYXEL_FULLSCREEN_VERSION=1/) {
+          marker_seen = 1
+        }
+        if (!marker_seen && !helper_inserted && $0 ~ /^[[:space:]]*import[[:space:]]+pyxel([[:space:]]|$)/) {
+          print
+          print ""
+          print "# LEAF_PM_RUNTIME_COMPAT_PYXEL_FULLSCREEN=1"
+          print "# LEAF_PM_RUNTIME_COMPAT_PYXEL_FULLSCREEN_VERSION=1"
+          print "def leaf_pm_pyxel_display_scale(width, height):"
+          print "    try:"
+          print "        env = __import__(\"os\").environ"
+          print "        display_w = int(env.get(\"DISPLAY_WIDTH\", \"960\"))"
+          print "        display_h = int(env.get(\"DISPLAY_HEIGHT\", \"720\"))"
+          print "        return max(1, min(display_w // int(width), display_h // int(height)))"
+          print "    except Exception:"
+          print "        return None"
+          helper_inserted = 1
+          changed = 1
+          next
+        }
+        if (!marker_seen && !inserted && $0 ~ /pyxel[.]init[(]/) {
+          indent = $0
+          sub(/[^[:space:]].*$/, "", indent)
+          in_init = 1
+          inserted = 1
+          changed = 1
+          print
+          next
+        }
+        if (in_init) {
+          if ($0 ~ /display_scale[[:space:]]*=/) {
+            next
+          }
+          if ($0 ~ /width[[:space:]]*=/) {
+            width_expr = $0
+            sub(/^.*width[[:space:]]*=/, "", width_expr)
+            sub(/[[:space:]]*,?[[:space:]]*$/, "", width_expr)
+            arg_indent = $0
+            sub(/[^[:space:]].*$/, "", arg_indent)
+          }
+          if ($0 ~ /height[[:space:]]*=/) {
+            height_expr = $0
+            sub(/^.*height[[:space:]]*=/, "", height_expr)
+            sub(/[[:space:]]*,?[[:space:]]*$/, "", height_expr)
+            if (arg_indent == "") {
+              arg_indent = $0
+              sub(/[^[:space:]].*$/, "", arg_indent)
+            }
+          }
+          if ($0 ~ /^[[:space:]]*(width|height|title|fps|quit_key|capture_scale|capture_sec)[[:space:]]*=/) {
+            sub(/[[:space:]]*,?[[:space:]]*$/, ",")
+            print
+            next
+          }
+          if ($0 ~ /^[[:space:]]*[)][[:space:]]*$/) {
+            if (width_expr == "" || height_expr == "") {
+              exit 2
+            }
+            if (arg_indent == "") {
+              arg_indent = "          "
+            }
+            print arg_indent "display_scale=leaf_pm_pyxel_display_scale(" width_expr ", " height_expr ")"
+            print
+            print indent "pyxel.fullscreen(True)"
+            in_init = 0
+            next
+          }
+        }
+        print
+      }
+      END {
+        if (!marker_seen && (!helper_inserted || !inserted || in_init)) {
+          exit 2
+        }
+      }
+    ' "$main_py" >"$tmp"; then
+      mv "$tmp" "$main_py"
+      main_ready=1
+    else
+      rc=$?
+      rm -f "$tmp"
+      if [ "$rc" -eq 2 ]; then
+        printf 'runtime-compat-pyxel-fullscreen-missing-anchor'
+        return 0
+      fi
+      printf 'runtime-compat-pyxel-fullscreen-error'
+      return 0
+    fi
+  fi
+
+  if [ "$script_ready" -ne 1 ]; then
+    tmp="$file.tmp.$$"
+    if awk '
+      function insert_marker() {
+        print ""
+        print "# LEAF_PM_RUNTIME_COMPAT_PYXEL_FULLSCREEN=1"
+        print "# LEAF_PM_RUNTIME_COMPAT_PYXEL_FULLSCREEN_VERSION=1"
+        inserted = 1
+        changed = 1
+      }
+      {
+        print
+        if (!inserted && $0 ~ /^[[:space:]]*get_controls([[:space:]]|$)/) {
+          insert_marker()
+        }
+      }
+      END {
+        if (!inserted || !changed) {
+          exit 2
+        }
+      }
+    ' "$file" >"$tmp"; then
+      mv "$tmp" "$file"
+      chmod 755 "$file" 2>/dev/null || true
+      script_ready=1
+    else
+      rc=$?
+      rm -f "$tmp"
+      if [ "$rc" -eq 2 ]; then
+        printf 'runtime-compat-pyxel-fullscreen-missing-anchor'
+        return 0
+      fi
+      printf 'runtime-compat-pyxel-fullscreen-error'
+      return 0
+    fi
+  fi
+
+  if [ "$main_ready" -eq 1 ] && [ "$script_ready" -eq 1 ]; then
+    printf 'runtime-compat-pyxel-fullscreen-patched'
+    return 0
+  fi
+  printf 'runtime-compat-pyxel-fullscreen-error'
+}
+
 normalize_lowercase_path_moves_script() {
   file="$1"
   case "$file" in
@@ -1965,6 +2170,10 @@ apply_runtime_compat_rules_script() {
   fi
   if is_love_runtime_script "$file"; then
     runtime_compat_love_11_5_libs_script "$file"
+    printf '\n'
+  fi
+  if is_pyxel_runtime_script "$file"; then
+    runtime_compat_pyxel_fullscreen_script "$file"
     printf '\n'
   fi
 }
@@ -2360,9 +2569,12 @@ script_cache_action() {
     runtime-compat-soh-display-already) printf 'runtime-compat-soh-display-already' ;;
     runtime-compat-love-11-5-libs-patched) printf 'runtime-compat-love-11-5-libs-already' ;;
     runtime-compat-love-11-5-libs-already) printf 'runtime-compat-love-11-5-libs-already' ;;
+    runtime-compat-pyxel-fullscreen-patched) printf 'runtime-compat-pyxel-fullscreen-already' ;;
+    runtime-compat-pyxel-fullscreen-already) printf 'runtime-compat-pyxel-fullscreen-already' ;;
+    runtime-compat-pyxel-fullscreen-no-source) printf 'runtime-compat-pyxel-fullscreen-no-source' ;;
     lowercase-path-move-patched) printf 'lowercase-path-move-already' ;;
     lowercase-path-move-already) printf 'lowercase-path-move-already' ;;
-    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error|aarch64-compat-libs-missing-anchor|aarch64-compat-libs-error)
+    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|runtime-compat-pyxel-fullscreen-missing-anchor|runtime-compat-pyxel-fullscreen-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error|aarch64-compat-libs-missing-anchor|aarch64-compat-libs-error)
       return 1
       ;;
     *) printf '' ;;
@@ -2463,6 +2675,23 @@ record_script_action() {
       ;;
     runtime-compat-love-11-5-libs-error)
       runtime_compat_love_11_5_libs_errors=$((runtime_compat_love_11_5_libs_errors + 1))
+      errors=$((errors + 1))
+      ;;
+    runtime-compat-pyxel-fullscreen-patched)
+      runtime_compat_pyxel_fullscreen_patched=$((runtime_compat_pyxel_fullscreen_patched + 1))
+      ;;
+    runtime-compat-pyxel-fullscreen-already)
+      runtime_compat_pyxel_fullscreen_already=$((runtime_compat_pyxel_fullscreen_already + 1))
+      ;;
+    runtime-compat-pyxel-fullscreen-no-source)
+      runtime_compat_pyxel_fullscreen_no_source=$((runtime_compat_pyxel_fullscreen_no_source + 1))
+      ;;
+    runtime-compat-pyxel-fullscreen-missing-anchor)
+      runtime_compat_pyxel_fullscreen_missing_anchor=$((runtime_compat_pyxel_fullscreen_missing_anchor + 1))
+      errors=$((errors + 1))
+      ;;
+    runtime-compat-pyxel-fullscreen-error)
+      runtime_compat_pyxel_fullscreen_errors=$((runtime_compat_pyxel_fullscreen_errors + 1))
       errors=$((errors + 1))
       ;;
     lowercase-path-move-patched)
@@ -2685,6 +2914,11 @@ runtime_compat_love_11_5_libs_patched=0
 runtime_compat_love_11_5_libs_already=0
 runtime_compat_love_11_5_libs_missing_anchor=0
 runtime_compat_love_11_5_libs_errors=0
+runtime_compat_pyxel_fullscreen_patched=0
+runtime_compat_pyxel_fullscreen_already=0
+runtime_compat_pyxel_fullscreen_no_source=0
+runtime_compat_pyxel_fullscreen_missing_anchor=0
+runtime_compat_pyxel_fullscreen_errors=0
 lowercase_path_move_patched=0
 lowercase_path_move_already=0
 lowercase_path_move_errors=0
@@ -2932,6 +3166,11 @@ cat >"$tmp_json" <<EOF
   "runtime_compat_love_11_5_libs_scripts_already_patched": $runtime_compat_love_11_5_libs_already,
   "runtime_compat_love_11_5_libs_scripts_missing_anchor": $runtime_compat_love_11_5_libs_missing_anchor,
   "runtime_compat_love_11_5_libs_script_errors": $runtime_compat_love_11_5_libs_errors,
+  "runtime_compat_pyxel_fullscreen_scripts_patched": $runtime_compat_pyxel_fullscreen_patched,
+  "runtime_compat_pyxel_fullscreen_scripts_already_patched": $runtime_compat_pyxel_fullscreen_already,
+  "runtime_compat_pyxel_fullscreen_scripts_no_source": $runtime_compat_pyxel_fullscreen_no_source,
+  "runtime_compat_pyxel_fullscreen_scripts_missing_anchor": $runtime_compat_pyxel_fullscreen_missing_anchor,
+  "runtime_compat_pyxel_fullscreen_script_errors": $runtime_compat_pyxel_fullscreen_errors,
   "lowercase_path_move_scripts_patched": $lowercase_path_move_patched,
   "lowercase_path_move_scripts_already_patched": $lowercase_path_move_already,
   "lowercase_path_move_script_errors": $lowercase_path_move_errors,
@@ -2950,4 +3189,4 @@ if [ "$manifest_write_enabled" -eq 1 ]; then
   mv "$manifest_tmp" "$manifest_path"
 fi
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched runtime_compat_pyxel_fullscreen_patched=$runtime_compat_pyxel_fullscreen_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"

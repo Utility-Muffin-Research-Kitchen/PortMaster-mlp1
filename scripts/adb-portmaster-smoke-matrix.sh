@@ -682,7 +682,7 @@ MATRIX = [
         "script": "Roms/PORTS/Megaball.sh",
         "required": ["Roms/PORTS/megaball/gamedata/main.py"],
         "runtimes": ["pyxel_2.2.8_python_3.11.squashfs"],
-        "markers": ["LEAF_PM_PORT_ENV=1", "pyxel_2\\.2\\.8_python_3\\.11", "pm_platform_helper"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "pyxel_2\\.2\\.8_python_3\\.11", "pm_platform_helper", "LEAF_PM_RUNTIME_COMPAT_PYXEL_FULLSCREEN"],
         "log": "Roms/PORTS/megaball/log.txt",
         "interactive": True,
         "active_timeout": 120,
