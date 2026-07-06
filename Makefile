@@ -84,6 +84,7 @@ package-build:
 	@test -n "$(BIN)" || { echo "BIN is required" >&2; exit 1; }
 	@rm -rf "$(PACKAGE_ROOT)"
 	@mkdir -p "$(PACKAGE_DIR)/bin" "$(PACKAGE_DIR)/locks" "$(PACKAGE_DIR)/scripts" \
+		"$(PACKAGE_DIR)/res" \
 		"$(PACKAGE_DIR)/patches/portmaster-gui/mlp1" \
 			"$(PACKAGE_DIR)/overlays/portmaster-gui/mlp1" \
 			"$(PACKAGE_DIR)/compat/armhf" "$(PACKAGE_DIR)/compat/egl/aarch64" \
@@ -95,6 +96,7 @@ package-build:
 			"$(PACKAGE_DIR)/LICENSES"
 	@cp -f "$(BIN)" "$(PACKAGE_DIR)/bin/$(APP_ID)"
 	@cp -f pak/launch.sh pak/pak.json "$(PACKAGE_DIR)/"
+	@if [ -d pak/res ]; then cp -Rf pak/res/. "$(PACKAGE_DIR)/res/"; fi
 	@cp -f locks/*.json "$(PACKAGE_DIR)/locks/"
 	@cp -f scripts/*.sh "$(PACKAGE_DIR)/scripts/"
 	@cp -f patches/portmaster-gui/mlp1/*.patch "$(PACKAGE_DIR)/patches/portmaster-gui/mlp1/" 2>/dev/null || true
@@ -114,6 +116,7 @@ package-build:
 	@if [ -f "$(PACKAGE_DIR)/compat/tools/aarch64/bin/strace" ]; then chmod 755 "$(PACKAGE_DIR)/compat/tools/aarch64/bin/strace"; fi
 	@if [ -f "$(PACKAGE_DIR)/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so" ]; then chmod 755 "$(PACKAGE_DIR)/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so"; fi
 	@if [ -f "$(PACKAGE_DIR)/compat/drm/aarch64/leaf-drm-rotate.so" ]; then chmod 755 "$(PACKAGE_DIR)/compat/drm/aarch64/leaf-drm-rotate.so"; fi
+	@find "$(PACKAGE_DIR)" -type f -name .DS_Store -delete
 	@find "$(PACKAGE_DIR)" -type f | sort
 
 package-mlp1: mlp1 build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs

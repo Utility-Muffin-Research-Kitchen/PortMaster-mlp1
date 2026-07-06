@@ -1,7 +1,6 @@
 --- control.txt
 +++ control.txt
-@@ -170,7 +170,12 @@
- 
+@@ -172,6 +172,11 @@
  source $controlfolder/device_info.txt
  source $controlfolder/funcs.txt
  
