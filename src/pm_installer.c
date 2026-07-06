@@ -893,13 +893,26 @@ static int copy_compat_asset_set(const pm_context *ctx,
     return 0;
 }
 
+static void remove_compat_asset_file(const pm_context *ctx,
+                                     const char *dst_mid,
+                                     const char *dst_leaf,
+                                     const char *file)
+{
+    char dst_dir[PM_PATH_MAX];
+    char dst[PM_PATH_MAX];
+    if (pm_join3(dst_dir, sizeof(dst_dir), ctx->data_dir, dst_mid, dst_leaf) != 0 ||
+        pm_join(dst, sizeof(dst), dst_dir, file) != 0) {
+        return;
+    }
+    unlink(dst);
+}
+
 static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err_size)
 {
     const char *egl_files[] = { "libEGL.so.1", "libEGL.so" };
     const char *mali_files[] = {
         "libmali.so.1",
-        "libmali-hook.so.1",
-        "rk_vk_g24.json",
+        "rk_vk_g29.json",
         "manifest.json"
     };
     const char *sdl2_files[] = { "leaf-sdl2-fullscreen.so", "manifest.json" };
@@ -988,6 +1001,8 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               err_size) != 0) {
         return -1;
     }
+    remove_compat_asset_file(ctx, "compat/mali", "aarch64", "rk_vk_g24.json");
+    remove_compat_asset_file(ctx, "compat/mali", "aarch64", "libmali-hook.so.1");
 
     if (copy_compat_asset_set(ctx,
                               "compat/sdl2",

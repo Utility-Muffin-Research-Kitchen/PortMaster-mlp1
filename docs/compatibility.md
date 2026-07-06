@@ -338,11 +338,12 @@ failure.
 
 The Godot hook also prefers an SD-installed aarch64 Mali userspace bundle when
 `$USERDATA_PATH/portmaster/compat/mali/aarch64/libmali.so.1` is present. This
-bundle is built from the pinned `tsukumijima/libmali-rockchip`
-`libmali-bifrost-g52-g24p0-wayland-gbm_1.9-1_arm64.deb` asset and contains only
-`libmali.so.1` and `libmali-hook.so.1`. It is intentionally scoped to Godot
-direct-Wayland launches; other ports continue to use the stock rootfs graphics
-stack unless their own wrapper opts in.
+bundle is built from the pinned JeffyCN `libmali-next`
+`libmali-bifrost-g52-g29p1.so` asset and contains `libmali.so.1` plus the local
+`rk_vk_g29.json` ICD used by direct-display Vulkan launchers. It is intentionally
+scoped to Godot direct-Wayland launches and explicit direct-display Vulkan
+handoffs; other ports continue to use the stock rootfs graphics stack unless
+their own wrapper opts in.
 
 The same hook also applies the global controller-layout preference for installed
 ports. By default it exports the MLP1 X360 SDL mapping. If

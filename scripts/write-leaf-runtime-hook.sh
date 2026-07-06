@@ -509,8 +509,9 @@ leaf_pm_pidof() {
 
 leaf_pm_enable_gothic_machismo_vulkan_rotate() {
   [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 1
-  case "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE:-1}" in
-    0|false|no|FALSE|NO) return 1 ;;
+  case "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE:-\${JAWAKA_DIRECT_DRM:-0}}" in
+    1|true|yes|TRUE|YES) ;;
+    *) return 1 ;;
   esac
   case "\${GOTHIC_BACKEND:-}" in
     ""|vulkan) ;;
@@ -521,19 +522,21 @@ leaf_pm_enable_gothic_machismo_vulkan_rotate() {
   _leaf_pm_vk_dir="\${LEAF_PM_VULKAN_STACK_DIR:-}"
   if [ -z "\$_leaf_pm_vk_dir" ] &&
      [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ] &&
-     [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/rk_vk_g24.json" ]; then
+     { [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/rk_vk_g29.json" ] ||
+       [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/rk_vk.json" ] ||
+       [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/rk_vk_g24.json" ]; }; then
     _leaf_pm_vk_dir="\$LEAF_PM_MALI_AARCH64_DIR"
   fi
   _leaf_pm_vk_dir="\${_leaf_pm_vk_dir:-\$LEAF_PM_DATA_DIR/compat/vulkan/aarch64}"
   if [ -d "\$_leaf_pm_vk_dir" ]; then
     leaf_pm_prepend_ld_library_path "\$_leaf_pm_vk_dir" || true
     if [ -z "\${VK_ICD_FILENAMES:-}" ]; then
-      if [ -f "\$_leaf_pm_vk_dir/rk_vk.json" ]; then
+      if [ -f "\$_leaf_pm_vk_dir/rk_vk_g29.json" ]; then
+        export VK_ICD_FILENAMES="\$_leaf_pm_vk_dir/rk_vk_g29.json"
+      elif [ -f "\$_leaf_pm_vk_dir/rk_vk.json" ]; then
         export VK_ICD_FILENAMES="\$_leaf_pm_vk_dir/rk_vk.json"
       elif [ -f "\$_leaf_pm_vk_dir/rk_vk_g24.json" ]; then
         export VK_ICD_FILENAMES="\$_leaf_pm_vk_dir/rk_vk_g24.json"
-      elif [ -f "\$_leaf_pm_vk_dir/rk_vk_g29.json" ]; then
-        export VK_ICD_FILENAMES="\$_leaf_pm_vk_dir/rk_vk_g29.json"
       fi
     fi
   fi
@@ -542,7 +545,7 @@ leaf_pm_enable_gothic_machismo_vulkan_rotate() {
   fi
 
   export GOTHIC_BACKEND=vulkan
-  export SDL_VIDEODRIVER="\${SDL_VIDEODRIVER:-kmsdrm}"
+  export SDL_VIDEODRIVER=kmsdrm
   export LEAF_DRM_ROTATE="\${LEAF_DRM_ROTATE:-270}"
   case "\${VK_LOADER_LAYERS_DISABLE:-}" in
     *VK_LAYER_window_system_integration*) ;;
@@ -572,7 +575,14 @@ leaf_pm_begin_gothic_machismo_vulkan_rotate() {
   [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_ACTIVE:-0}" = "1" ] || return 0
   [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_BEGUN:-0}" != "1" ] || return 0
   export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_BEGUN=1
-  case "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STOP_DISPLAY:-1}" in
+  _leaf_pm_stop_display="\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STOP_DISPLAY:-}"
+  if [ -z "\$_leaf_pm_stop_display" ]; then
+    case "\${JAWAKA_DIRECT_DRM:-0}" in
+      1|true|yes|TRUE|YES) _leaf_pm_stop_display=0 ;;
+      *) _leaf_pm_stop_display=1 ;;
+    esac
+  fi
+  case "\$_leaf_pm_stop_display" in
     0|false|no|FALSE|NO) return 0 ;;
   esac
 
