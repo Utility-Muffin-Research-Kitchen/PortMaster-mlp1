@@ -176,6 +176,57 @@ case "\${LEAF_PM_ENABLE_AARCH64_COMPAT_LIBS:-0}" in
   1|true|yes|TRUE|YES) leaf_pm_enable_aarch64_compat_libs ;;
 esac
 
+leaf_pm_dir_has_font() {
+  [ -d "\${1:-}" ] || return 1
+  for _leaf_pm_font in "\$1"/*.ttf "\$1"/*.otf "\$1"/*.ttc; do
+    [ -f "\$_leaf_pm_font" ] && unset _leaf_pm_font && return 0
+  done
+  unset _leaf_pm_font
+  return 1
+}
+
+leaf_pm_enable_java8_weston_runtime() {
+  [ "\${LEAF_PM_JAVA8_WESTON_COMPAT:-1}" != "0" ] || return 0
+
+  case "\${LEAF_PM_JAVA8_WESTON_CLEAR_SDL_VIDEODRIVER:-1}" in
+    0|false|no|FALSE|NO) ;;
+    *) export SDL_VIDEODRIVER="\${LEAF_PM_JAVA8_WESTON_SDL_VIDEODRIVER:-}" ;;
+  esac
+
+  _leaf_pm_java_font_dir="\${LEAF_PM_JAVA8_FONT_DIR:-}"
+  if [ -z "\$_leaf_pm_java_font_dir" ]; then
+    for _leaf_pm_java_font_candidate in \
+      "\${PORTMASTER_CONTROLFOLDER:-}/resources" \
+      "\${PORTMASTER_CONTROLFOLDER:-}/pylibs/resources" \
+      "\${LEAF_PM_DATA_DIR:-}/PortMaster/resources" \
+      "\${LEAF_PM_DATA_DIR:-}/PortMaster/pylibs/resources" \
+      "\${CAT_FONTS_DIR:-}" \
+      "\${UMRK_LAUNCHER_PATH:-}/res"; do
+      if leaf_pm_dir_has_font "\$_leaf_pm_java_font_candidate"; then
+        _leaf_pm_java_font_dir="\$_leaf_pm_java_font_candidate"
+        break
+      fi
+    done
+  fi
+
+  if [ -n "\$_leaf_pm_java_font_dir" ] && [ -d "\$_leaf_pm_java_font_dir" ]; then
+    case " \${JAVA_TOOL_OPTIONS:-} " in
+      *" -Dsun.java2d.fontpath="*) ;;
+      *) export JAVA_TOOL_OPTIONS="-Dsun.java2d.fontpath=\$_leaf_pm_java_font_dir\${JAVA_TOOL_OPTIONS:+ \$JAVA_TOOL_OPTIONS}" ;;
+    esac
+  fi
+
+  if [ -z "\${CRUSTY_RESOLUTION:-}" ]; then
+    export CRUSTY_RESOLUTION="\${LEAF_PM_JAVA8_WESTON_CRUSTY_RESOLUTION:-\${DISPLAY_WIDTH:-960}x\${DISPLAY_HEIGHT:-720}}"
+  fi
+
+  if declare -f leaf_pm_enable_java8_weston_direct_drm >/dev/null 2>&1; then
+    leaf_pm_enable_java8_weston_direct_drm || true
+  fi
+
+  unset _leaf_pm_java_font_candidate _leaf_pm_java_font_dir
+}
+
 export LEAF_PM_EGL_SHIM_DIR="\${LEAF_PM_EGL_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/egl/aarch64}"
 export LEAF_PM_MALI_AARCH64_DIR="\${LEAF_PM_MALI_AARCH64_DIR:-\$LEAF_PM_DATA_DIR/compat/mali/aarch64}"
 leaf_pm_prepare_godot_runtime_env() {
@@ -541,6 +592,69 @@ leaf_pm_prepend_ld_library_path() {
 leaf_pm_pidof() {
   command -v pidof >/dev/null 2>&1 || return 1
   pidof "\$1" >/dev/null 2>&1
+}
+
+leaf_pm_prepend_wrapped_preload() {
+  _leaf_pm_wrapped_preload_path="\${1:-}"
+  [ -n "\$_leaf_pm_wrapped_preload_path" ] && [ -f "\$_leaf_pm_wrapped_preload_path" ] || return 1
+  case ":\${WRAPPED_PRELOAD:-}:" in
+    *:"\$_leaf_pm_wrapped_preload_path":*) ;;
+    *) export WRAPPED_PRELOAD="\$_leaf_pm_wrapped_preload_path\${WRAPPED_PRELOAD:+:\$WRAPPED_PRELOAD}" ;;
+  esac
+}
+
+leaf_pm_restore_java8_weston_direct_drm() {
+  [ "\${LEAF_PM_JAVA8_WESTON_DIRECT_DRM_STACK_STOPPED:-0}" = "1" ] || return 0
+  export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_STACK_STOPPED=0
+  trap - EXIT HUP INT TERM
+  if [ "\${LEAF_PM_JAVA8_WESTON_DIRECT_DRM_WESTON_WAS_RUNNING:-0}" = "1" ] &&
+     [ -x /etc/init.d/S49weston ]; then
+    /etc/init.d/S49weston start < /dev/null > /dev/null 2>&1 || true
+    sleep "\${LEAF_PM_JAVA8_WESTON_START_DELAY:-1}"
+  fi
+}
+
+leaf_pm_begin_java8_weston_direct_drm() {
+  [ "\${LEAF_PM_JAVA8_WESTON_DIRECT_DRM_ACTIVE:-0}" = "1" ] || return 0
+  [ "\${LEAF_PM_JAVA8_WESTON_DIRECT_DRM_BEGUN:-0}" != "1" ] || return 0
+  export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_BEGUN=1
+
+  _leaf_pm_java8_stop_display="\${LEAF_PM_JAVA8_WESTON_STOP_DISPLAY:-}"
+  if [ -z "\$_leaf_pm_java8_stop_display" ]; then
+    case "\${JAWAKA_DIRECT_DRM:-0}" in
+      1|true|yes|TRUE|YES) _leaf_pm_java8_stop_display=0 ;;
+      *) _leaf_pm_java8_stop_display=1 ;;
+    esac
+  fi
+  case "\$_leaf_pm_java8_stop_display" in
+    0|false|no|FALSE|NO) return 0 ;;
+  esac
+
+  export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_WESTON_WAS_RUNNING=0
+  if leaf_pm_pidof weston; then
+    export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_WESTON_WAS_RUNNING=1
+  fi
+
+  trap 'leaf_pm_restore_java8_weston_direct_drm' EXIT HUP INT TERM
+  if [ -x /etc/init.d/S49weston ]; then
+    /etc/init.d/S49weston stop < /dev/null > /dev/null 2>&1 || true
+  fi
+  sleep "\${LEAF_PM_JAVA8_WESTON_STOP_DELAY:-1}"
+  export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_STACK_STOPPED=1
+}
+
+leaf_pm_enable_java8_weston_direct_drm() {
+  [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
+  case "\${LEAF_PM_JAVA8_WESTON_DIRECT_DRM:-1}" in
+    0|false|no|FALSE|NO) return 0 ;;
+  esac
+  [ -f "\$LEAF_PM_AARCH64_DRM_ROTATE_SHIM" ] || return 0
+
+  export LEAF_DRM_ROTATE="\${LEAF_DRM_ROTATE:-270}"
+  export SDL_VIDEODRIVER="\${LEAF_PM_JAVA8_WESTON_SDL_VIDEODRIVER:-kmsdrm}"
+  leaf_pm_prepend_wrapped_preload "\$LEAF_PM_AARCH64_DRM_ROTATE_SHIM" || return 0
+  export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_ACTIVE=1
+  leaf_pm_begin_java8_weston_direct_drm
 }
 
 leaf_pm_enable_gothic_machismo_vulkan_rotate() {

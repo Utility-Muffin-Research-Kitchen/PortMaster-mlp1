@@ -279,6 +279,33 @@ ports whose bundled Love launcher omits one of the shared libraries already
 provided by the upstream PortMaster runtime, such as `libmodplug.so.1`, without
 copying files to eMMC/rootfs or adding a Leaf-specific binary payload.
 
+For older Java 8/JDK8 Westonpack launchers, the scanner patches
+`LEAF_PM_RUNTIME_COMPAT_JAVA8_WESTON=1` after the PortMaster control hook. These
+ports still use Westonpack's nested Weston, Xwayland, Crusty, and gl4es bridge
+because Java/LWJGL expects a desktop OpenGL/GLX path rather than Godot-style
+native Wayland. The generated hook clears any inherited `SDL_VIDEODRIVER` so
+Crusty can select the backend exposed by Westonpack, then prepends
+`-Dsun.java2d.fontpath=...` to `JAVA_TOOL_OPTIONS` using the SD-installed
+PortMaster/Leaf font resources. This avoids the `SDL_Error: wayland not
+available`/`x11 not available` pre-context failure and the subsequent Java 8
+`Probable fatal error: No fonts found` crash.
+
+On MLP1, Westonpack's Crusty SDL host path is direct DRM/KMSDRM, not a normal
+Leaf Weston surface. For this runtime family the hook therefore sets
+`CRUSTY_RESOLUTION` to `DISPLAY_WIDTH`x`DISPLAY_HEIGHT`, preloads
+`leaf-drm-rotate.so` through `WRAPPED_PRELOAD`, and uses `SDL_VIDEODRIVER=kmsdrm`
+when the packaged rotate shim is present. Unless Jawaka already marked the
+launch with `JAWAKA_DIRECT_DRM=1`, the hook temporarily stops host Weston while
+the port runs and restarts it on shell exit. This avoids the host-compositor
+flicker and makes Crusty see the landscape `960x720` mode while the shim rotates
+scanout into the real portrait-mounted panel.
+
+Opt out with `LEAF_PM_JAVA8_WESTON_COMPAT=0`. More targeted overrides are
+available with `LEAF_PM_JAVA8_WESTON_DIRECT_DRM=0`,
+`LEAF_PM_JAVA8_WESTON_STOP_DISPLAY=0`,
+`LEAF_PM_JAVA8_WESTON_CRUSTY_RESOLUTION=WIDTHxHEIGHT`, or
+`LEAF_PM_JAVA8_FONT_DIR`.
+
 The scanner also normalizes a generic unsafe shell pattern where launchers
 lowercase an entire absolute file path before `mv`. On case-sensitive paths such
 as `Roms/PORTS`, that can turn the directory component into a nonexistent
