@@ -1,5 +1,6 @@
 {
   "name": "PortMaster",
+  "icon": "res/icon.png",
   "platform": "mlp1",
   "pak_version": "0.1.2",
   "min_jawaka_version": "0.0.1",
