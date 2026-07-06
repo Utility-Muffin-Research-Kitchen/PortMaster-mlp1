@@ -181,11 +181,14 @@ export LEAF_PM_MALI_AARCH64_DIR="\${LEAF_PM_MALI_AARCH64_DIR:-\$LEAF_PM_DATA_DIR
 leaf_pm_prepare_godot_runtime_env() {
   [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
   export LEAF_PM_SKIP_WESTONPACK_CLEANUP="\${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}"
+  # The stock Mali blob mis-tracks in-flight GPU jobs against Godot 4's
+  # streamed canvas buffers: the kernel logs "Unhandled Page fault" / job
+  # TERMINATED every frame and the screen stays black after the boot splash.
+  # The Leaf EGL shim serializes draws to work around it (1 = glFinish after
+  # each draw). Override with LEAF_PM_GODOT_DRAW_FINISH=0 to disable.
+  export LEAF_EGL_DRAW_FINISH="\${LEAF_PM_GODOT_DRAW_FINISH:-\${LEAF_EGL_DRAW_FINISH:-1}}"
   _leaf_pm_godot_cmd="\${1:-}"
-  _leaf_pm_godot_use_mali_default=1
-  case "\${_leaf_pm_godot_cmd##*/}" in
-    frt_*) _leaf_pm_godot_use_mali_default=0 ;;
-  esac
+  _leaf_pm_godot_use_mali_default=0
   _leaf_pm_godot_use_mali="\${LEAF_PM_GODOT_USE_MALI_COMPAT:-\$_leaf_pm_godot_use_mali_default}"
   _leaf_pm_wayland_runtime="\${LEAF_PM_WAYLAND_RUNTIME_DIR:-\${XDG_RUNTIME_DIR:-/var/run}}"
   _leaf_pm_wayland_display="\${LEAF_PM_WAYLAND_DISPLAY:-\${WAYLAND_DISPLAY:-wayland-0}}"
@@ -279,6 +282,26 @@ leaf_pm_enable_godot_wayland_runtime() {
     fi
     "\$_leaf_pm_env_bin" "\$@"
   }
+  if command -v sudo >/dev/null 2>&1; then
+    sudo() {
+      if [ "\${1:-}" = "env" ] && [ "\${2##*/}" = "westonwrap.sh" ]; then
+        shift
+        env "\$@"
+        return \$?
+      fi
+      if [ "\${2:-}" = "env" ] && [ "\${3##*/}" = "westonwrap.sh" ]; then
+        shift 2
+        env "\$@"
+        return \$?
+      fi
+      if [ "\${3:-}" = "env" ] && [ "\${4##*/}" = "westonwrap.sh" ]; then
+        shift 3
+        env "\$@"
+        return \$?
+      fi
+      command sudo "\$@"
+    }
+  fi
 }
 
 leaf_pm_enable_egl_gles_shim() {

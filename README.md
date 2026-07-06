@@ -428,10 +428,12 @@ Leaf-only Wayland block. MLP1 already has Leaf's Weston compositor running, so
 patched Godot scripts bypass PortMaster's nested Westonpack launch path and run
 directly against the active Wayland display. When present, the EGL/GLES
 compatibility shim is prepended only for that direct Godot command so armhf and
-non-Godot ports do not inherit the aarch64 graphics shim. The scanner also
-guards Westonpack cleanup calls for those Godot launchers, because cleaning up a
-nested compositor that was never started can disturb Leaf's real Wayland
-runtime.
+non-Godot ports do not inherit the aarch64 graphics shim. Direct Godot launches
+keep the stock Mali userspace that matches Leaf's running compositor by default;
+set `LEAF_PM_GODOT_USE_MALI_COMPAT=1` for an explicit diagnostic opt-in to the
+SD-installed aarch64 Mali bundle. The scanner also guards Westonpack cleanup
+calls for those Godot launchers, because cleaning up a nested compositor that
+was never started can disturb Leaf's real Wayland runtime.
 
 Godot 4.2.2 PortMaster launchers are upgraded to the upstream `godot_4.3`
 runtime before that direct Wayland path runs, because the 4.2.2 aarch64 runtime
@@ -495,9 +497,10 @@ Godot 4 content and is too old for the Gothic/Machismo Vulkan rotation path.
 `make package-mlp1` therefore builds a small aarch64 Mali compat bundle from the
 pinned JeffyCN `libmali-next` `libmali-bifrost-g52-g29p1.so` blob. Install/repair
 copies `libmali.so.1`, `rk_vk_g29.json`, and `manifest.json` to SD user data and
-removes stale g24 compat files from earlier installs. The Godot hook puts that
-directory ahead of stock only for direct Godot launches; the Gothic/Machismo
-Vulkan rotation hook does the same only for direct-display Vulkan launches.
+removes stale g24 compat files from earlier installs. The Godot hook only uses
+that directory when `LEAF_PM_GODOT_USE_MALI_COMPAT=1` is set; the
+Gothic/Machismo Vulkan rotation hook uses it for direct-display Vulkan
+launches.
 
 `make package-mlp1` also builds `compat/drm/aarch64/leaf-drm-rotate.so`. That
 shim links only libc and resolves `librga.so.2` dynamically inside the target

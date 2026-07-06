@@ -183,20 +183,43 @@ RetroArch binary instead of firmware-specific paths like `/usr/bin/retroarch`.
 
 For aarch64 Godot 4.3 ports, the scanner also patches installed Godot shell
 launchers with a small `LEAF_PM_GODOT_WAYLAND=1` block. That block calls a hook
-function which intercepts only `env $weston_dir/westonwrap.sh ...` invocations
-from those Godot scripts. MLP1 already has Leaf's real Weston compositor
-running, so Godot is launched directly against the active Wayland display
-(`XDG_RUNTIME_DIR=/run`, `WAYLAND_DISPLAY=wayland-0` by default) instead of
-Westonpack's nested compositor path. When the SD-installed EGL/GLES
-compatibility shim is available, that direct Godot launch prepends it to
-`LD_LIBRARY_PATH`; the shim is built from source into the Pak and copied to
-`$USERDATA_PATH/portmaster/compat/egl/aarch64`. The compatibility path never
-writes to the stock rootfs/eMMC. The scanner also wraps direct
+function which intercepts `env $weston_dir/westonwrap.sh ...` invocations from
+those Godot scripts, including the common `$ESUDO env ...` form used on devices
+where PortMaster defines `ESUDO=sudo --preserve-env=...`. MLP1 already has
+Leaf's real Weston compositor running, so Godot is launched directly against the
+active Wayland display (`XDG_RUNTIME_DIR=/run`, `WAYLAND_DISPLAY=wayland-0` by
+default) instead of Westonpack's nested compositor path. When the SD-installed
+EGL/GLES compatibility shim is available, that direct Godot launch prepends it
+to `LD_LIBRARY_PATH`; the shim is built from source into the Pak and copied to
+`$USERDATA_PATH/portmaster/compat/egl/aarch64`. The Godot path keeps the active
+stock Mali userspace by default because it matches Leaf's compositor EGL
+display, but diagnostic launches can set `LEAF_PM_GODOT_USE_MALI_COMPAT=1` to
+force the SD-installed aarch64 Mali bundle. The compatibility path never writes
+to the stock rootfs/eMMC. The scanner also wraps direct
 `westonwrap.sh cleanup` calls behind `LEAF_PM_SKIP_WESTONPACK_CLEANUP` for
 patched Godot launchers; this prevents PortMaster's nested-compositor cleanup
 from removing runtime files that belong to Leaf's real compositor. Older
 `LEAF_PM_EGL_GLES_SHIM=1` script patches are still recognized through a hook
 alias.
+
+The stock MLP1 Mali blob (`libmali.so.1.9.0`, bifrost g13p0, legacy `t6xx`
+kernel driver) mis-tracks in-flight GPU jobs against Godot 4's streamed 2D
+canvas buffers. Symptom: the boot splash shows, then the screen stays pure
+black while the game keeps running; the kernel logs
+`mali ... Unhandled Page fault in AS2` / `job status ... TERMINATED` every
+frame and the blob raises `GL_OUT_OF_MEMORY`. Slime 3K Demake reproduced this
+on every scene after the splash. The generated hook therefore exports
+`LEAF_EGL_DRAW_FINISH=1` for Godot runtime launches, which makes the Leaf EGL
+shim issue `glFinish` after every draw call, serializing GPU jobs and
+eliminating the faults (measured ~40 fps in the Slime 3K menu, ~20 fps in
+gameplay scenes, versus a black screen otherwise). Set
+`LEAF_PM_GODOT_DRAW_FINISH=0` to disable the workaround, or pass the shim's
+other modes (`flush`, `sync`, `upload`) for diagnosis — during bisection none
+of the weaker barriers (per-draw `glFlush`, forced `glClientWaitSync`,
+finish-before-upload/map/delete) prevented the faults; only per-draw
+`glFinish` did. The shim also honors `LEAF_EGL_DEBUG=1` to log the chosen EGL
+config, per-frame backbuffer readbacks, and framebuffer-related GL calls to
+stderr.
 
 Some installed Godot launchers request the `godot_4.2.2` PortMaster runtime,
 whose aarch64 binary only supports X11/headless display drivers. For those
@@ -346,14 +369,15 @@ also surfaces `lib.unresolved_sonames` as an informational row so missing
 SONAMEs can be triaged without treating them as stock-OS drift or an app setup
 failure.
 
-The Godot hook also prefers an SD-installed aarch64 Mali userspace bundle when
-`$USERDATA_PATH/portmaster/compat/mali/aarch64/libmali.so.1` is present. This
-bundle is built from the pinned JeffyCN `libmali-next`
+The generated hook also installs an SD-managed aarch64 Mali userspace bundle at
+`$USERDATA_PATH/portmaster/compat/mali/aarch64/libmali.so.1`. This bundle is
+built from the pinned JeffyCN `libmali-next`
 `libmali-bifrost-g52-g29p1.so` asset and contains `libmali.so.1` plus the local
-`rk_vk_g29.json` ICD used by direct-display Vulkan launchers. It is intentionally
-scoped to Godot direct-Wayland launches and explicit direct-display Vulkan
-handoffs; other ports continue to use the stock rootfs graphics stack unless
-their own wrapper opts in.
+`rk_vk_g29.json` ICD used by direct-display Vulkan launchers. Godot direct
+launches leave Leaf's stock compositor-matched Mali stack active by default;
+set `LEAF_PM_GODOT_USE_MALI_COMPAT=1` for an explicit Godot diagnostic opt-in.
+Other ports continue to use the stock rootfs graphics stack unless their own
+wrapper opts in.
 
 The same hook also applies the global controller-layout preference for installed
 ports. By default it exports the MLP1 Nintendo SDL mapping. If
@@ -543,6 +567,12 @@ produced `pass=36 ready=8 skipped=1`. Active launch rows:
 | Godot 4.3 direct SDL2 | Songo5 | `interactive-launch pass`; the scanner-patched direct Godot path ran through `leaf_pm_run_godot_sdl2_runtime` and the `sbc_4_3_rcv12` process was observed at 960x720. |
 | Mono/FNA | Celeste | `interactive-launch pass`; the scanner now repairs lowercase `gamedir=/$directory/ports/...` assignments to `HM_PORTS_DIR`, then the Mono runtime launched `Celeste.exe`. |
 | box86 | Shovel Knight | `interactive-launch pass`; the bundled `box86` path launched `ShovelKnight` with the managed armhf compatibility environment. |
+
+MLP1 manual launch probe on 2026-07-06 for Slime 3K Demake:
+
+| Runtime family | Port | Evidence |
+| --- | --- | --- |
+| Godot 4.3 Westonpack | Slime 3K Demake | Direct ADB launch reached Godot's Wayland display path and remained running until the 12 second timeout after the hook intercepted `$ESUDO env $weston_dir/westonwrap.sh ...` and left the stock Mali EGL stack active. |
 
 After the post-exit scan, the manager asks Jawaka to run `scan-library` through
 `jawaka-platformctl`. The request is best-effort so PortMaster remains usable
