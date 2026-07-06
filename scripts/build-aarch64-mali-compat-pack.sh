@@ -65,12 +65,24 @@ cp -f "$src_lib/libmali.so.1.9.0" "$OUT_DIR/libmali.so.1"
 cp -f "$src_lib/libmali-hook.so.1.9.0" "$OUT_DIR/libmali-hook.so.1"
 chmod 755 "$OUT_DIR/libmali.so.1" "$OUT_DIR/libmali-hook.so.1"
 
+cat >"$OUT_DIR/rk_vk_g24.json" <<'EOF'
+{
+  "file_format_version": "1.0.0",
+  "ICD": {
+    "library_path": "libmali.so.1",
+    "api_version": "1.3.276"
+  }
+}
+EOF
+chmod 644 "$OUT_DIR/rk_vk_g24.json"
+
 license_path="$LICENSE_DIR/libmali-rockchip-debian-copyright"
 curl -fL --retry 3 --connect-timeout 20 -o "$license_path.tmp.$$" "$license_url"
 mv "$license_path.tmp.$$" "$license_path"
 
 lib_sha256="$(shasum -a 256 "$OUT_DIR/libmali.so.1" | awk '{print $1}')"
 hook_sha256="$(shasum -a 256 "$OUT_DIR/libmali-hook.so.1" | awk '{print $1}')"
+icd_sha256="$(shasum -a 256 "$OUT_DIR/rk_vk_g24.json" | awk '{print $1}')"
 license_sha256="$(shasum -a 256 "$license_path" | awk '{print $1}')"
 
 cat >"$OUT_DIR/manifest.json" <<EOF
@@ -94,6 +106,10 @@ cat >"$OUT_DIR/manifest.json" <<EOF
     {
       "path": "libmali-hook.so.1",
       "sha256": "$hook_sha256"
+    },
+    {
+      "path": "rk_vk_g24.json",
+      "sha256": "$icd_sha256"
     }
   ],
   "license": {

@@ -482,6 +482,120 @@ leaf_pm_apply_controller_layout
 export DEVICE_HAS_ARMHF="\${DEVICE_HAS_ARMHF:-N}"
 export DEVICE_HAS_AARCH64="\${DEVICE_HAS_AARCH64:-Y}"
 
+export LEAF_PM_AARCH64_DRM_ROTATE_SHIM="\${LEAF_PM_AARCH64_DRM_ROTATE_SHIM:-\$LEAF_PM_DATA_DIR/compat/drm/aarch64/leaf-drm-rotate.so}"
+
+leaf_pm_prepend_ld_preload() {
+  _leaf_pm_preload_path="\${1:-}"
+  [ -n "\$_leaf_pm_preload_path" ] && [ -f "\$_leaf_pm_preload_path" ] || return 1
+  case ":\${LD_PRELOAD:-}:" in
+    *:"\$_leaf_pm_preload_path":*) ;;
+    *) export LD_PRELOAD="\$_leaf_pm_preload_path\${LD_PRELOAD:+:\$LD_PRELOAD}" ;;
+  esac
+}
+
+leaf_pm_prepend_ld_library_path() {
+  _leaf_pm_lib_path="\${1:-}"
+  [ -n "\$_leaf_pm_lib_path" ] && [ -d "\$_leaf_pm_lib_path" ] || return 1
+  case ":\${LD_LIBRARY_PATH:-}:" in
+    *:"\$_leaf_pm_lib_path":*) ;;
+    *) export LD_LIBRARY_PATH="\$_leaf_pm_lib_path\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" ;;
+  esac
+}
+
+leaf_pm_pidof() {
+  command -v pidof >/dev/null 2>&1 || return 1
+  pidof "\$1" >/dev/null 2>&1
+}
+
+leaf_pm_enable_gothic_machismo_vulkan_rotate() {
+  [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 1
+  case "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE:-1}" in
+    0|false|no|FALSE|NO) return 1 ;;
+  esac
+  case "\${GOTHIC_BACKEND:-}" in
+    ""|vulkan) ;;
+    *) return 1 ;;
+  esac
+  [ -f "\$LEAF_PM_AARCH64_DRM_ROTATE_SHIM" ] || return 1
+
+  _leaf_pm_vk_dir="\${LEAF_PM_VULKAN_STACK_DIR:-}"
+  if [ -z "\$_leaf_pm_vk_dir" ] &&
+     [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ] &&
+     [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/rk_vk_g24.json" ]; then
+    _leaf_pm_vk_dir="\$LEAF_PM_MALI_AARCH64_DIR"
+  fi
+  _leaf_pm_vk_dir="\${_leaf_pm_vk_dir:-\$LEAF_PM_DATA_DIR/compat/vulkan/aarch64}"
+  if [ -d "\$_leaf_pm_vk_dir" ]; then
+    leaf_pm_prepend_ld_library_path "\$_leaf_pm_vk_dir" || true
+    if [ -z "\${VK_ICD_FILENAMES:-}" ]; then
+      if [ -f "\$_leaf_pm_vk_dir/rk_vk.json" ]; then
+        export VK_ICD_FILENAMES="\$_leaf_pm_vk_dir/rk_vk.json"
+      elif [ -f "\$_leaf_pm_vk_dir/rk_vk_g24.json" ]; then
+        export VK_ICD_FILENAMES="\$_leaf_pm_vk_dir/rk_vk_g24.json"
+      elif [ -f "\$_leaf_pm_vk_dir/rk_vk_g29.json" ]; then
+        export VK_ICD_FILENAMES="\$_leaf_pm_vk_dir/rk_vk_g29.json"
+      fi
+    fi
+  fi
+  if [ -z "\${VK_ICD_FILENAMES:-}" ] && [ ! -f /usr/share/vulkan/icd.d/rk_vk.json ]; then
+    return 1
+  fi
+
+  export GOTHIC_BACKEND=vulkan
+  export SDL_VIDEODRIVER="\${SDL_VIDEODRIVER:-kmsdrm}"
+  export LEAF_DRM_ROTATE="\${LEAF_DRM_ROTATE:-270}"
+  case "\${VK_LOADER_LAYERS_DISABLE:-}" in
+    *VK_LAYER_window_system_integration*) ;;
+    "") export VK_LOADER_LAYERS_DISABLE="VK_LAYER_window_system_integration" ;;
+    *) export VK_LOADER_LAYERS_DISABLE="\$VK_LOADER_LAYERS_DISABLE,VK_LAYER_window_system_integration" ;;
+  esac
+  leaf_pm_prepend_ld_preload "\$LEAF_PM_AARCH64_DRM_ROTATE_SHIM" || return 1
+  export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_ACTIVE=1
+}
+
+leaf_pm_restore_gothic_machismo_vulkan_rotate() {
+  [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STACK_STOPPED:-0}" = "1" ] || return 0
+  export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STACK_STOPPED=0
+  trap - EXIT HUP INT TERM
+  if [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_WESTON_WAS_RUNNING:-0}" = "1" ] &&
+     [ -x /etc/init.d/S49weston ]; then
+    /etc/init.d/S49weston start < /dev/null > /dev/null 2>&1 || true
+    sleep 1
+  fi
+  if [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_LEAF_WAS_RUNNING:-0}" = "1" ] &&
+     [ -x /etc/init.d/S50leaf ]; then
+    /etc/init.d/S50leaf start < /dev/null > /dev/null 2>&1 || true
+  fi
+}
+
+leaf_pm_begin_gothic_machismo_vulkan_rotate() {
+  [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_ACTIVE:-0}" = "1" ] || return 0
+  [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_BEGUN:-0}" != "1" ] || return 0
+  export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_BEGUN=1
+  case "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STOP_DISPLAY:-1}" in
+    0|false|no|FALSE|NO) return 0 ;;
+  esac
+
+  export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_WESTON_WAS_RUNNING=0
+  export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_LEAF_WAS_RUNNING=0
+  if leaf_pm_pidof weston; then
+    export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_WESTON_WAS_RUNNING=1
+  fi
+  if leaf_pm_pidof jawaka-launcher || leaf_pm_pidof jawaka-osd || leaf_pm_pidof jawaka-ledd; then
+    export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_LEAF_WAS_RUNNING=1
+  fi
+
+  trap 'leaf_pm_restore_gothic_machismo_vulkan_rotate' EXIT HUP INT TERM
+  if [ -x /etc/init.d/S50leaf ]; then
+    /etc/init.d/S50leaf stop < /dev/null > /dev/null 2>&1 || true
+  fi
+  if [ -x /etc/init.d/S49weston ]; then
+    /etc/init.d/S49weston stop < /dev/null > /dev/null 2>&1 || true
+  fi
+  sleep "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STOP_DELAY:-2}"
+  export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STACK_STOPPED=1
+}
+
 export LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM="\${LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM:-\$LEAF_PM_DATA_DIR/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so}"
 
 leaf_pm_enable_sdl2_fullscreen_env() {
@@ -582,7 +696,7 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
   }
 fi
 
-unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_sdl2_port _leaf_pm_sdl2_arches _leaf_pm_sdl2_optout _leaf_pm_aarch64_sdl2_cmd _leaf_pm_aarch64_sdl2_preload _leaf_pm_armhf_sdl2_cmd _leaf_pm_armhf_sdl2_preload
+unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_preload_path _leaf_pm_lib_path _leaf_pm_vk_dir _leaf_pm_sdl2_port _leaf_pm_sdl2_arches _leaf_pm_sdl2_optout _leaf_pm_aarch64_sdl2_cmd _leaf_pm_aarch64_sdl2_preload _leaf_pm_armhf_sdl2_cmd _leaf_pm_armhf_sdl2_preload
 EOF
 
 chmod 755 "$tmp"

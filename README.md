@@ -459,15 +459,26 @@ inside a pipeline rather than a simple regex-friendly launch line. Opt out with
 opt-out list for known special cases such as Ship of Harkinian.
 
 The scanner also owns narrow runtime compatibility rules for installed launch
-scripts. The current non-Godot rule targets Gothic/Machismo launchers on Leaf
-and defaults `GOTHIC_BACKEND=gles`. Leaf stock Vulkan currently exposes only
-the direct-display path for that runtime, which sees the MLP1 panel as
-`720x960` and can rotate games such as Mina the Hollower. The GLES path uses
-the active Wayland surface and keeps the game at `960x720`. The generated block
-does not depend on `CFW_NAME`, because direct Jawaka port launches and
-source-built local installs may not inherit the PortMaster GUI environment. It
-also forwards `GOTHIC_BACKEND` through the final `env` launcher so `sudo`-based
-setups do not scrub it.
+scripts. The current non-Godot rule targets Gothic/Machismo launchers on Leaf.
+When `compat/drm/aarch64/leaf-drm-rotate.so` is installed, the generated hook
+defaults those launchers to Vulkan, preloads the DRM ioctl rotation shim, stops
+Leaf/Weston before the direct-display launch, and restarts them when the script
+exits. The shim makes the Mali `VK_KHR_display` path see a `960x720` landscape
+mode, rotates each present through RGA into the real `720x960` scanout, and
+stores all state in per-process/tmp kernel objects. The hook prefers the
+SD-installed g24 Mali compat directory as its Vulkan stack when its generated
+`rk_vk_g24.json` is present, so the packaged path does not depend on stock ICD
+metadata or a reboot-cleared `/tmp` test directory. If the shim is missing, the
+hook is not sourced, `GOTHIC_BACKEND` is pre-set to a non-Vulkan value, or
+`LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE=0`, the block falls back to
+`GOTHIC_BACKEND=gles`.
+
+The generated block does not depend on `CFW_NAME`, because direct Jawaka port
+launches and source-built local installs may not inherit the PortMaster GUI
+environment. It forwards `GOTHIC_BACKEND`, `LD_PRELOAD`, `LEAF_DRM_ROTATE`,
+`SDL_VIDEODRIVER`, `VK_ICD_FILENAMES`, and `VK_LOADER_LAYERS_DISABLE` through
+the final `env` launcher so `sudo`-based setups do not scrub the Vulkan
+direct-display configuration.
 
 Love 11.5 launchers receive a generic runtime-library normalization block. If a
 port runs a bundled `love` binary but ships only part of the Love library set,
@@ -480,9 +491,15 @@ falling back to the hash-pinned upstream Love runtime for libraries such as
 MLP1 stock ships a 64-bit `g13p0` Mali userspace blob that can fault under some
 Godot 4 content. `make package-mlp1` therefore builds a small aarch64 Mali
 compat bundle from the pinned `tsukumijima/libmali-rockchip` `g24p0`
-Wayland/GBM deb. Install/repair copies only `libmali.so.1` and
-`libmali-hook.so.1` to SD user data, and the Godot hook puts that directory
-ahead of stock only for direct Godot launches.
+Wayland/GBM deb. Install/repair copies `libmali.so.1`, `libmali-hook.so.1`,
+`rk_vk_g24.json`, and `manifest.json` to SD user data. The Godot hook puts that
+directory ahead of stock only for direct Godot launches; the Gothic/Machismo
+Vulkan rotation hook does the same only for direct-display Vulkan launches.
+
+`make package-mlp1` also builds `compat/drm/aarch64/leaf-drm-rotate.so`. That
+shim links only libc and resolves `librga.so.2` dynamically inside the target
+process, so it does not add a persistent system dependency or modify stock
+graphics files.
 
 After the post-exit scan, the manager sends Jawaka a non-fatal
 `scan-library` IPC request through `jawaka-platformctl` so newly installed

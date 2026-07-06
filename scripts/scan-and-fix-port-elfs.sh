@@ -26,11 +26,12 @@ controlfolder="${PORTMASTER_CONTROLFOLDER:-$data_dir/PortMaster}"
 compat_root="${LEAF_PM_ARMHF_ROOT:-$data_dir/compat/armhf}"
 aarch64_compat_lib_dir="${LEAF_PM_AARCH64_COMPAT_LIB_DIR:-$data_dir/compat/libs/aarch64}"
 aarch64_compat_optout="${LEAF_PM_AARCH64_COMPAT_LIBS_OPTOUT:-$data_dir/compat-libs-optout.txt}"
+aarch64_drm_rotate_shim="${LEAF_PM_AARCH64_DRM_ROTATE_SHIM:-$data_dir/compat/drm/aarch64/leaf-drm-rotate.so}"
 ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=8
+RULESET_VERSION=9
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -90,7 +91,12 @@ if [ -d "$aarch64_compat_lib_dir" ]; then
   aarch64_compat_libs_available=1
   chmod 755 "$aarch64_compat_lib_dir"/lib*.so* 2>/dev/null || true
 fi
-manifest_key="$RULESET_VERSION|$scan_mode|$compat_available|$sdl2_fullscreen_available|$aarch64_sdl2_fullscreen_available|$aarch64_compat_libs_available|$ports_dir"
+aarch64_drm_rotate_available=0
+if [ -f "$aarch64_drm_rotate_shim" ]; then
+  aarch64_drm_rotate_available=1
+  chmod 755 "$aarch64_drm_rotate_shim" 2>/dev/null || true
+fi
+manifest_key="$RULESET_VERSION|$scan_mode|$compat_available|$sdl2_fullscreen_available|$aarch64_sdl2_fullscreen_available|$aarch64_compat_libs_available|$aarch64_drm_rotate_available|$ports_dir"
 
 write_leaf_hook() {
   hook_writer="$script_dir/write-leaf-runtime-hook.sh"
@@ -1399,51 +1405,123 @@ normalize_aarch64_compat_libs_script() {
   printf 'aarch64-compat-libs-error'
 }
 
-runtime_compat_gothic_machismo_gles_script() {
+runtime_compat_gothic_machismo_vulkan_rotate_script() {
   file="$1"
   if ! is_gothic_machismo_script "$file"; then
     printf 'not-gothic-machismo'
     return 0
   fi
-  if grep -q 'LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES_VERSION=3' "$file" 2>/dev/null &&
-     { grep -Eq '^[[:space:]]*GOTHIC_BACKEND="\$GOTHIC_BACKEND"[[:space:]]*\\[[:space:]]*$' "$file" 2>/dev/null ||
-       ! grep -Eq '^[[:space:]]*.*(^|[[:space:]])env[[:space:]]*\\[[:space:]]*$' "$file" 2>/dev/null; }; then
-    printf 'runtime-compat-gothic-machismo-gles-already'
+  if grep -q 'LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_VULKAN_ROTATE_VERSION=1' "$file" 2>/dev/null &&
+     grep -q 'LEAF_DRM_ROTATE="${LEAF_DRM_ROTATE:-}"' "$file" 2>/dev/null &&
+     grep -q 'leaf_pm_begin_gothic_machismo_vulkan_rotate' "$file" 2>/dev/null &&
+     ! grep -q 'LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES=1' "$file" 2>/dev/null &&
+     ! grep -q 'LEAF_PM_MINA_GLES=1' "$file" 2>/dev/null; then
+    printf 'runtime-compat-gothic-machismo-vulkan-rotate-already'
     return 0
   fi
 
   tmp="$file.tmp.$$"
   awk '
     NR == FNR {
-      if ($0 ~ /LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES_VERSION=3/) {
+      if ($0 ~ /LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_VULKAN_ROTATE_VERSION=1/) {
         has_block = 1
       }
-      if ($0 ~ /^[[:space:]]*GOTHIC_BACKEND="\$GOTHIC_BACKEND"[[:space:]]*\\[[:space:]]*$/) {
+      if ($0 ~ /^[[:space:]]*LEAF_DRM_ROTATE="\$\{LEAF_DRM_ROTATE:-\}"[[:space:]]*\\[[:space:]]*$/) {
         has_env_forward = 1
+      }
+      if ($0 ~ /leaf_pm_begin_gothic_machismo_vulkan_rotate/) {
+        has_begin = 1
+      }
+      if ($0 ~ /^[[:space:]]*"\$\{SDLVID_ARG\[@\]\}"[[:space:]]*\\[[:space:]]*$/) {
+        has_sdlvid_arg = 1
       }
       next
     }
     function insert_block() {
       print ""
-      print "# LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES=1"
-      print "# LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES_VERSION=3"
-      print "# MLP1 stock Vulkan lacks Wayland WSI for Gothic/Machismo ports; avoid the raw 720x960 direct-display fallback."
-      print "# PortMaster-mlp1 only patches installed MLP1 port scripts; pre-set GOTHIC_BACKEND to override."
-      print "export GOTHIC_BACKEND=\"${GOTHIC_BACKEND:-gles}\""
+      print "# LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_VULKAN_ROTATE=1"
+      print "# LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_VULKAN_ROTATE_VERSION=1"
+      print "# MLP1 stock Vulkan direct-display needs the Leaf DRM rotate shim; fall back to GLES when it is unavailable."
+      print "# Pre-set GOTHIC_BACKEND=gles or LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE=0 to opt out."
+      print "if declare -f leaf_pm_enable_gothic_machismo_vulkan_rotate >/dev/null 2>&1 &&"
+      print "   leaf_pm_enable_gothic_machismo_vulkan_rotate; then"
+      print "  :"
+      print "else"
+      print "  export GOTHIC_BACKEND=\"${GOTHIC_BACKEND:-gles}\""
+      print "fi"
       inserted = 1
+      changed = 1
+    }
+    function insert_begin(indent) {
+      print indent "# LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_BEGIN=1"
+      print indent "if declare -f leaf_pm_begin_gothic_machismo_vulkan_rotate >/dev/null 2>&1; then"
+      print indent "  leaf_pm_begin_gothic_machismo_vulkan_rotate"
+      print indent "fi"
+      begin_inserted = 1
+      changed = 1
     }
     {
+      if (skip_old_gles) {
+        if ($0 ~ /^[[:space:]]*$/) {
+          skip_old_gles = 0
+        }
+        changed = 1
+        next
+      }
+      if (skip_old_mina) {
+        if ($0 ~ /^[[:space:]]*fi[[:space:]]*$/) {
+          skip_old_mina = 0
+          skip_following_blank = 1
+        }
+        changed = 1
+        next
+      }
+      if (skip_following_blank && $0 ~ /^[[:space:]]*$/) {
+        skip_following_blank = 0
+        changed = 1
+        next
+      }
+      skip_following_blank = 0
+      if ($0 ~ /# LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_GLES=1/) {
+        skip_old_gles = 1
+        changed = 1
+        next
+      }
+      if ($0 ~ /# LEAF_PM_MINA_GLES=1/) {
+        skip_old_mina = 1
+        changed = 1
+        next
+      }
+      if (!has_begin && !begin_inserted &&
+          ($0 ~ /[$]GPTOKEYB[[:space:]].*machismo.*&/ ||
+           $0 ~ /pm_platform_helper[[:space:]].*machismo/ ||
+           $0 ~ /^[[:space:]]*[$]ESUDO[[:space:]]+env[[:space:]]*\\/)) {
+        indent = $0
+        sub(/[^[:space:]].*$/, "", indent)
+        insert_begin(indent)
+        print ""
+      }
       print
       if (!has_block && !inserted && $0 ~ /^[[:space:]]*get_controls([[:space:]]|$)/) {
         insert_block()
       } else if (!has_block && !inserted && $0 ~ /source[[:space:]].*control[.]txt/) {
         insert_block()
       }
-      if (!has_env_forward && !forwarded && $0 ~ /^[[:space:]]*.*(^|[[:space:]])env[[:space:]]*\\[[:space:]]*$/) {
+      if (!has_env_forward && !forwarded &&
+          ((has_sdlvid_arg && $0 ~ /^[[:space:]]*"\$\{SDLVID_ARG\[@\]\}"[[:space:]]*\\[[:space:]]*$/) ||
+           (!has_sdlvid_arg && $0 ~ /^[[:space:]]*GOTHIC_BACKEND="\$GOTHIC_BACKEND"[[:space:]]*\\[[:space:]]*$/))) {
         indent = $0
         sub(/[^[:space:]].*$/, "", indent)
-        print indent "GOTHIC_BACKEND=\"$GOTHIC_BACKEND\" \\"
+        print indent "LEAF_DRM_ROTATE=\"${LEAF_DRM_ROTATE:-}\" \\"
+        print indent "LEAF_DRM_ROTATE_DEBUG=\"${LEAF_DRM_ROTATE_DEBUG:-}\" \\"
+        print indent "LEAF_DRM_ROTATE_DUMP=\"${LEAF_DRM_ROTATE_DUMP:-}\" \\"
+        print indent "LEAF_DRM_ROTATE_DUMP_FRAME=\"${LEAF_DRM_ROTATE_DUMP_FRAME:-}\" \\"
+        print indent "LD_PRELOAD=\"${LD_PRELOAD:-}\" \\"
+        print indent "SDL_VIDEODRIVER=\"${SDL_VIDEODRIVER:-}\" \\"
+        print indent "VK_ICD_FILENAMES=\"${VK_ICD_FILENAMES:-}\" \\"
+        print indent "VK_LOADER_LAYERS_DISABLE=\"${VK_LOADER_LAYERS_DISABLE:-}\" \\"
         forwarded = 1
+        changed = 1
       }
     }
     END {
@@ -1454,7 +1532,7 @@ runtime_compat_gothic_machismo_gles_script() {
   ' "$file" "$file" >"$tmp"
   mv "$tmp" "$file"
   chmod 755 "$file" 2>/dev/null || true
-  printf 'runtime-compat-gothic-machismo-gles-patched'
+  printf 'runtime-compat-gothic-machismo-vulkan-rotate-patched'
 }
 
 runtime_compat_soh_display_script() {
@@ -1878,7 +1956,7 @@ apply_runtime_compat_rules_script() {
   normalize_lowercase_path_moves_script "$file"
   printf '\n'
   if is_gothic_machismo_script "$file"; then
-    runtime_compat_gothic_machismo_gles_script "$file"
+    runtime_compat_gothic_machismo_vulkan_rotate_script "$file"
     printf '\n'
   fi
   if is_ship_of_harkinian_script "$file"; then
@@ -2276,8 +2354,8 @@ script_cache_action() {
     aarch64-compat-libs-no-gamedir) printf 'aarch64-compat-libs-no-gamedir' ;;
     aarch64-compat-libs-opted-out) printf 'aarch64-compat-libs-opted-out' ;;
     aarch64-compat-libs-missing-pack) printf 'aarch64-compat-libs-missing-pack' ;;
-    runtime-compat-gothic-machismo-gles-patched) printf 'runtime-compat-gothic-machismo-gles-already' ;;
-    runtime-compat-gothic-machismo-gles-already) printf 'runtime-compat-gothic-machismo-gles-already' ;;
+    runtime-compat-gothic-machismo-vulkan-rotate-patched) printf 'runtime-compat-gothic-machismo-vulkan-rotate-already' ;;
+    runtime-compat-gothic-machismo-vulkan-rotate-already) printf 'runtime-compat-gothic-machismo-vulkan-rotate-already' ;;
     runtime-compat-soh-display-patched) printf 'runtime-compat-soh-display-already' ;;
     runtime-compat-soh-display-already) printf 'runtime-compat-soh-display-already' ;;
     runtime-compat-love-11-5-libs-patched) printf 'runtime-compat-love-11-5-libs-already' ;;
@@ -2353,11 +2431,11 @@ record_script_action() {
       aarch64_compat_libs_errors=$((aarch64_compat_libs_errors + 1))
       errors=$((errors + 1))
       ;;
-    runtime-compat-gothic-machismo-gles-patched)
-      runtime_compat_gothic_machismo_gles_patched=$((runtime_compat_gothic_machismo_gles_patched + 1))
+    runtime-compat-gothic-machismo-vulkan-rotate-patched)
+      runtime_compat_gothic_machismo_vulkan_rotate_patched=$((runtime_compat_gothic_machismo_vulkan_rotate_patched + 1))
       ;;
-    runtime-compat-gothic-machismo-gles-already)
-      runtime_compat_gothic_machismo_gles_already=$((runtime_compat_gothic_machismo_gles_already + 1))
+    runtime-compat-gothic-machismo-vulkan-rotate-already)
+      runtime_compat_gothic_machismo_vulkan_rotate_already=$((runtime_compat_gothic_machismo_vulkan_rotate_already + 1))
       ;;
     runtime-compat-soh-display-patched)
       runtime_compat_soh_display_patched=$((runtime_compat_soh_display_patched + 1))
@@ -2597,8 +2675,8 @@ port_paths_already=0
 libretro_retroarch_patched=0
 libretro_retroarch_already=0
 libretro_retroarch_missing=0
-runtime_compat_gothic_machismo_gles_patched=0
-runtime_compat_gothic_machismo_gles_already=0
+runtime_compat_gothic_machismo_vulkan_rotate_patched=0
+runtime_compat_gothic_machismo_vulkan_rotate_already=0
 runtime_compat_soh_display_patched=0
 runtime_compat_soh_display_already=0
 runtime_compat_soh_display_missing_anchor=0
@@ -2777,6 +2855,8 @@ cat >"$tmp_json" <<EOF
   "sdl2_fullscreen_available": $([ "$sdl2_fullscreen_available" -eq 1 ] && printf 'true' || printf 'false'),
   "aarch64_sdl2_fullscreen_shim": "$(json_escape "$aarch64_sdl2_fullscreen_shim")",
   "aarch64_sdl2_fullscreen_available": $([ "$aarch64_sdl2_fullscreen_available" -eq 1 ] && printf 'true' || printf 'false'),
+  "aarch64_drm_rotate_shim": "$(json_escape "$aarch64_drm_rotate_shim")",
+  "aarch64_drm_rotate_available": $([ "$aarch64_drm_rotate_available" -eq 1 ] && printf 'true' || printf 'false'),
   "aarch64_compat_lib_dir": "$(json_escape "$aarch64_compat_lib_dir")",
   "aarch64_compat_libs_available": $([ "$aarch64_compat_libs_available" -eq 1 ] && printf 'true' || printf 'false'),
   "aarch64_compat_lib_sonames_available": ${#aarch64_compat_sonames[@]},
@@ -2842,8 +2922,8 @@ cat >"$tmp_json" <<EOF
   "godot_weston_cleanup_scripts_patched": $weston_cleanup_patched,
   "godot_weston_cleanup_scripts_already_patched": $weston_cleanup_already,
   "godot_weston_cleanup_scripts_missing_cleanup": $weston_cleanup_missing,
-  "runtime_compat_gothic_machismo_gles_scripts_patched": $runtime_compat_gothic_machismo_gles_patched,
-  "runtime_compat_gothic_machismo_gles_scripts_already_patched": $runtime_compat_gothic_machismo_gles_already,
+  "runtime_compat_gothic_machismo_vulkan_rotate_scripts_patched": $runtime_compat_gothic_machismo_vulkan_rotate_patched,
+  "runtime_compat_gothic_machismo_vulkan_rotate_scripts_already_patched": $runtime_compat_gothic_machismo_vulkan_rotate_already,
   "runtime_compat_soh_display_scripts_patched": $runtime_compat_soh_display_patched,
   "runtime_compat_soh_display_scripts_already_patched": $runtime_compat_soh_display_already,
   "runtime_compat_soh_display_scripts_missing_anchor": $runtime_compat_soh_display_missing_anchor,
@@ -2870,4 +2950,4 @@ if [ "$manifest_write_enabled" -eq 1 ]; then
   mv "$manifest_tmp" "$manifest_path"
 fi
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_gles_patched=$runtime_compat_gothic_machismo_gles_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
