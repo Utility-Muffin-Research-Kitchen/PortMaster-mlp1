@@ -15,12 +15,51 @@ static const char *PM_MLP1_GAMECONTROLLERCONFIG_GUI =
     "leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,"
     "crc:3cfe,platform:Linux";
 
-static int sentinel_path(const pm_context *ctx, char *path, size_t path_size)
+static void set_err(char *err, size_t err_size, const char *fmt, ...);
+
+static int sentinel_path(const pm_context *ctx, const char *name,
+                         char *path, size_t path_size)
 {
-    if (!ctx) {
+    if (!ctx || !name) {
         return -1;
     }
-    return pm_join(path, path_size, ctx->data_dir, "nintendo");
+    return pm_join(path, path_size, ctx->data_dir, name);
+}
+
+static const char *sentinel_name(pm_controller_layout layout)
+{
+    return layout == PM_CONTROLLER_LAYOUT_NINTENDO ? "nintendo" : "x360";
+}
+
+static int write_sentinel(const char *path, const char *value,
+                          char *err, size_t err_size)
+{
+    FILE *fp = fopen(path, "wb");
+    if (!fp) {
+        set_err(err, err_size, "cannot write %s: %s", path, strerror(errno));
+        return -1;
+    }
+    if (fprintf(fp, "%s\n", value) < 0) {
+        int saved_errno = errno;
+        fclose(fp);
+        errno = saved_errno;
+        set_err(err, err_size, "cannot finish %s: %s", path, strerror(errno));
+        return -1;
+    }
+    if (fclose(fp) != 0) {
+        set_err(err, err_size, "cannot finish %s: %s", path, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+static int remove_sentinel(const char *path, char *err, size_t err_size)
+{
+    if (unlink(path) != 0 && errno != ENOENT) {
+        set_err(err, err_size, "cannot remove %s: %s", path, strerror(errno));
+        return -1;
+    }
+    return 0;
 }
 
 static void set_err(char *err, size_t err_size, const char *fmt, ...)
@@ -68,15 +107,19 @@ int pm_controller_layout_from_string(const char *value, pm_controller_layout *ou
 
 int pm_controller_layout_load(const pm_context *ctx, pm_controller_layout *out)
 {
-    char path[PM_PATH_MAX];
+    char x360_path[PM_PATH_MAX];
+    char nintendo_path[PM_PATH_MAX];
     if (!out) {
         return -1;
     }
-    *out = PM_CONTROLLER_LAYOUT_X360;
-    if (sentinel_path(ctx, path, sizeof(path)) != 0) {
+    *out = PM_CONTROLLER_LAYOUT_NINTENDO;
+    if (sentinel_path(ctx, "x360", x360_path, sizeof(x360_path)) != 0 ||
+        sentinel_path(ctx, "nintendo", nintendo_path, sizeof(nintendo_path)) != 0) {
         return -1;
     }
-    if (pm_file_exists(path)) {
+    if (pm_file_exists(x360_path)) {
+        *out = PM_CONTROLLER_LAYOUT_X360;
+    } else if (pm_file_exists(nintendo_path)) {
         *out = PM_CONTROLLER_LAYOUT_NINTENDO;
     }
     return 0;
@@ -96,27 +139,23 @@ int pm_controller_layout_save(const pm_context *ctx, pm_controller_layout layout
         return -1;
     }
 
-    char path[PM_PATH_MAX];
-    if (sentinel_path(ctx, path, sizeof(path)) != 0) {
+    char selected_path[PM_PATH_MAX];
+    char other_path[PM_PATH_MAX];
+    pm_controller_layout other = layout == PM_CONTROLLER_LAYOUT_NINTENDO
+        ? PM_CONTROLLER_LAYOUT_X360
+        : PM_CONTROLLER_LAYOUT_NINTENDO;
+    if (sentinel_path(ctx, sentinel_name(layout),
+                      selected_path, sizeof(selected_path)) != 0 ||
+        sentinel_path(ctx, sentinel_name(other),
+                      other_path, sizeof(other_path)) != 0) {
         set_err(err, err_size, "controller layout path too long");
         return -1;
     }
 
-    if (layout == PM_CONTROLLER_LAYOUT_NINTENDO) {
-        FILE *fp = fopen(path, "wb");
-        if (!fp) {
-            set_err(err, err_size, "cannot write %s: %s", path, strerror(errno));
-            return -1;
-        }
-        if (fputs("nintendo\n", fp) < 0 || fclose(fp) != 0) {
-            set_err(err, err_size, "cannot finish %s: %s", path, strerror(errno));
-            return -1;
-        }
-    } else {
-        if (unlink(path) != 0 && errno != ENOENT) {
-            set_err(err, err_size, "cannot remove %s: %s", path, strerror(errno));
-            return -1;
-        }
+    const char *slug = pm_controller_layout_slug(layout);
+    if (write_sentinel(selected_path, slug, err, err_size) != 0 ||
+        remove_sentinel(other_path, err, err_size) != 0) {
+        return -1;
     }
 
     return pm_controller_layout_sync_hook(ctx, err, err_size);

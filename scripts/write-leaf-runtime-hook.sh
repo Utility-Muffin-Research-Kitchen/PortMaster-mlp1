@@ -309,12 +309,15 @@ leaf_pm_apply_controller_layout() {
   if [ "\${PORTMASTER_LEAF_PORT_LAYOUT_SCOPE:-ports}" = "gui" ]; then
     export PORTMASTER_LEAF_CONTROLLER_LAYOUT="gui"
     export SDL_GAMECONTROLLERCONFIG='$controller_gui'
+  elif [ -f "\$LEAF_PM_DATA_DIR/x360" ]; then
+    export PORTMASTER_LEAF_CONTROLLER_LAYOUT="x360"
+    export SDL_GAMECONTROLLERCONFIG='$controller_x360'
   elif [ -f "\$LEAF_PM_DATA_DIR/nintendo" ]; then
     export PORTMASTER_LEAF_CONTROLLER_LAYOUT="nintendo"
     export SDL_GAMECONTROLLERCONFIG='$controller_nintendo'
   else
-    export PORTMASTER_LEAF_CONTROLLER_LAYOUT="x360"
-    export SDL_GAMECONTROLLERCONFIG='$controller_x360'
+    export PORTMASTER_LEAF_CONTROLLER_LAYOUT="nintendo"
+    export SDL_GAMECONTROLLERCONFIG='$controller_nintendo'
   fi
   export sdl_controllerconfig="\$SDL_GAMECONTROLLERCONFIG"
   export SDL_GAMECONTROLLERCONFIG_FILE="/tmp/leaf-portmaster-gamecontrollerdb.txt"

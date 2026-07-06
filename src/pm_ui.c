@@ -477,9 +477,9 @@ static bool confirm_message(const char *message, const char *confirm_label)
 
 static pm_controller_layout current_controller_layout(pm_context *ctx)
 {
-    pm_controller_layout layout = PM_CONTROLLER_LAYOUT_X360;
+    pm_controller_layout layout = PM_CONTROLLER_LAYOUT_NINTENDO;
     if (pm_controller_layout_load(ctx, &layout) != 0) {
-        return PM_CONTROLLER_LAYOUT_X360;
+        return PM_CONTROLLER_LAYOUT_NINTENDO;
     }
     return layout;
 }
