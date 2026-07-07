@@ -372,6 +372,12 @@ Older Neverball/Neverputt engine binaries look up material textures under
 Neverball/Neverputt controller markers and creates a FAT32-safe copy alias at
 `data/mtrl` when the legacy path is missing.
 
+Love/Loxel projects that size the Love window from `Project.width` and
+`Project.height` are patched through a source-level display-fit rule. This keeps
+the game's logical world size intact, but clamps the outer Love window to the
+active Leaf display dimensions so wide 16:9 projects letterbox inside a
+`960x720` panel instead of extending past the right edge.
+
 The scan JSON reports generic SDL2 coverage through
 `sdl2_fullscreen_ports_aarch64`, `sdl2_fullscreen_ports_armhf`,
 `sdl2_fullscreen_ports_both`, and the

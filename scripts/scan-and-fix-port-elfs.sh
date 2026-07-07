@@ -31,7 +31,7 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=14
+RULESET_VERSION=15
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -473,6 +473,41 @@ neverball_texture_alias_tag_for_script() {
   printf 'no-source'
 }
 
+love_project_window_tag_for_script() {
+  local file="$1"
+  local port game_dir path found
+  if ! is_love_runtime_script "$file"; then
+    printf 'na'
+    return 0
+  fi
+  port="$(script_port_dir "$file" || true)"
+  if [ -z "$port" ]; then
+    printf 'no-gamedir'
+    return 0
+  fi
+  game_dir="$ports_dir/$port"
+  found=0
+  for path in \
+    "$game_dir/gamedata/loxel/init.lua" \
+    "$game_dir/gamedata/funkin/init.lua" \
+    "$game_dir/gamedata/funkin/ui/options/display.lua"; do
+    [ -f "$path" ] || continue
+    if grep -q 'LEAF_PM_RUNTIME_COMPAT_LOVE_PROJECT_WINDOW_VERSION=1' "$path" 2>/dev/null; then
+      found=1
+      continue
+    fi
+    if grep -Eq 'love[.]window[.](setMode|updateMode)[(]Project[.]width' "$path" 2>/dev/null; then
+      printf 'missing'
+      return 0
+    fi
+  done
+  if [ "$found" -eq 1 ]; then
+    printf 'present'
+    return 0
+  fi
+  printf 'no-source'
+}
+
 sdl2_arch_csv_for_port() {
   local port="$1"
   local csv=""
@@ -520,9 +555,10 @@ script_sdl2_cache_tag() {
   if is_aarch64_compat_libs_optout_port "$port"; then
     compat_csv="optout"
   fi
-  printf '%s:%s|compat:%s|unresolved:%s|neverball-mtrl:%s' \
+  printf '%s:%s|compat:%s|unresolved:%s|neverball-mtrl:%s|love-project-window:%s' \
     "$port" "$arch_csv" "$compat_csv" "$unresolved_csv" \
-    "$(neverball_texture_alias_tag_for_script "$file")"
+    "$(neverball_texture_alias_tag_for_script "$file")" \
+    "$(love_project_window_tag_for_script "$file")"
 }
 
 csv_has_value() {
@@ -1974,6 +2010,267 @@ runtime_compat_love_11_5_libs_script() {
   printf 'runtime-compat-love-11-5-libs-error'
 }
 
+runtime_compat_love_project_window_patch_file() {
+  path="$1"
+  mode="$2"
+  local tmp rc
+  [ -f "$path" ] || return 4
+  if grep -q 'LEAF_PM_RUNTIME_COMPAT_LOVE_PROJECT_WINDOW_VERSION=1' "$path" 2>/dev/null; then
+    return 1
+  fi
+
+  tmp="$path.tmp.$$"
+  case "$mode" in
+    loxel)
+      if awk '
+        function print_helper() {
+          print ""
+          print "-- LEAF_PM_RUNTIME_COMPAT_LOVE_PROJECT_WINDOW=1"
+          print "-- LEAF_PM_RUNTIME_COMPAT_LOVE_PROJECT_WINDOW_VERSION=1"
+          print "local function leaf_pm_love_project_window_limit()"
+          print "    local display_w = tonumber(os.getenv(\"DISPLAY_WIDTH\") or \"\")"
+          print "    local display_h = tonumber(os.getenv(\"DISPLAY_HEIGHT\") or \"\")"
+          print "    if love and love.window and love.window.getMaxDesktopDimensions then"
+          print "        local ok, max_w, max_h = pcall(love.window.getMaxDesktopDimensions)"
+          print "        if ok then"
+          print "            if max_w and max_w > 0 then display_w = display_w and math.min(display_w, max_w) or max_w end"
+          print "            if max_h and max_h > 0 then display_h = display_h and math.min(display_h, max_h) or max_h end"
+          print "        end"
+          print "    end"
+          print "    return display_w, display_h"
+          print "end"
+          print ""
+          print "local function leaf_pm_love_project_window_size(width, height)"
+          print "    local display_w, display_h = leaf_pm_love_project_window_limit()"
+          print "    width = math.floor((tonumber(width) or 0) + 0.5)"
+          print "    height = math.floor((tonumber(height) or 0) + 0.5)"
+          print "    if display_w and display_h and (width > display_w or height > display_h) then"
+          print "        return math.floor(display_w), math.floor(display_h)"
+          print "    end"
+          print "    return width, height"
+          print "end"
+          inserted = 1
+        }
+        {
+          if (!inserted && $0 ~ /^local isMobile = /) {
+            print
+            print_helper()
+            next
+          }
+          if ($0 ~ /love[.]window[.]setMode[(]Project[.]width,[[:space:]]*Project[.]height,/) {
+            indent = $0
+            sub(/[^[:space:]].*$/, "", indent)
+            print indent "local leaf_pm_window_w, leaf_pm_window_h = leaf_pm_love_project_window_size(Project.width, Project.height)"
+            line = $0
+            sub(/Project[.]width,[[:space:]]*Project[.]height/, "leaf_pm_window_w, leaf_pm_window_h", line)
+            print line
+            changed = 1
+            next
+          }
+          print
+        }
+        END {
+          if (!inserted || !changed) {
+            exit 2
+          }
+        }
+      ' "$path" >"$tmp"; then
+        mv "$tmp" "$path"
+        return 0
+      else
+        rc=$?
+      fi
+      ;;
+    funkin)
+      if awk '
+        function print_helper() {
+          print ""
+          print "-- LEAF_PM_RUNTIME_COMPAT_LOVE_PROJECT_WINDOW=1"
+          print "-- LEAF_PM_RUNTIME_COMPAT_LOVE_PROJECT_WINDOW_VERSION=1"
+          print "local function leaf_pm_love_project_window_limit()"
+          print "    local display_w = tonumber(os.getenv(\"DISPLAY_WIDTH\") or \"\")"
+          print "    local display_h = tonumber(os.getenv(\"DISPLAY_HEIGHT\") or \"\")"
+          print "    if love and love.window and love.window.getMaxDesktopDimensions then"
+          print "        local ok, max_w, max_h = pcall(love.window.getMaxDesktopDimensions)"
+          print "        if ok then"
+          print "            if max_w and max_w > 0 then display_w = display_w and math.min(display_w, max_w) or max_w end"
+          print "            if max_h and max_h > 0 then display_h = display_h and math.min(display_h, max_h) or max_h end"
+          print "        end"
+          print "    end"
+          print "    return display_w, display_h"
+          print "end"
+          print ""
+          print "local function leaf_pm_love_project_window_size(width, height)"
+          print "    local display_w, display_h = leaf_pm_love_project_window_limit()"
+          print "    width = math.floor((tonumber(width) or 0) + 0.5)"
+          print "    height = math.floor((tonumber(height) or 0) + 0.5)"
+          print "    if display_w and display_h and (width > display_w or height > display_h) then"
+          print "        return math.floor(display_w), math.floor(display_h)"
+          print "    end"
+          print "    return width, height"
+          print "end"
+          inserted = 1
+        }
+        {
+          if (!inserted && $0 ~ /^function funkin[.]setup[(][)]/) {
+            print_helper()
+          }
+          if ($0 ~ /love[.]window[.]setMode[(]Project[.]width[[:space:]]*[*][[:space:]]*res,[[:space:]]*Project[.]height[[:space:]]*[*][[:space:]]*res,/) {
+            indent = $0
+            sub(/[^[:space:]].*$/, "", indent)
+            print indent "local leaf_pm_window_w, leaf_pm_window_h = leaf_pm_love_project_window_size(Project.width * res, Project.height * res)"
+            print indent "print((\"Leaf Love display fit: requested=%.0fx%.0f window=%dx%d\"):format(Project.width * res, Project.height * res, leaf_pm_window_w, leaf_pm_window_h))"
+            line = $0
+            sub(/Project[.]width[[:space:]]*[*][[:space:]]*res,[[:space:]]*Project[.]height[[:space:]]*[*][[:space:]]*res/, "leaf_pm_window_w, leaf_pm_window_h", line)
+            print line
+            changed = 1
+            next
+          }
+          print
+        }
+        END {
+          if (!inserted || !changed) {
+            exit 2
+          }
+        }
+      ' "$path" >"$tmp"; then
+        mv "$tmp" "$path"
+        return 0
+      else
+        rc=$?
+      fi
+      ;;
+    display)
+      if awk '
+        function print_helper() {
+          print ""
+          print "-- LEAF_PM_RUNTIME_COMPAT_LOVE_PROJECT_WINDOW=1"
+          print "-- LEAF_PM_RUNTIME_COMPAT_LOVE_PROJECT_WINDOW_VERSION=1"
+          print "local function leaf_pm_love_project_window_limit()"
+          print "    local display_w = tonumber(os.getenv(\"DISPLAY_WIDTH\") or \"\")"
+          print "    local display_h = tonumber(os.getenv(\"DISPLAY_HEIGHT\") or \"\")"
+          print "    if love and love.window and love.window.getMaxDesktopDimensions then"
+          print "        local ok, max_w, max_h = pcall(love.window.getMaxDesktopDimensions)"
+          print "        if ok then"
+          print "            if max_w and max_w > 0 then display_w = display_w and math.min(display_w, max_w) or max_w end"
+          print "            if max_h and max_h > 0 then display_h = display_h and math.min(display_h, max_h) or max_h end"
+          print "        end"
+          print "    end"
+          print "    return display_w, display_h"
+          print "end"
+          print ""
+          print "local function leaf_pm_love_project_window_size(width, height)"
+          print "    local display_w, display_h = leaf_pm_love_project_window_limit()"
+          print "    width = math.floor((tonumber(width) or 0) + 0.5)"
+          print "    height = math.floor((tonumber(height) or 0) + 0.5)"
+          print "    if display_w and display_h and (width > display_w or height > display_h) then"
+          print "        return math.floor(display_w), math.floor(display_h)"
+          print "    end"
+          print "    return width, height"
+          print "end"
+          inserted = 1
+        }
+        {
+          if (!inserted && $0 ~ /^local resolutionf/) {
+            print
+            print_helper()
+            next
+          }
+          if ($0 ~ /love[.]window[.]updateMode[(]Project[.]width[[:space:]]*[*][[:space:]]*value,[[:space:]]*Project[.]height[[:space:]]*[*][[:space:]]*value[)]/) {
+            indent = $0
+            sub(/[^[:space:]].*$/, "", indent)
+            print indent "local leaf_pm_window_w, leaf_pm_window_h = leaf_pm_love_project_window_size(Project.width * value, Project.height * value)"
+            print indent "love.window.updateMode(leaf_pm_window_w, leaf_pm_window_h)"
+            changed = 1
+            next
+          }
+          print
+        }
+        END {
+          if (!inserted || !changed) {
+            exit 2
+          }
+        }
+      ' "$path" >"$tmp"; then
+        mv "$tmp" "$path"
+        return 0
+      else
+        rc=$?
+      fi
+      ;;
+    *) rc=3 ;;
+  esac
+
+  rm -f "$tmp"
+  if [ "${rc:-3}" -eq 2 ]; then
+    return 2
+  fi
+  return 3
+}
+
+runtime_compat_love_project_window_script() {
+  file="$1"
+  local port game_dir patched already candidates rc errors missing_anchor spec path mode
+  if ! is_love_runtime_script "$file"; then
+    printf 'not-love-runtime'
+    return 0
+  fi
+
+  port="$(script_port_dir "$file" || true)"
+  if [ -z "$port" ]; then
+    printf 'runtime-compat-love-project-window-no-gamedir'
+    return 0
+  fi
+  game_dir="$ports_dir/$port"
+  patched=0
+  already=0
+  candidates=0
+  errors=0
+  missing_anchor=0
+
+  for spec in \
+    "$game_dir/gamedata/loxel/init.lua:loxel" \
+    "$game_dir/gamedata/funkin/init.lua:funkin" \
+    "$game_dir/gamedata/funkin/ui/options/display.lua:display"; do
+    path="${spec%:*}"
+    mode="${spec##*:}"
+    [ -f "$path" ] || continue
+    candidates=$((candidates + 1))
+    if runtime_compat_love_project_window_patch_file "$path" "$mode"; then
+      patched=$((patched + 1))
+    else
+      rc=$?
+      case "$rc" in
+        1) already=$((already + 1)) ;;
+        2) missing_anchor=$((missing_anchor + 1)) ;;
+        3) errors=$((errors + 1)) ;;
+      esac
+    fi
+  done
+
+  if [ "$errors" -gt 0 ]; then
+    printf 'runtime-compat-love-project-window-error'
+    return 0
+  fi
+  if [ "$missing_anchor" -gt 0 ] && [ "$patched" -eq 0 ]; then
+    printf 'runtime-compat-love-project-window-missing-anchor'
+    return 0
+  fi
+  if [ "$patched" -gt 0 ]; then
+    printf 'runtime-compat-love-project-window-patched'
+    return 0
+  fi
+  if [ "$already" -gt 0 ]; then
+    printf 'runtime-compat-love-project-window-already'
+    return 0
+  fi
+  if [ "$candidates" -eq 0 ]; then
+    printf 'runtime-compat-love-project-window-no-source'
+    return 0
+  fi
+  printf 'runtime-compat-love-project-window-missing-anchor'
+}
+
 runtime_compat_java8_weston_script() {
   file="$1"
   if ! is_java8_weston_script "$file"; then
@@ -2347,6 +2644,8 @@ apply_runtime_compat_rules_script() {
   fi
   if is_love_runtime_script "$file"; then
     runtime_compat_love_11_5_libs_script "$file"
+    printf '\n'
+    runtime_compat_love_project_window_script "$file"
     printf '\n'
   fi
   if is_java8_weston_script "$file"; then
@@ -2754,6 +3053,10 @@ script_cache_action() {
     runtime-compat-soh-display-already) printf 'runtime-compat-soh-display-already' ;;
     runtime-compat-love-11-5-libs-patched) printf 'runtime-compat-love-11-5-libs-already' ;;
     runtime-compat-love-11-5-libs-already) printf 'runtime-compat-love-11-5-libs-already' ;;
+    runtime-compat-love-project-window-patched) printf 'runtime-compat-love-project-window-already' ;;
+    runtime-compat-love-project-window-already) printf 'runtime-compat-love-project-window-already' ;;
+    runtime-compat-love-project-window-no-gamedir) printf 'runtime-compat-love-project-window-no-gamedir' ;;
+    runtime-compat-love-project-window-no-source) printf 'runtime-compat-love-project-window-no-source' ;;
     runtime-compat-java8-weston-patched) printf 'runtime-compat-java8-weston-already' ;;
     runtime-compat-java8-weston-already) printf 'runtime-compat-java8-weston-already' ;;
     runtime-compat-pyxel-fullscreen-patched) printf 'runtime-compat-pyxel-fullscreen-already' ;;
@@ -2765,7 +3068,7 @@ script_cache_action() {
     runtime-compat-neverball-texture-alias-no-source) printf 'runtime-compat-neverball-texture-alias-no-source' ;;
     lowercase-path-move-patched) printf 'lowercase-path-move-already' ;;
     lowercase-path-move-already) printf 'lowercase-path-move-already' ;;
-    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|runtime-compat-java8-weston-missing-anchor|runtime-compat-java8-weston-error|runtime-compat-pyxel-fullscreen-missing-anchor|runtime-compat-pyxel-fullscreen-error|runtime-compat-neverball-texture-alias-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error|aarch64-compat-libs-missing-anchor|aarch64-compat-libs-error)
+    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|runtime-compat-love-project-window-missing-anchor|runtime-compat-love-project-window-error|runtime-compat-java8-weston-missing-anchor|runtime-compat-java8-weston-error|runtime-compat-pyxel-fullscreen-missing-anchor|runtime-compat-pyxel-fullscreen-error|runtime-compat-neverball-texture-alias-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error|aarch64-compat-libs-missing-anchor|aarch64-compat-libs-error)
       return 1
       ;;
     *) printf '' ;;
@@ -2866,6 +3169,26 @@ record_script_action() {
       ;;
     runtime-compat-love-11-5-libs-error)
       runtime_compat_love_11_5_libs_errors=$((runtime_compat_love_11_5_libs_errors + 1))
+      errors=$((errors + 1))
+      ;;
+    runtime-compat-love-project-window-patched)
+      runtime_compat_love_project_window_patched=$((runtime_compat_love_project_window_patched + 1))
+      ;;
+    runtime-compat-love-project-window-already)
+      runtime_compat_love_project_window_already=$((runtime_compat_love_project_window_already + 1))
+      ;;
+    runtime-compat-love-project-window-no-gamedir)
+      runtime_compat_love_project_window_no_gamedir=$((runtime_compat_love_project_window_no_gamedir + 1))
+      ;;
+    runtime-compat-love-project-window-no-source)
+      runtime_compat_love_project_window_no_source=$((runtime_compat_love_project_window_no_source + 1))
+      ;;
+    runtime-compat-love-project-window-missing-anchor)
+      runtime_compat_love_project_window_missing_anchor=$((runtime_compat_love_project_window_missing_anchor + 1))
+      errors=$((errors + 1))
+      ;;
+    runtime-compat-love-project-window-error)
+      runtime_compat_love_project_window_errors=$((runtime_compat_love_project_window_errors + 1))
       errors=$((errors + 1))
       ;;
     runtime-compat-java8-weston-patched)
@@ -3135,6 +3458,12 @@ runtime_compat_love_11_5_libs_patched=0
 runtime_compat_love_11_5_libs_already=0
 runtime_compat_love_11_5_libs_missing_anchor=0
 runtime_compat_love_11_5_libs_errors=0
+runtime_compat_love_project_window_patched=0
+runtime_compat_love_project_window_already=0
+runtime_compat_love_project_window_no_gamedir=0
+runtime_compat_love_project_window_no_source=0
+runtime_compat_love_project_window_missing_anchor=0
+runtime_compat_love_project_window_errors=0
 runtime_compat_java8_weston_patched=0
 runtime_compat_java8_weston_already=0
 runtime_compat_java8_weston_missing_anchor=0
@@ -3396,6 +3725,12 @@ cat >"$tmp_json" <<EOF
   "runtime_compat_love_11_5_libs_scripts_already_patched": $runtime_compat_love_11_5_libs_already,
   "runtime_compat_love_11_5_libs_scripts_missing_anchor": $runtime_compat_love_11_5_libs_missing_anchor,
   "runtime_compat_love_11_5_libs_script_errors": $runtime_compat_love_11_5_libs_errors,
+  "runtime_compat_love_project_window_scripts_patched": $runtime_compat_love_project_window_patched,
+  "runtime_compat_love_project_window_scripts_already_patched": $runtime_compat_love_project_window_already,
+  "runtime_compat_love_project_window_scripts_no_gamedir": $runtime_compat_love_project_window_no_gamedir,
+  "runtime_compat_love_project_window_scripts_no_source": $runtime_compat_love_project_window_no_source,
+  "runtime_compat_love_project_window_scripts_missing_anchor": $runtime_compat_love_project_window_missing_anchor,
+  "runtime_compat_love_project_window_script_errors": $runtime_compat_love_project_window_errors,
   "runtime_compat_java8_weston_scripts_patched": $runtime_compat_java8_weston_patched,
   "runtime_compat_java8_weston_scripts_already_patched": $runtime_compat_java8_weston_already,
   "runtime_compat_java8_weston_scripts_missing_anchor": $runtime_compat_java8_weston_missing_anchor,
@@ -3428,4 +3763,4 @@ if [ "$manifest_write_enabled" -eq 1 ]; then
   mv "$manifest_tmp" "$manifest_path"
 fi
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched runtime_compat_java8_weston_patched=$runtime_compat_java8_weston_patched runtime_compat_pyxel_fullscreen_patched=$runtime_compat_pyxel_fullscreen_patched runtime_compat_neverball_texture_alias_patched=$runtime_compat_neverball_texture_alias_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched runtime_compat_love_project_window_patched=$runtime_compat_love_project_window_patched runtime_compat_java8_weston_patched=$runtime_compat_java8_weston_patched runtime_compat_pyxel_fullscreen_patched=$runtime_compat_pyxel_fullscreen_patched runtime_compat_neverball_texture_alias_patched=$runtime_compat_neverball_texture_alias_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"

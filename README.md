@@ -470,6 +470,11 @@ Neverball/Neverputt binaries expect material textures in `data/mtrl` but the por
 ships them in `data/textures/mtrl`. The scanner creates a copy alias rather than
 a symlink so the result remains valid on FAT32 SD cards.
 
+Love/Loxel projects that request a window from `Project.width`/`Project.height`
+also get a display-fit pass. The scanner leaves the game world resolution alone
+and clamps only the Love window to the active Leaf display, so wide projects can
+letterbox instead of being cropped on the right edge.
+
 The scanner also owns narrow runtime compatibility rules for installed launch
 scripts. One native-display rule targets Gothic/Machismo launchers on Leaf.
 When `compat/drm/aarch64/leaf-drm-rotate.so` is installed, the generated hook can
