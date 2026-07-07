@@ -414,8 +414,9 @@ libretro cores, are reported but not rewritten.
 
 Installed `.sh` launchers are also patched with a small SD environment block so
 upstream PortMaster scripts resolve `XDG_DATA_HOME`, `PORTMASTER_CONTROLFOLDER`,
-and common quoted or unquoted `GAMEDIR=/$directory/ports/...` paths to the
-active SD-managed PortMaster tree instead of `/roms/ports` on the stock rootfs.
+and common quoted or unquoted `GAMEDIR=/$directory/ports/...` or
+`PORTDIR=/$directory/ports` paths to the active SD-managed PortMaster tree
+instead of `/roms/ports` on the stock rootfs.
 
 Libretro-style PortMaster launchers, such as 2048, are normalized in the same
 pass. Upstream scripts usually hardcode firmware-specific RetroArch locations
@@ -464,8 +465,13 @@ Ren'Py launchers are also routed into the aarch64 SDL2 fullscreen shim when they
 mount a `renpy_*.squashfs` runtime and run `startRENPY`, since the runtime ELF is
 not visible to the installed-port scan until launch time.
 
+Neverball-family launchers get a data-layout compatibility pass when older
+Neverball/Neverputt binaries expect material textures in `data/mtrl` but the port
+ships them in `data/textures/mtrl`. The scanner creates a copy alias rather than
+a symlink so the result remains valid on FAT32 SD cards.
+
 The scanner also owns narrow runtime compatibility rules for installed launch
-scripts. The current non-Godot rule targets Gothic/Machismo launchers on Leaf.
+scripts. One native-display rule targets Gothic/Machismo launchers on Leaf.
 When `compat/drm/aarch64/leaf-drm-rotate.so` is installed, the generated hook can
 opt those launchers into Vulkan during Leaf's direct-DRM handoff. Jawaka marks
 that handoff with `JAWAKA_DIRECT_DRM=1`, so the hook preloads the DRM ioctl

@@ -31,7 +31,7 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=12
+RULESET_VERSION=14
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -375,6 +375,16 @@ is_renpy_runtime_script() {
   grep -Eq 'renpy_[0-9][^[:space:]]*[.]squashfs|(^|[/[:space:]])startRENPY([[:space:]]|$)|renpy/startRENPY' "$file" 2>/dev/null
 }
 
+is_neverball_engine_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) return 1 ;;
+  esac
+  grep -Eq 'NEVERBALL_DATA|neverball[.]gptk|neverputt[.]gptk' "$file" 2>/dev/null &&
+    grep -Eq '(^|[[:space:];|&])([.]/)?neverball([[:space:];|&]|$)|(^|[[:space:];|&])([.]/)?neverputt([[:space:];|&]|$)|neverball[.]gptk|neverputt[.]gptk' "$file" 2>/dev/null
+}
+
 pyxel_source_entrypoint_for_script() {
   local file="$1"
   local port pkg path
@@ -439,6 +449,30 @@ script_port_dir() {
   ' "$file"
 }
 
+neverball_texture_alias_tag_for_script() {
+  local file="$1"
+  local port game_dir
+  if ! is_neverball_engine_script "$file"; then
+    printf 'na'
+    return 0
+  fi
+  port="$(script_port_dir "$file" || true)"
+  if [ -z "$port" ]; then
+    printf 'no-gamedir'
+    return 0
+  fi
+  game_dir="$ports_dir/$port"
+  if [ -f "$game_dir/data/mtrl/default" ] || [ -f "$game_dir/data/mtrl/default.png" ]; then
+    printf 'present'
+    return 0
+  fi
+  if [ -d "$game_dir/data/textures/mtrl" ]; then
+    printf 'missing'
+    return 0
+  fi
+  printf 'no-source'
+}
+
 sdl2_arch_csv_for_port() {
   local port="$1"
   local csv=""
@@ -486,7 +520,9 @@ script_sdl2_cache_tag() {
   if is_aarch64_compat_libs_optout_port "$port"; then
     compat_csv="optout"
   fi
-  printf '%s:%s|compat:%s|unresolved:%s' "$port" "$arch_csv" "$compat_csv" "$unresolved_csv"
+  printf '%s:%s|compat:%s|unresolved:%s|neverball-mtrl:%s' \
+    "$port" "$arch_csv" "$compat_csv" "$unresolved_csv" \
+    "$(neverball_texture_alias_tag_for_script "$file")"
 }
 
 csv_has_value() {
@@ -961,13 +997,25 @@ normalize_port_paths_script() {
     *.sh) ;;
     *) printf 'not-shell'; return 0 ;;
   esac
-  if ! grep -Eq '[Gg][Aa][Mm][Ee][Dd][Ii][Rr]="?/\$directory/ports/' "$file" 2>/dev/null; then
+  if ! grep -Eq '([Gg][Aa][Mm][Ee][Dd][Ii][Rr]="?/\$directory/ports/|[Pp][Oo][Rr][Tt][Dd][Ii][Rr]="?/\$directory/ports([[:space:]"]|$))' "$file" 2>/dev/null; then
     printf 'port-paths-already'
     return 0
   fi
 
   tmp="$file.tmp.$$"
   awk '
+    /^[[:space:]]*(export[[:space:]]+)?[Pp][Oo][Rr][Tt][Dd][Ii][Rr]="\/\$directory\/ports"[[:space:]]*$/ {
+      line = $0
+      sub(/="\/\$directory\/ports"/, "=\"${HM_PORTS_DIR:-/$directory/ports}\"", line)
+      print line
+      next
+    }
+    /^[[:space:]]*(export[[:space:]]+)?[Pp][Oo][Rr][Tt][Dd][Ii][Rr]=\/\$directory\/ports[[:space:]]*$/ {
+      line = $0
+      sub(/=\/\$directory\/ports/, "=\"${HM_PORTS_DIR:-/$directory/ports}\"", line)
+      print line
+      next
+    }
     /^[[:space:]]*(export[[:space:]]+)?[Gg][Aa][Mm][Ee][Dd][Ii][Rr]="\/\$directory\/ports\/[^"#[:space:]]+"[[:space:]]*$/ {
       line = $0
       sub(/="\/\$directory\/ports\//, "=\"${HM_PORTS_DIR:-/$directory/ports}/", line)
@@ -2148,6 +2196,51 @@ runtime_compat_pyxel_fullscreen_script() {
   printf 'runtime-compat-pyxel-fullscreen-error'
 }
 
+runtime_compat_neverball_texture_alias_script() {
+  file="$1"
+  local port game_dir src dst
+  if ! is_neverball_engine_script "$file"; then
+    printf 'not-neverball-engine'
+    return 0
+  fi
+
+  port="$(script_port_dir "$file" || true)"
+  if [ -z "$port" ]; then
+    printf 'runtime-compat-neverball-texture-alias-no-gamedir'
+    return 0
+  fi
+
+  game_dir="$ports_dir/$port"
+  src="$game_dir/data/textures/mtrl"
+  dst="$game_dir/data/mtrl"
+  if [ ! -d "$src" ]; then
+    printf 'runtime-compat-neverball-texture-alias-no-source'
+    return 0
+  fi
+  if [ -f "$dst/default" ] || [ -f "$dst/default.png" ]; then
+    printf 'runtime-compat-neverball-texture-alias-already'
+    return 0
+  fi
+  if [ -e "$dst" ] && [ ! -d "$dst" ]; then
+    printf 'runtime-compat-neverball-texture-alias-error'
+    return 0
+  fi
+
+  if ! mkdir -p "$dst"; then
+    printf 'runtime-compat-neverball-texture-alias-error'
+    return 0
+  fi
+  if ! cp -R "$src"/. "$dst"/; then
+    printf 'runtime-compat-neverball-texture-alias-error'
+    return 0
+  fi
+  if [ -f "$dst/default" ] || [ -f "$dst/default.png" ]; then
+    printf 'runtime-compat-neverball-texture-alias-patched'
+    return 0
+  fi
+  printf 'runtime-compat-neverball-texture-alias-error'
+}
+
 normalize_lowercase_path_moves_script() {
   file="$1"
   case "$file" in
@@ -2262,6 +2355,10 @@ apply_runtime_compat_rules_script() {
   fi
   if is_pyxel_runtime_script "$file"; then
     runtime_compat_pyxel_fullscreen_script "$file"
+    printf '\n'
+  fi
+  if is_neverball_engine_script "$file"; then
+    runtime_compat_neverball_texture_alias_script "$file"
     printf '\n'
   fi
 }
@@ -2662,9 +2759,13 @@ script_cache_action() {
     runtime-compat-pyxel-fullscreen-patched) printf 'runtime-compat-pyxel-fullscreen-already' ;;
     runtime-compat-pyxel-fullscreen-already) printf 'runtime-compat-pyxel-fullscreen-already' ;;
     runtime-compat-pyxel-fullscreen-no-source) printf 'runtime-compat-pyxel-fullscreen-no-source' ;;
+    runtime-compat-neverball-texture-alias-patched) printf 'runtime-compat-neverball-texture-alias-already' ;;
+    runtime-compat-neverball-texture-alias-already) printf 'runtime-compat-neverball-texture-alias-already' ;;
+    runtime-compat-neverball-texture-alias-no-gamedir) printf 'runtime-compat-neverball-texture-alias-no-gamedir' ;;
+    runtime-compat-neverball-texture-alias-no-source) printf 'runtime-compat-neverball-texture-alias-no-source' ;;
     lowercase-path-move-patched) printf 'lowercase-path-move-already' ;;
     lowercase-path-move-already) printf 'lowercase-path-move-already' ;;
-    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|runtime-compat-java8-weston-missing-anchor|runtime-compat-java8-weston-error|runtime-compat-pyxel-fullscreen-missing-anchor|runtime-compat-pyxel-fullscreen-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error|aarch64-compat-libs-missing-anchor|aarch64-compat-libs-error)
+    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|runtime-compat-java8-weston-missing-anchor|runtime-compat-java8-weston-error|runtime-compat-pyxel-fullscreen-missing-anchor|runtime-compat-pyxel-fullscreen-error|runtime-compat-neverball-texture-alias-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error|aarch64-compat-libs-missing-anchor|aarch64-compat-libs-error)
       return 1
       ;;
     *) printf '' ;;
@@ -2796,6 +2897,22 @@ record_script_action() {
       ;;
     runtime-compat-pyxel-fullscreen-error)
       runtime_compat_pyxel_fullscreen_errors=$((runtime_compat_pyxel_fullscreen_errors + 1))
+      errors=$((errors + 1))
+      ;;
+    runtime-compat-neverball-texture-alias-patched)
+      runtime_compat_neverball_texture_alias_patched=$((runtime_compat_neverball_texture_alias_patched + 1))
+      ;;
+    runtime-compat-neverball-texture-alias-already)
+      runtime_compat_neverball_texture_alias_already=$((runtime_compat_neverball_texture_alias_already + 1))
+      ;;
+    runtime-compat-neverball-texture-alias-no-gamedir)
+      runtime_compat_neverball_texture_alias_no_gamedir=$((runtime_compat_neverball_texture_alias_no_gamedir + 1))
+      ;;
+    runtime-compat-neverball-texture-alias-no-source)
+      runtime_compat_neverball_texture_alias_no_source=$((runtime_compat_neverball_texture_alias_no_source + 1))
+      ;;
+    runtime-compat-neverball-texture-alias-error)
+      runtime_compat_neverball_texture_alias_errors=$((runtime_compat_neverball_texture_alias_errors + 1))
       errors=$((errors + 1))
       ;;
     lowercase-path-move-patched)
@@ -3027,6 +3144,11 @@ runtime_compat_pyxel_fullscreen_already=0
 runtime_compat_pyxel_fullscreen_no_source=0
 runtime_compat_pyxel_fullscreen_missing_anchor=0
 runtime_compat_pyxel_fullscreen_errors=0
+runtime_compat_neverball_texture_alias_patched=0
+runtime_compat_neverball_texture_alias_already=0
+runtime_compat_neverball_texture_alias_no_gamedir=0
+runtime_compat_neverball_texture_alias_no_source=0
+runtime_compat_neverball_texture_alias_errors=0
 lowercase_path_move_patched=0
 lowercase_path_move_already=0
 lowercase_path_move_errors=0
@@ -3283,6 +3405,11 @@ cat >"$tmp_json" <<EOF
   "runtime_compat_pyxel_fullscreen_scripts_no_source": $runtime_compat_pyxel_fullscreen_no_source,
   "runtime_compat_pyxel_fullscreen_scripts_missing_anchor": $runtime_compat_pyxel_fullscreen_missing_anchor,
   "runtime_compat_pyxel_fullscreen_script_errors": $runtime_compat_pyxel_fullscreen_errors,
+  "runtime_compat_neverball_texture_alias_scripts_patched": $runtime_compat_neverball_texture_alias_patched,
+  "runtime_compat_neverball_texture_alias_scripts_already_patched": $runtime_compat_neverball_texture_alias_already,
+  "runtime_compat_neverball_texture_alias_scripts_no_gamedir": $runtime_compat_neverball_texture_alias_no_gamedir,
+  "runtime_compat_neverball_texture_alias_scripts_no_source": $runtime_compat_neverball_texture_alias_no_source,
+  "runtime_compat_neverball_texture_alias_script_errors": $runtime_compat_neverball_texture_alias_errors,
   "lowercase_path_move_scripts_patched": $lowercase_path_move_patched,
   "lowercase_path_move_scripts_already_patched": $lowercase_path_move_already,
   "lowercase_path_move_script_errors": $lowercase_path_move_errors,
@@ -3301,4 +3428,4 @@ if [ "$manifest_write_enabled" -eq 1 ]; then
   mv "$manifest_tmp" "$manifest_path"
 fi
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched runtime_compat_java8_weston_patched=$runtime_compat_java8_weston_patched runtime_compat_pyxel_fullscreen_patched=$runtime_compat_pyxel_fullscreen_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
+log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched runtime_compat_java8_weston_patched=$runtime_compat_java8_weston_patched runtime_compat_pyxel_fullscreen_patched=$runtime_compat_pyxel_fullscreen_patched runtime_compat_neverball_texture_alias_patched=$runtime_compat_neverball_texture_alias_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"

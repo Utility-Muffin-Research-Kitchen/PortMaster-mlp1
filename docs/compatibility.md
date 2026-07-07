@@ -169,11 +169,11 @@ normalization block before they source upstream `control.txt`. That block
 selects the active SD-managed PortMaster tree through `XDG_DATA_HOME` and
 `PORTMASTER_CONTROLFOLDER`, rather than letting upstream scripts fall back to
 `/roms/ports/PortMaster` on the stock rootfs. The scanner also rewrites common
-quoted or unquoted `GAMEDIR=/$directory/ports/<game>` assignments to prefer
-`HM_PORTS_DIR`, and the generated hook only overrides `directory` from the active
-`ROMS_PATH`/`SDCARD_PATH` when Jawaka's `/roms/ports` bind mount is not present.
-This keeps the runtime on SD and avoids writing compatibility state to
-eMMC/rootfs.
+quoted or unquoted `GAMEDIR=/$directory/ports/<game>` and
+`PORTDIR=/$directory/ports` assignments to prefer `HM_PORTS_DIR`, and the
+generated hook only overrides `directory` from the active `ROMS_PATH`/`SDCARD_PATH`
+when Jawaka's `/roms/ports` bind mount is not present. This keeps the runtime on
+SD and avoids writing compatibility state to eMMC/rootfs.
 
 The generated hook also exposes `LEAF_PM_RETROARCH_BIN` and
 `LEAF_PM_RETROARCH_CONFIG` for libretro-style ports. Installed launchers with
@@ -364,6 +364,13 @@ largest integer `display_scale` that fits `DISPLAY_WIDTH`/`DISPLAY_HEIGHT`, then
 calls `pyxel.fullscreen(True)`. This keeps the fix in Pyxel's own display API,
 because the runtime's Rust extension does not expose `SDL_CreateWindow` through
 a normal SDL2 symbol path for preloading.
+
+Neverball-family launchers are patched through a data-layout compatibility rule.
+Older Neverball/Neverputt engine binaries look up material textures under
+`data/mtrl`, while newer PortMaster packages may ship those files under
+`data/textures/mtrl`. The scanner detects launchers with `NEVERBALL_DATA` or
+Neverball/Neverputt controller markers and creates a FAT32-safe copy alias at
+`data/mtrl` when the legacy path is missing.
 
 The scan JSON reports generic SDL2 coverage through
 `sdl2_fullscreen_ports_aarch64`, `sdl2_fullscreen_ports_armhf`,
