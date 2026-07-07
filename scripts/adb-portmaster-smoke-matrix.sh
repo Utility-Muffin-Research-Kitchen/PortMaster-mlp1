@@ -706,7 +706,7 @@ MATRIX = [
         "script": "Roms/PORTS/Cute Fame Halloween Bash.sh",
         "required": ["Roms/PORTS/cutefamehalloweenbash/game/script.rpyc", "Roms/PORTS/cutefamehalloweenbash/gl4es/libGL.so.1"],
         "runtimes": ["renpy_8.1.3.squashfs"],
-        "markers": ["LEAF_PM_PORT_ENV=1", "renpy_8\\.1\\.3", "startRENPY", "pm_platform_helper"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "LEAF_PM_SDL2_FULLSCREEN_ENV", "renpy_8\\.1\\.3", "startRENPY", "pm_platform_helper"],
         "log": "Roms/PORTS/cutefamehalloweenbash/log.txt",
         "interactive": True,
         "active_timeout": 180,

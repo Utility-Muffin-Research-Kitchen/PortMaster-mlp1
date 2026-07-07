@@ -337,6 +337,13 @@ already patched through `leaf_pm_run_aarch64_sdl2_fullscreen` or
 `leaf_pm_run_armhf_sdl2_fullscreen` remain supported; the old helpers dedupe
 their preload path when the new script-wide block is also present.
 
+Ren'Py launchers are included in this SDL2 fullscreen path even when the runtime
+executable is mounted from `renpy_*.squashfs` at launch time. Those scripts are
+identified by their Ren'Py runtime/startRENPY markers and treated as aarch64 SDL2
+fullscreen candidates, because the generic installed-file ELF scan cannot see
+inside the runtime squashfs before the port starts. This covers Ren'Py games
+that detect the `960x720` display but still start in Ren'Py's own windowed mode.
+
 Opt-outs are available at three levels:
 
 - set `LEAF_PM_SDL_FORCE_FULLSCREEN=0` before launch

@@ -460,6 +460,10 @@ inside a pipeline rather than a simple regex-friendly launch line. Opt out with
 `$USERDATA_PATH/portmaster/sdl2-fullscreen-optout.txt`, or with the repo-side
 opt-out list for known special cases such as Ship of Harkinian.
 
+Ren'Py launchers are also routed into the aarch64 SDL2 fullscreen shim when they
+mount a `renpy_*.squashfs` runtime and run `startRENPY`, since the runtime ELF is
+not visible to the installed-port scan until launch time.
+
 The scanner also owns narrow runtime compatibility rules for installed launch
 scripts. The current non-Godot rule targets Gothic/Machismo launchers on Leaf.
 When `compat/drm/aarch64/leaf-drm-rotate.so` is installed, the generated hook can

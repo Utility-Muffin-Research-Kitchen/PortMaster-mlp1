@@ -31,7 +31,7 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=11
+RULESET_VERSION=12
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -366,6 +366,15 @@ is_pyxel_runtime_script() {
   grep -Eq 'pyxel_.*[.]squashfs|/bin/pyxel|pyxel[[:space:]]+run' "$file" 2>/dev/null
 }
 
+is_renpy_runtime_script() {
+  file="$1"
+  case "$file" in
+    *.sh) ;;
+    *) return 1 ;;
+  esac
+  grep -Eq 'renpy_[0-9][^[:space:]]*[.]squashfs|(^|[/[:space:]])startRENPY([[:space:]]|$)|renpy/startRENPY' "$file" 2>/dev/null
+}
+
 pyxel_source_entrypoint_for_script() {
   local file="$1"
   local port pkg path
@@ -446,6 +455,17 @@ sdl2_arch_csv_for_port() {
   printf '%s' "$csv"
 }
 
+sdl2_arch_csv_for_script() {
+  local port="$1"
+  local file="$2"
+  local csv
+  csv="$(sdl2_arch_csv_for_port "$port")"
+  if [ -z "$csv" ] && is_renpy_runtime_script "$file"; then
+    csv="aarch64"
+  fi
+  printf '%s' "$csv"
+}
+
 script_sdl2_cache_tag() {
   local file="$1"
   local port arch_csv compat_csv unresolved_csv
@@ -459,7 +479,7 @@ script_sdl2_cache_tag() {
     printf '%s:optout|compat:-|unresolved:-' "$port"
     return 0
   fi
-  arch_csv="$(sdl2_arch_csv_for_port "$port")"
+  arch_csv="$(sdl2_arch_csv_for_script "$port" "$file")"
   [ -n "$arch_csv" ] || arch_csv="-"
   compat_csv="${port_aarch64_compat_needed[$port]:--}"
   unresolved_csv="${port_aarch64_unresolved[$port]:--}"
@@ -1303,7 +1323,7 @@ normalize_sdl2_fullscreen_env_script() {
     return 0
   fi
 
-  arch_csv="$(sdl2_arch_csv_for_port "$port")"
+  arch_csv="$(sdl2_arch_csv_for_script "$port" "$file")"
   if [ -z "$arch_csv" ]; then
     printf 'sdl2-fullscreen-env-not-sdl2'
     return 0
