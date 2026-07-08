@@ -20,7 +20,7 @@ hook_path="${1:-$controlfolder/leaf-armhf-env.sh}"
 hook_dir="$(dirname -- "$hook_path")"
 
 controller_x360="1900fe3c039900001399000002010000,Loong Gamepad,a:b0,b:b1,x:b3,y:b2,back:b8,guide:b10,start:b9,leftstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,crc:3cfe,platform:Linux"
-controller_gui="1900fe3c039900001399000002010000,Loong Gamepad,a:b1,b:b0,x:b3,y:b2,back:b8,guide:b10,start:b9,leftstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,crc:3cfe,platform:Linux"
+controller_gui="1900fe3c039900001399000002010000,Loong Gamepad,a:b1,b:b0,x:b2,y:b3,back:b8,guide:b10,start:b9,leftstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,crc:3cfe,platform:Linux"
 controller_nintendo="1900fe3c039900001399000002010000,Loong Gamepad,a:b1,b:b0,x:b2,y:b3,back:b8,guide:b10,start:b9,leftstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:b6,righttrigger:b7,crc:3cfe,platform:Linux"
 
 if [ ! -d "$hook_dir" ]; then
