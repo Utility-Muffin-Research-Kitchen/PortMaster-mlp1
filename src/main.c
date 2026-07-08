@@ -37,6 +37,14 @@ int main(int argc, char **argv)
                 self_heal_rc > 0 ? "applied" : "warning",
                 self_heal_detail);
     }
+    self_heal_rc = pm_self_heal_leaf_ports_catalog(&ctx,
+                                                   self_heal_detail,
+                                                   sizeof(self_heal_detail));
+    if (self_heal_rc != 0 && self_heal_detail[0]) {
+        fprintf(stderr, "PortMaster Leaf ports catalog self-heal %s: %s\n",
+                self_heal_rc > 0 ? "applied" : "warning",
+                self_heal_detail);
+    }
 
     if (argc > 1 && strcmp(argv[1], "--doctor-text") == 0) {
         pm_doctor_report report;
