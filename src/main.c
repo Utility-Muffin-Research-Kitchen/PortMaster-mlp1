@@ -11,6 +11,7 @@
 #include "pm_env_snapshot.h"
 #include "pm_installer.h"
 #include "pm_launcher.h"
+#include "pm_self_heal.h"
 #include "pm_update.h"
 #include "pm_ui.h"
 
@@ -25,6 +26,16 @@ int main(int argc, char **argv)
     if (pm_context_init(&ctx, argv && argv[0] ? argv[0] : NULL, ctx_err, sizeof(ctx_err)) != 0) {
         fprintf(stderr, "PortMaster context error: %s\n", ctx_err);
         return 1;
+    }
+
+    char self_heal_detail[512];
+    int self_heal_rc = pm_self_heal_leaf_ports_launcher(&ctx,
+                                                        self_heal_detail,
+                                                        sizeof(self_heal_detail));
+    if (self_heal_rc != 0 && self_heal_detail[0]) {
+        fprintf(stderr, "PortMaster Leaf ports launcher self-heal %s: %s\n",
+                self_heal_rc > 0 ? "applied" : "warning",
+                self_heal_detail);
     }
 
     if (argc > 1 && strcmp(argv[1], "--doctor-text") == 0) {
