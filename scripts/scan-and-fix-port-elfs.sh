@@ -31,7 +31,7 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=15
+RULESET_VERSION=16
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -459,6 +459,7 @@ script_port_dir() {
       sub(/[[:space:]].*$/, "", line)
       gsub(/^["\047]/, "", line)
       gsub(/["\047]$/, "", line)
+      gsub(/\/+$/, "", line)
       n = split(line, parts, "/")
       port = parts[n]
       gsub(/["\047;]/, "", port)
