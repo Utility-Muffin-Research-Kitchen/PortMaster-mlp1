@@ -456,12 +456,15 @@ static int pm_self_heal_patch_ports_system(const char *path,
 static int pm_self_heal_copy_atomic(const char *src,
                                     const char *dst,
                                     const struct stat *src_st,
+                                    mode_t dst_mode,
+                                    const char *asset_label,
                                     char *detail,
                                     size_t detail_size)
 {
     FILE *in = fopen(src, "rb");
     if (!in) {
-        snprintf(detail, detail_size, "cannot open packaged ports launcher: %s",
+        snprintf(detail, detail_size, "cannot open packaged %s: %s",
+                 asset_label ? asset_label : "asset",
                  strerror(errno));
         return -1;
     }
@@ -469,7 +472,8 @@ static int pm_self_heal_copy_atomic(const char *src,
     char tmp[PM_PATH_MAX];
     if (pm_format(tmp, sizeof(tmp), "%s.tmp.%ld", dst, (long)getpid()) != 0) {
         fclose(in);
-        snprintf(detail, detail_size, "%s", "Leaf ports launcher path too long");
+        snprintf(detail, detail_size, "Leaf %s path too long",
+                 asset_label ? asset_label : "asset");
         return -1;
     }
 
@@ -509,12 +513,13 @@ static int pm_self_heal_copy_atomic(const char *src,
     if (rename(tmp, dst) != 0) {
         int saved_errno = errno;
         unlink(tmp);
-        snprintf(detail, detail_size, "cannot promote Leaf ports launcher: %s",
+        snprintf(detail, detail_size, "cannot promote Leaf %s: %s",
+                 asset_label ? asset_label : "asset",
                  strerror(saved_errno));
         return -1;
     }
 
-    chmod(dst, 0755);
+    chmod(dst, dst_mode);
     if (pm_self_heal_stamp_times(dst, src_st) != 0) {
         snprintf(detail, detail_size,
                  "updated %s but could not preserve timestamp: %s",
@@ -522,7 +527,8 @@ static int pm_self_heal_copy_atomic(const char *src,
         return 1;
     }
 
-    snprintf(detail, detail_size, "updated %s from packaged ports launcher", dst);
+    snprintf(detail, detail_size, "updated %s from packaged %s",
+             dst, asset_label ? asset_label : "asset");
     return 1;
 }
 
@@ -607,7 +613,92 @@ int pm_self_heal_leaf_ports_launcher(const pm_context *ctx,
         return -1;
     }
 
-    return pm_self_heal_copy_atomic(src, dst, &src_st, detail, detail_size);
+    return pm_self_heal_copy_atomic(src, dst, &src_st, 0755, "ports launcher",
+                                    detail, detail_size);
+}
+
+int pm_self_heal_leaf_ports_system_icon(const pm_context *ctx,
+                                        char *detail,
+                                        size_t detail_size)
+{
+    if (detail && detail_size > 0) {
+        detail[0] = '\0';
+    }
+    if (!ctx) {
+        return 0;
+    }
+
+    char res_dir[PM_PATH_MAX];
+    char src[PM_PATH_MAX];
+    if (pm_join(res_dir, sizeof(res_dir), ctx->pak_dir, "res") != 0 ||
+        pm_join(src, sizeof(src), res_dir, "icon.png") != 0) {
+        if (detail && detail_size > 0) {
+            snprintf(detail, detail_size, "%s", "packaged PortMaster icon path too long");
+        }
+        return -1;
+    }
+
+    struct stat src_st;
+    if (stat(src, &src_st) != 0) {
+        return 0;
+    }
+    if (!S_ISREG(src_st.st_mode)) {
+        if (detail && detail_size > 0) {
+            snprintf(detail, detail_size, "packaged PortMaster icon is not a file: %s", src);
+        }
+        return -1;
+    }
+
+    char platform_root[PM_PATH_MAX];
+    if (pm_self_heal_platform_root(ctx, platform_root, sizeof(platform_root),
+                                   detail, detail_size) != 0) {
+        return -1;
+    }
+
+    char launcher_dir[PM_PATH_MAX];
+    char res_root[PM_PATH_MAX];
+    char dst_dir[PM_PATH_MAX];
+    char dst[PM_PATH_MAX];
+    if (pm_join(launcher_dir, sizeof(launcher_dir), platform_root, "launcher") != 0 ||
+        pm_join(res_root, sizeof(res_root), launcher_dir, "res") != 0 ||
+        pm_join(dst_dir, sizeof(dst_dir), res_root, "system_icons") != 0 ||
+        pm_join(dst, sizeof(dst), dst_dir, "PORTS.png") != 0) {
+        if (detail && detail_size > 0) {
+            snprintf(detail, detail_size, "%s", "Leaf ports system icon path too long");
+        }
+        return -1;
+    }
+
+    bool should_update = false;
+    struct stat dst_st;
+    if (stat(dst, &dst_st) != 0) {
+        if (errno != ENOENT) {
+            if (detail && detail_size > 0) {
+                snprintf(detail, detail_size, "cannot inspect %s: %s",
+                         dst, strerror(errno));
+            }
+            return -1;
+        }
+        should_update = true;
+    } else if (!S_ISREG(dst_st.st_mode)) {
+        if (detail && detail_size > 0) {
+            snprintf(detail, detail_size, "Leaf ports system icon is not a file: %s", dst);
+        }
+        return -1;
+    } else {
+        should_update = pm_self_heal_source_newer(&src_st, &dst_st);
+    }
+
+    if (!should_update) {
+        return 0;
+    }
+
+    if (pm_mkdir_p(dst_dir, detail, detail_size) != 0) {
+        return -1;
+    }
+
+    return pm_self_heal_copy_atomic(src, dst, &src_st, 0644, "PortMaster icon",
+                                    detail, detail_size);
 }
 
 int pm_self_heal_leaf_ports_catalog(const pm_context *ctx,
