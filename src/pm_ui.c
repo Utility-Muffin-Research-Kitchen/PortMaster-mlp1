@@ -541,26 +541,62 @@ static void build_ui_state(pm_context *ctx,
 }
 
 typedef struct {
+    float progress;
+    char message[128];
+    char *message_ptr;
+} pm_setup_progress;
+
+static void setup_progress_init(pm_setup_progress *progress,
+                                const char *message,
+                                float value)
+{
+    if (!progress) {
+        return;
+    }
+    progress->progress = value;
+    snprintf(progress->message, sizeof(progress->message), "%s",
+             message ? message : "");
+    progress->message_ptr = progress->message;
+}
+
+static void setup_progress_set(pm_setup_progress *progress,
+                               float value,
+                               const char *message)
+{
+    if (!progress) {
+        return;
+    }
+    progress->progress = value;
+    if (message) {
+        snprintf(progress->message, sizeof(progress->message), "%s", message);
+    }
+}
+
+typedef struct {
     pm_context *ctx;
     char err[512];
     pm_artwork_sync_result artwork;
     bool runtime_installed;
+    pm_setup_progress progress;
 } pm_repair_job;
 
 static int repair_core(pm_context *ctx,
                        pm_artwork_sync_result *artwork,
                        bool *runtime_installed,
+                       pm_setup_progress *progress,
                        char *err,
                        size_t err_size)
 {
     if (runtime_installed) {
         *runtime_installed = false;
     }
+    setup_progress_set(progress, 0.36f, "Checking runtime");
     if (!pm_portmaster_runtime_available(ctx, NULL, 0, NULL)) {
         if (!ctx->runtime_lock_loaded) {
             snprintf(err, err_size, "PortMaster runtime setup metadata is missing");
             return -1;
         }
+        setup_progress_set(progress, 0.46f, "Downloading Python runtime");
         if (pm_install_ui_runtime(ctx, err, err_size) != 0) {
             return -1;
         }
@@ -569,16 +605,20 @@ static int repair_core(pm_context *ctx,
         }
     }
 
+    setup_progress_set(progress, 0.76f, "Applying Leaf support files");
     if (pm_repatch_portmaster_repair(ctx, err, err_size) != 0) {
         return -1;
     }
     if (artwork) {
+        setup_progress_set(progress, 0.88f, "Refreshing artwork");
         memset(artwork, 0, sizeof(*artwork));
         if (pm_artwork_sync(ctx, artwork, err, err_size) != 0) {
             return -1;
         }
     }
+    setup_progress_set(progress, 0.96f, "Refreshing launcher library");
     pm_request_jawaka_library_rescan(ctx);
+    setup_progress_set(progress, 1.0f, "PortMaster is ready");
     return 0;
 }
 
@@ -590,6 +630,7 @@ static int repair_worker(void *userdata)
     return repair_core(job->ctx,
                        &job->artwork,
                        &job->runtime_installed,
+                       &job->progress,
                        job->err,
                        sizeof(job->err));
 }
@@ -599,6 +640,7 @@ typedef struct {
     char err[512];
     pm_artwork_sync_result artwork;
     bool runtime_installed;
+    pm_setup_progress progress;
 } pm_install_job;
 
 static int install_worker(void *userdata)
@@ -606,12 +648,15 @@ static int install_worker(void *userdata)
     pm_install_job *job = (pm_install_job *)userdata;
     job->err[0] = '\0';
     memset(&job->artwork, 0, sizeof(job->artwork));
+    setup_progress_set(&job->progress, 0.08f, "Downloading PortMaster package");
     if (pm_install_portmaster(job->ctx, job->err, sizeof(job->err)) != 0) {
         return -1;
     }
+    setup_progress_set(&job->progress, 0.30f, "Preparing setup");
     return repair_core(job->ctx,
                        &job->artwork,
                        &job->runtime_installed,
+                       &job->progress,
                        job->err,
                        sizeof(job->err));
 }
@@ -626,10 +671,14 @@ static void show_install(pm_context *ctx)
     }
 
     pm_install_job job = { .ctx = ctx };
+    setup_progress_init(&job.progress, "Starting setup", 0.02f);
     cat_process_opts opts = {
-        .message = "Installing PortMaster\n\nDownloading PortMaster...\nPreparing setup...\nFinishing setup...",
-        .show_progress = false,
+        .message = "Installing PortMaster",
+        .show_progress = true,
+        .progress = &job.progress.progress,
         .interrupt_button = CAT_BTN_NONE,
+        .dynamic_message = &job.progress.message_ptr,
+        .message_lines = 1,
     };
     int rc = cat_process_message(&opts, install_worker, &job);
     if (rc == 0) {
@@ -645,10 +694,14 @@ static void show_install(pm_context *ctx)
 static void show_repair(pm_context *ctx)
 {
     pm_repair_job job = { .ctx = ctx };
+    setup_progress_init(&job.progress, "Checking setup", 0.10f);
     cat_process_opts opts = {
-        .message = "Repairing PortMaster\n\nChecking setup and restoring Leaf support.",
-        .show_progress = false,
+        .message = "Repairing PortMaster",
+        .show_progress = true,
+        .progress = &job.progress.progress,
         .interrupt_button = CAT_BTN_NONE,
+        .dynamic_message = &job.progress.message_ptr,
+        .message_lines = 1,
     };
     int rc = cat_process_message(&opts, repair_worker, &job);
     if (rc == 0) {
