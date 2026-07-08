@@ -9,6 +9,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -25,7 +26,10 @@ typedef struct {
     char sha256[65];
 } pm_patch_record;
 
-static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err_size);
+static int pm_install_compat_assets(const pm_context *ctx,
+                                    bool force_copy,
+                                    char *err,
+                                    size_t err_size);
 
 static void source_from_lock(const pm_context *ctx, pm_portmaster_source *out)
 {
@@ -755,7 +759,10 @@ static int fail_with_portmaster_restore(const pm_context *ctx,
     return -1;
 }
 
-int pm_repatch_portmaster(pm_context *ctx, char *err, size_t err_size)
+static int repatch_portmaster(pm_context *ctx,
+                              bool force_compat_copy,
+                              char *err,
+                              size_t err_size)
 {
     if (err && err_size > 0) {
         err[0] = '\0';
@@ -776,12 +783,22 @@ int pm_repatch_portmaster(pm_context *ctx, char *err, size_t err_size)
     if (load_patch_records(ctx, patches, &patch_count, err, err_size) != 0 ||
         apply_patch_records(ctx->portmaster_dir, patches, patch_count, err, err_size) != 0 ||
         validate_patched_portmaster_tree(ctx->portmaster_dir, err, err_size) != 0 ||
-        pm_install_compat_assets(ctx, err, err_size) != 0 ||
+        pm_install_compat_assets(ctx, force_compat_copy, err, err_size) != 0 ||
         write_manifest(ctx, &source, patches, patch_count, err, err_size) != 0 ||
         pm_controller_layout_sync_hook(ctx, err, err_size) != 0) {
         return -1;
     }
     return 0;
+}
+
+int pm_repatch_portmaster(pm_context *ctx, char *err, size_t err_size)
+{
+    return repatch_portmaster(ctx, false, err, err_size);
+}
+
+int pm_repatch_portmaster_repair(pm_context *ctx, char *err, size_t err_size)
+{
+    return repatch_portmaster(ctx, true, err, err_size);
 }
 
 static void chmod_if_present(const char *path)
@@ -793,7 +810,60 @@ static void chmod_if_present(const char *path)
     (void)pm_run_argv(argv, NULL, 0);
 }
 
-static int copy_file_atomic(const char *src, const char *dst, char *err, size_t err_size)
+static long pm_stat_mtime_nsec(const struct stat *st)
+{
+#if defined(__APPLE__)
+    return st->st_mtimespec.tv_nsec;
+#else
+    return st->st_mtim.tv_nsec;
+#endif
+}
+
+static void pm_stat_timespecs(const struct stat *st, struct timespec times[2])
+{
+#if defined(__APPLE__)
+    times[0] = st->st_atimespec;
+    times[1] = st->st_mtimespec;
+#else
+    times[0] = st->st_atim;
+    times[1] = st->st_mtim;
+#endif
+}
+
+static int stamp_file_times_from_stat(const char *path, const struct stat *src_st)
+{
+    struct timespec times[2];
+    pm_stat_timespecs(src_st, times);
+
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) {
+        return -1;
+    }
+    int rc = futimens(fd, times);
+    int saved_errno = errno;
+    close(fd);
+    errno = saved_errno;
+    return rc;
+}
+
+static bool compat_asset_is_current(const struct stat *src_st, const char *dst)
+{
+    struct stat dst_st;
+    if (!S_ISREG(src_st->st_mode) ||
+        stat(dst, &dst_st) != 0 ||
+        !S_ISREG(dst_st.st_mode)) {
+        return false;
+    }
+    return src_st->st_size == dst_st.st_size &&
+           src_st->st_mtime == dst_st.st_mtime &&
+           pm_stat_mtime_nsec(src_st) == pm_stat_mtime_nsec(&dst_st);
+}
+
+static int copy_file_atomic(const char *src,
+                            const char *dst,
+                            const struct stat *src_st,
+                            char *err,
+                            size_t err_size)
 {
     FILE *in = fopen(src, "rb");
     if (!in) {
@@ -847,6 +917,10 @@ static int copy_file_atomic(const char *src, const char *dst, char *err, size_t 
         return -1;
     }
     chmod(dst, 0755);
+    if (src_st && stamp_file_times_from_stat(dst, src_st) != 0) {
+        fprintf(stderr, "PortMaster compat timestamp warning: cannot stamp %s: %s\n",
+                dst, strerror(errno));
+    }
     return 0;
 }
 
@@ -857,6 +931,7 @@ static int copy_compat_asset_set(const pm_context *ctx,
                                  const char *dst_leaf,
                                  const char *const *files,
                                  size_t file_count,
+                                 bool force_copy,
                                  char *err,
                                  size_t err_size)
 {
@@ -886,7 +961,21 @@ static int copy_compat_asset_set(const pm_context *ctx,
             snprintf(err, err_size, "compat file path too long");
             return -1;
         }
-        if (pm_file_exists(src) && copy_file_atomic(src, dst, err, err_size) != 0) {
+        struct stat src_st;
+        if (stat(src, &src_st) != 0) {
+            if (errno == ENOENT) {
+                continue;
+            }
+            snprintf(err, err_size, "cannot stat %s: %s", src, strerror(errno));
+            return -1;
+        }
+        if (!S_ISREG(src_st.st_mode)) {
+            continue;
+        }
+        if (!force_copy && compat_asset_is_current(&src_st, dst)) {
+            continue;
+        }
+        if (copy_file_atomic(src, dst, &src_st, err, err_size) != 0) {
             return -1;
         }
     }
@@ -907,7 +996,10 @@ static void remove_compat_asset_file(const pm_context *ctx,
     unlink(dst);
 }
 
-static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err_size)
+static int pm_install_compat_assets(const pm_context *ctx,
+                                    bool force_copy,
+                                    char *err,
+                                    size_t err_size)
 {
     const char *egl_files[] = { "libEGL.so.1", "libEGL.so" };
     const char *mali_files[] = {
@@ -985,6 +1077,7 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               "aarch64",
                               egl_files,
                               sizeof(egl_files) / sizeof(egl_files[0]),
+                              force_copy,
                               err,
                               err_size) != 0) {
         return -1;
@@ -997,6 +1090,7 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               "aarch64",
                               mali_files,
                               sizeof(mali_files) / sizeof(mali_files[0]),
+                              force_copy,
                               err,
                               err_size) != 0) {
         return -1;
@@ -1011,6 +1105,7 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               "aarch64",
                               sdl2_files,
                               sizeof(sdl2_files) / sizeof(sdl2_files[0]),
+                              force_copy,
                               err,
                               err_size) != 0) {
         return -1;
@@ -1023,6 +1118,7 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               "aarch64",
                               drm_files,
                               sizeof(drm_files) / sizeof(drm_files[0]),
+                              force_copy,
                               err,
                               err_size) != 0) {
         return -1;
@@ -1035,6 +1131,7 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               "aarch64",
                               aarch64_compat_lib_files,
                               sizeof(aarch64_compat_lib_files) / sizeof(aarch64_compat_lib_files[0]),
+                              force_copy,
                               err,
                               err_size) != 0) {
         return -1;
@@ -1047,6 +1144,7 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               "aarch64/bin",
                               tools_bin_files,
                               sizeof(tools_bin_files) / sizeof(tools_bin_files[0]),
+                              force_copy,
                               err,
                               err_size) != 0) {
         return -1;
@@ -1059,6 +1157,7 @@ static int pm_install_compat_assets(const pm_context *ctx, char *err, size_t err
                               "aarch64",
                               tools_meta_files,
                               sizeof(tools_meta_files) / sizeof(tools_meta_files[0]),
+                              force_copy,
                               err,
                               err_size) != 0) {
         return -1;
@@ -1313,7 +1412,7 @@ int pm_install_portmaster_source(pm_context *ctx, const pm_portmaster_source *so
         return fail_with_portmaster_restore(ctx, backup_path, failure, err, err_size);
     }
 
-    if (pm_install_compat_assets(ctx, err, err_size) != 0 ||
+    if (pm_install_compat_assets(ctx, true, err, err_size) != 0 ||
         write_manifest(ctx, &manifest_source, patches, patch_count, err, err_size) != 0 ||
         pm_controller_layout_sync_hook(ctx, err, err_size) != 0) {
         char failure[512];

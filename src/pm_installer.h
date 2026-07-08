@@ -27,6 +27,7 @@ int pm_install_portmaster(pm_context *ctx, char *err, size_t err_size);
 int pm_install_portmaster_source(pm_context *ctx, const pm_portmaster_source *source,
                                  char *err, size_t err_size);
 int pm_repatch_portmaster(pm_context *ctx, char *err, size_t err_size);
+int pm_repatch_portmaster_repair(pm_context *ctx, char *err, size_t err_size);
 int pm_install_runtime_archive(pm_context *ctx, const char *archive_path, char *err, size_t err_size);
 int pm_install_ui_runtime(pm_context *ctx, char *err, size_t err_size);
 

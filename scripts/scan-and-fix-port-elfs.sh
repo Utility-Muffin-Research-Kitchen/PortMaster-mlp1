@@ -44,6 +44,22 @@ log() {
   printf 'leaf armhf scan: %s\n' "$*" >&2
 }
 
+scan_now_ms() {
+  local ns s
+  ns="$(date +%s%N 2>/dev/null || true)"
+  case "$ns" in
+    ''|*[!0-9]*) ;;
+    *) printf '%s' "$((ns / 1000000))"; return 0 ;;
+  esac
+  s="$(date +%s 2>/dev/null || printf '0')"
+  case "$s" in
+    ''|*[!0-9]*) printf '0' ;;
+    *) printf '%s' "$((s * 1000))" ;;
+  esac
+}
+
+scan_started_ms="$(scan_now_ms)"
+
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'
 }
@@ -420,8 +436,13 @@ is_sdl2_fullscreen_optout_port() {
 }
 
 script_port_dir() {
-  file="$1"
-  awk '
+  local file="$1"
+  local port
+  if [ -n "${script_port_dir_cache[$file]+x}" ]; then
+    printf '%s' "${script_port_dir_cache[$file]}"
+    return 0
+  fi
+  port="$(awk '
     /^[[:space:]]*#/ { next }
     {
       line = $0
@@ -446,7 +467,9 @@ script_port_dir() {
         exit
       }
     }
-  ' "$file"
+  ' "$file" 2>/dev/null || true)"
+  script_port_dir_cache["$file"]="$port"
+  printf '%s' "$port"
 }
 
 neverball_texture_alias_tag_for_script() {
@@ -2758,6 +2781,7 @@ declare -A port_aarch64_compat_needed=()
 declare -A port_aarch64_unresolved=()
 declare -A aarch64_compat_sonames_seen=()
 declare -A aarch64_unresolved_sonames_seen=()
+declare -A script_port_dir_cache=()
 
 load_aarch64_compat_sonames
 
@@ -3763,4 +3787,10 @@ if [ "$manifest_write_enabled" -eq 1 ]; then
   mv "$manifest_tmp" "$manifest_path"
 fi
 
-log "mode=$scan_mode scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched runtime_compat_love_project_window_patched=$runtime_compat_love_project_window_patched runtime_compat_java8_weston_patched=$runtime_compat_java8_weston_patched runtime_compat_pyxel_fullscreen_patched=$runtime_compat_pyxel_fullscreen_patched runtime_compat_neverball_texture_alias_patched=$runtime_compat_neverball_texture_alias_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
+scan_finished_ms="$(scan_now_ms)"
+scan_duration_ms=$((scan_finished_ms - scan_started_ms))
+if [ "$scan_duration_ms" -lt 0 ]; then
+  scan_duration_ms=0
+fi
+
+log "mode=$scan_mode duration_ms=$scan_duration_ms scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched runtime_compat_love_project_window_patched=$runtime_compat_love_project_window_patched runtime_compat_java8_weston_patched=$runtime_compat_java8_weston_patched runtime_compat_pyxel_fullscreen_patched=$runtime_compat_pyxel_fullscreen_patched runtime_compat_neverball_texture_alias_patched=$runtime_compat_neverball_texture_alias_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"

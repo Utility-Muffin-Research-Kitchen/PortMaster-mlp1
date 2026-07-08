@@ -569,7 +569,7 @@ static int repair_core(pm_context *ctx,
         }
     }
 
-    if (pm_repatch_portmaster(ctx, err, err_size) != 0) {
+    if (pm_repatch_portmaster_repair(ctx, err, err_size) != 0) {
         return -1;
     }
     if (artwork) {

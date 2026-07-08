@@ -28,8 +28,11 @@ if [ ! -d "$hook_dir" ]; then
   exit 1
 fi
 
-tmp="$hook_path.tmp.$$"
-trap 'rm -f "$tmp"' EXIT HUP INT TERM
+tmp_root="${TMPDIR:-/tmp}"
+[ -d "$tmp_root" ] || tmp_root="$hook_dir"
+tmp="$tmp_root/leaf-armhf-env.$$"
+install_tmp="$hook_path.tmp.$$"
+trap 'rm -f "$tmp" "$install_tmp"' EXIT HUP INT TERM
 
 cat >"$tmp" <<EOF
 #!/bin/sh
@@ -859,6 +862,13 @@ fi
 unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_preload_path _leaf_pm_lib_path _leaf_pm_vk_dir _leaf_pm_sdl2_port _leaf_pm_sdl2_arches _leaf_pm_sdl2_optout _leaf_pm_aarch64_sdl2_cmd _leaf_pm_aarch64_sdl2_preload _leaf_pm_armhf_sdl2_cmd _leaf_pm_armhf_sdl2_preload
 EOF
 
-chmod 755 "$tmp"
-mv "$tmp" "$hook_path"
+if [ -f "$hook_path" ] && command -v cmp >/dev/null 2>&1 && cmp -s "$tmp" "$hook_path"; then
+  rm -f "$tmp"
+else
+  rm -f "$install_tmp"
+  cp "$tmp" "$install_tmp"
+  chmod 755 "$install_tmp"
+  mv "$install_tmp" "$hook_path"
+  rm -f "$tmp"
+fi
 trap - EXIT HUP INT TERM

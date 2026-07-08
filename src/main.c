@@ -187,7 +187,7 @@ int main(int argc, char **argv)
 
     if (argc > 1 && strcmp(argv[1], "--repatch-portmaster") == 0) {
         char err[512];
-        if (pm_repatch_portmaster(&ctx, err, sizeof(err)) != 0) {
+        if (pm_repatch_portmaster_repair(&ctx, err, sizeof(err)) != 0) {
             fprintf(stderr, "repatch failed: %s\n", err);
             return 1;
         }
