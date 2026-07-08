@@ -823,14 +823,27 @@ static void run_startup_update_check(pm_context *ctx,
 
 typedef struct {
     pm_context *ctx;
+    char *phase;
     char err[512];
 } pm_launch_job;
+
+static void launch_status(void *userdata, const char *message)
+{
+    pm_launch_job *job = (pm_launch_job *)userdata;
+    if (job) {
+        job->phase = (char *)message;
+    }
+}
 
 static int launch_worker(void *userdata)
 {
     pm_launch_job *job = (pm_launch_job *)userdata;
     job->err[0] = '\0';
-    return pm_launch_portmaster(job->ctx, job->err, sizeof(job->err));
+    return pm_launch_portmaster_with_status(job->ctx,
+                                            launch_status,
+                                            job,
+                                            job->err,
+                                            sizeof(job->err));
 }
 
 static void show_launch(pm_context *ctx, const pm_ui_state *state)
@@ -842,11 +855,16 @@ static void show_launch(pm_context *ctx, const pm_ui_state *state)
         return;
     }
 
-    pm_launch_job job = { .ctx = ctx };
+    pm_launch_job job = {
+        .ctx = ctx,
+        .phase = "Starting PortMaster...",
+    };
     cat_process_opts opts = {
-        .message = "Launching PortMaster",
+        .message = "PortMaster",
         .show_progress = false,
         .interrupt_button = CAT_BTN_NONE,
+        .dynamic_message = &job.phase,
+        .message_lines = 1,
     };
     int rc = cat_process_message(&opts, launch_worker, &job);
     if (rc != 0) {

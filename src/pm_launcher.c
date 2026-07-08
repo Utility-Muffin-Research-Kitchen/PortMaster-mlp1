@@ -464,7 +464,20 @@ void pm_request_jawaka_library_rescan(pm_context *ctx)
     }
 }
 
-int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
+static void pm_launch_status(pm_launch_status_fn status_fn,
+                             void *status_userdata,
+                             const char *message)
+{
+    if (status_fn) {
+        status_fn(status_userdata, message);
+    }
+}
+
+int pm_launch_portmaster_with_status(pm_context *ctx,
+                                     pm_launch_status_fn status_fn,
+                                     void *status_userdata,
+                                     char *err,
+                                     size_t err_size)
 {
     if (err && err_size > 0) {
         err[0] = '\0';
@@ -479,6 +492,7 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         return -1;
     }
 
+    pm_launch_status(status_fn, status_userdata, "Preparing PortMaster...");
     if (pm_mkdir_p(ctx->ports_dir, err, err_size) != 0 ||
         pm_mkdir_p(ctx->port_images_dir, err, err_size) != 0) {
         return -1;
@@ -499,10 +513,12 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         !have_ports_stamp_before ||
         !have_stored_ports_stamp ||
         ports_stamp_before != stored_ports_stamp) {
+        pm_launch_status(status_fn, status_userdata, "Scanning ports...");
         scanned_before_launch = pm_refresh_armhf_port_wrappers(ctx);
         have_ports_stamp_before = pm_ports_tree_stamp(ctx, &ports_stamp_before);
     }
 
+    pm_launch_status(status_fn, status_userdata, "Preparing runtime...");
     if (pm_controller_layout_sync_hook(ctx, err, err_size) != 0) {
         return -1;
     }
@@ -694,8 +710,10 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
     }
 
     char *argv[] = { "bash", "./PortMaster.sh", NULL };
+    pm_launch_status(status_fn, status_userdata, "PortMaster is running");
     int rc = pm_run_argv_env_in_dir(ctx->portmaster_dir, argv, env, err, err_size);
 
+    pm_launch_status(status_fn, status_userdata, "Closing PortMaster...");
     char repair_err[512];
     if (pm_repatch_portmaster(ctx, repair_err, sizeof(repair_err)) != 0) {
         fprintf(stderr, "PortMaster post-exit repair warning: %s\n",
@@ -727,4 +745,9 @@ int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
         pm_request_jawaka_library_rescan(ctx);
     }
     return rc;
+}
+
+int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)
+{
+    return pm_launch_portmaster_with_status(ctx, NULL, NULL, err, err_size);
 }
