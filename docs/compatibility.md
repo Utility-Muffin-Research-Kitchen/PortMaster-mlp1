@@ -286,16 +286,19 @@ ports whose bundled Love launcher omits one of the shared libraries already
 provided by the upstream PortMaster runtime, such as `libmodplug.so.1`, without
 copying files to eMMC/rootfs or adding a Leaf-specific binary payload.
 
-For older Java 8/JDK8 Westonpack launchers, the scanner patches
-`LEAF_PM_RUNTIME_COMPAT_JAVA8_WESTON=1` after the PortMaster control hook. These
+For Java Westonpack launchers, including Java 17 ports such as Shattered Pixel
+Dungeon and older Java 8/JDK8 ports, the scanner patches
+`LEAF_PM_RUNTIME_COMPAT_JAVA_WESTON=1` after the PortMaster control hook. These
 ports still use Westonpack's nested Weston, Xwayland, Crusty, and gl4es bridge
 because Java/LWJGL expects a desktop OpenGL/GLX path rather than Godot-style
 native Wayland. The generated hook clears any inherited `SDL_VIDEODRIVER` so
-Crusty can select the backend exposed by Westonpack, then prepends
+Crusty does not try Leaf's host Wayland display after the port deliberately
+clears `WAYLAND_DISPLAY`, then prepends
 `-Dsun.java2d.fontpath=...` to `JAVA_TOOL_OPTIONS` using the SD-installed
 PortMaster/Leaf font resources. This avoids the `SDL_Error: wayland not
-available`/`x11 not available` pre-context failure and the subsequent Java 8
-`Probable fatal error: No fonts found` crash.
+available`/`x11 not available` pre-context failure, the native Crusty crash it
+can trigger, and the subsequent Java 8 `Probable fatal error: No fonts found`
+crash.
 
 On MLP1, Westonpack's Crusty SDL host path is direct DRM/KMSDRM, not a normal
 Leaf Weston surface. For this runtime family the hook therefore sets
@@ -307,11 +310,12 @@ the port runs and restarts it on shell exit. This avoids the host-compositor
 flicker and makes Crusty see the landscape `960x720` mode while the shim rotates
 scanout into the real portrait-mounted panel.
 
-Opt out with `LEAF_PM_JAVA8_WESTON_COMPAT=0`. More targeted overrides are
-available with `LEAF_PM_JAVA8_WESTON_DIRECT_DRM=0`,
-`LEAF_PM_JAVA8_WESTON_STOP_DISPLAY=0`,
-`LEAF_PM_JAVA8_WESTON_CRUSTY_RESOLUTION=WIDTHxHEIGHT`, or
-`LEAF_PM_JAVA8_FONT_DIR`.
+Opt out with `LEAF_PM_JAVA_WESTON_COMPAT=0`. More targeted overrides are
+available with `LEAF_PM_JAVA_WESTON_DIRECT_DRM=0`,
+`LEAF_PM_JAVA_WESTON_STOP_DISPLAY=0`,
+`LEAF_PM_JAVA_WESTON_CRUSTY_RESOLUTION=WIDTHxHEIGHT`, or
+`LEAF_PM_JAVA_WESTON_FONT_DIR`. The older `LEAF_PM_JAVA8_*` names and installed
+`LEAF_PM_RUNTIME_COMPAT_JAVA8_WESTON=1` launcher blocks remain compatible.
 
 The scanner also normalizes a generic unsafe shell pattern where launchers
 lowercase an entire absolute file path before `mv`. On case-sensitive paths such

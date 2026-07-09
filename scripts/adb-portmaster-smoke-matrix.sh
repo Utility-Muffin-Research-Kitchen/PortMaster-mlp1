@@ -656,8 +656,9 @@ MATRIX = [
         "script": "Roms/PORTS/Shattered Pixel Dungeon.sh",
         "required": ["Roms/PORTS/shatteredpixeldungeon/ShatteredPD.jar", "Roms/PORTS/shatteredpixeldungeon/shatteredpixeldungeon.gptk"],
         "runtimes": ["weston_pkg_0.2.squashfs", "zulu17.54.21-ca-jre17.0.13-linux.squashfs"],
-        "markers": ["LEAF_PM_PORT_ENV=1", "weston_pkg_0\\.2", "zulu17\\.54\\.21", "JAVA_HOME"],
+        "markers": ["LEAF_PM_PORT_ENV=1", "weston_pkg_0\\.2", "zulu17\\.54\\.21", "JAVA_HOME", "LEAF_PM_RUNTIME_COMPAT_JAVA_WESTON"],
         "log": "Roms/PORTS/shatteredpixeldungeon/log.txt",
+        "launch_env": {"SDL_VIDEODRIVER": "wayland"},
         "interactive": True,
         "active_timeout": 240,
         "active_hold": 8,
@@ -808,6 +809,10 @@ def run_interactive_item(item):
     port_log = f"{sdcard}/{item.get('log', '')}" if item.get("log") else ""
     extra_logs = [f"{sdcard}/{rel}" for rel in item.get("extra_logs", [])]
     expected_re = item.get("process_regex", "")
+    launch_env_lines = "\n".join(
+        f"export {name}={sh_quote(value)}"
+        for name, value in item.get("launch_env", {}).items()
+    )
     remote_stdout = f"{remote_logs_dir}/{row_slug}-interactive-stdout.log"
     remote_ps = f"{remote_logs_dir}/{row_slug}-interactive-ps.log"
     remote_driver = f"{remote_tmp_dir}/{row_slug}-interactive.sh"
@@ -831,6 +836,7 @@ export SDCARD_PATH={sh_quote(sdcard)}
 export USERDATA_PATH={sh_quote(userdata)}
 export LEAF_PM_SMOKE_ACTIVE=1
 export LEAF_PM_SMOKE_SUBJECT={sh_quote(item['subject'])}
+{launch_env_lines}
 
 mkdir -p "$(dirname "$REMOTE_STDOUT")"
 rm -f "$REMOTE_STDOUT" "$REMOTE_PS"

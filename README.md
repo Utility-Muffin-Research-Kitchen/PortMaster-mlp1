@@ -512,16 +512,19 @@ port-local library path. This lets ports keep their own bundled libraries while
 falling back to the hash-pinned upstream Love runtime for libraries such as
 `libmodplug.so.1`.
 
-Java 8/JDK8 Westonpack launchers receive a runtime-family normalization block.
-They continue to use Westonpack's nested Weston/Xwayland/Crusty/gl4es bridge,
-but the hook clears inherited `SDL_VIDEODRIVER` and points Java2D at SD-installed
-PortMaster/Leaf fonts through `JAVA_TOOL_OPTIONS`. This covers older LWJGL Java
-ports that otherwise fail before creating a GL context or crash with Java 8's
-`No fonts found` fatal error. On MLP1, the same hook also treats Crusty's SDL
-host as a direct-DRM path: it sets `CRUSTY_RESOLUTION` from the Leaf display
-size, preloads the packaged DRM rotate shim through `WRAPPED_PRELOAD`, and
-temporarily stops host Weston unless Jawaka already performed the direct-DRM
-handoff.
+Java Westonpack launchers receive a runtime-family normalization block. This
+includes Java 17 ports such as Shattered Pixel Dungeon and older Java 8/JDK8
+ports. They continue to use Westonpack's nested
+Weston/Xwayland/Crusty/gl4es bridge, but the hook clears inherited
+`SDL_VIDEODRIVER` and points Java2D at SD-installed PortMaster/Leaf fonts
+through `JAVA_TOOL_OPTIONS`. This covers LWJGL Java ports that otherwise fail
+before creating a GL context, crash in Crusty's native backend setup, or hit
+Java 8's `No fonts found` fatal error. On MLP1, the same hook also treats
+Crusty's SDL host as a direct-DRM path: it sets `CRUSTY_RESOLUTION` from the
+Leaf display size, preloads the packaged DRM rotate shim through
+`WRAPPED_PRELOAD`, and temporarily stops host Weston unless Jawaka already
+performed the direct-DRM handoff. Existing Java 8 launcher markers and
+`LEAF_PM_JAVA8_*` overrides remain supported.
 
 MLP1 stock ships a 64-bit `g13p0` Mali userspace blob that can fault under some
 Godot 4 content and is too old for the Gothic/Machismo Vulkan rotation path.

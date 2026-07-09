@@ -31,7 +31,7 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
-RULESET_VERSION=16
+RULESET_VERSION=17
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
@@ -362,15 +362,14 @@ is_love_runtime_script() {
   grep -Eq '(^|[[:space:];|&])(\./)?love([[:space:];|&]|$)|[$][{]?GAMEDIR[}]?/love|liblove-11[.]5[.]so|love_11[.]5' "$file" 2>/dev/null
 }
 
-is_java8_weston_script() {
+is_java_weston_script() {
   file="$1"
   case "$file" in
     *.sh) ;;
     *) return 1 ;;
   esac
   grep -q 'westonwrap.sh' "$file" 2>/dev/null &&
-    grep -Eq 'java_runtime=.*(zulu8|jdk8|jre8|8[.]0)|zulu8[.][0-9].*jdk8|jdk8[.][0-9]' "$file" 2>/dev/null &&
-    grep -Eq '[$][{]?JAVA_HOME[}]?/bin/java|/bin/java[[:space:]]|[[:space:]]java[[:space:]].*-jar' "$file" 2>/dev/null
+    grep -Eq '[$][{]?JAVA_HOME[}]?/bin/java|/bin/java[[:space:]]|(^|[[:space:]])java[[:space:]].*-jar' "$file" 2>/dev/null
 }
 
 is_pyxel_runtime_script() {
@@ -2295,14 +2294,14 @@ runtime_compat_love_project_window_script() {
   printf 'runtime-compat-love-project-window-missing-anchor'
 }
 
-runtime_compat_java8_weston_script() {
+runtime_compat_java_weston_script() {
   file="$1"
-  if ! is_java8_weston_script "$file"; then
-    printf 'not-java8-weston'
+  if ! is_java_weston_script "$file"; then
+    printf 'not-java-weston'
     return 0
   fi
-  if grep -q 'LEAF_PM_RUNTIME_COMPAT_JAVA8_WESTON_VERSION=1' "$file" 2>/dev/null; then
-    printf 'runtime-compat-java8-weston-already'
+  if grep -Eq 'LEAF_PM_RUNTIME_COMPAT_JAVA_WESTON_VERSION=1|LEAF_PM_RUNTIME_COMPAT_JAVA8_WESTON_VERSION=1' "$file" 2>/dev/null; then
+    printf 'runtime-compat-java-weston-already'
     return 0
   fi
 
@@ -2310,10 +2309,10 @@ runtime_compat_java8_weston_script() {
   if awk '
     function insert_block() {
       print ""
-      print "# LEAF_PM_RUNTIME_COMPAT_JAVA8_WESTON=1"
-      print "# LEAF_PM_RUNTIME_COMPAT_JAVA8_WESTON_VERSION=1"
-      print "if declare -f leaf_pm_enable_java8_weston_runtime >/dev/null 2>&1; then"
-      print "  leaf_pm_enable_java8_weston_runtime"
+      print "# LEAF_PM_RUNTIME_COMPAT_JAVA_WESTON=1"
+      print "# LEAF_PM_RUNTIME_COMPAT_JAVA_WESTON_VERSION=1"
+      print "if declare -f leaf_pm_enable_java_weston_runtime >/dev/null 2>&1; then"
+      print "  leaf_pm_enable_java_weston_runtime"
       print "fi"
       inserted = 1
       changed = 1
@@ -2334,7 +2333,7 @@ runtime_compat_java8_weston_script() {
   ' "$file" >"$tmp"; then
     mv "$tmp" "$file"
     chmod 755 "$file" 2>/dev/null || true
-    printf 'runtime-compat-java8-weston-patched'
+    printf 'runtime-compat-java-weston-patched'
     return 0
   else
     rc=$?
@@ -2342,10 +2341,10 @@ runtime_compat_java8_weston_script() {
 
   rm -f "$tmp"
   if [ "$rc" -eq 2 ]; then
-    printf 'runtime-compat-java8-weston-missing-anchor'
+    printf 'runtime-compat-java-weston-missing-anchor'
     return 0
   fi
-  printf 'runtime-compat-java8-weston-error'
+  printf 'runtime-compat-java-weston-error'
 }
 
 runtime_compat_pyxel_fullscreen_script() {
@@ -2672,8 +2671,8 @@ apply_runtime_compat_rules_script() {
     runtime_compat_love_project_window_script "$file"
     printf '\n'
   fi
-  if is_java8_weston_script "$file"; then
-    runtime_compat_java8_weston_script "$file"
+  if is_java_weston_script "$file"; then
+    runtime_compat_java_weston_script "$file"
     printf '\n'
   fi
   if is_pyxel_runtime_script "$file"; then
@@ -3082,8 +3081,10 @@ script_cache_action() {
     runtime-compat-love-project-window-already) printf 'runtime-compat-love-project-window-already' ;;
     runtime-compat-love-project-window-no-gamedir) printf 'runtime-compat-love-project-window-no-gamedir' ;;
     runtime-compat-love-project-window-no-source) printf 'runtime-compat-love-project-window-no-source' ;;
-    runtime-compat-java8-weston-patched) printf 'runtime-compat-java8-weston-already' ;;
-    runtime-compat-java8-weston-already) printf 'runtime-compat-java8-weston-already' ;;
+    runtime-compat-java-weston-patched) printf 'runtime-compat-java-weston-already' ;;
+    runtime-compat-java-weston-already) printf 'runtime-compat-java-weston-already' ;;
+    runtime-compat-java8-weston-patched) printf 'runtime-compat-java-weston-already' ;;
+    runtime-compat-java8-weston-already) printf 'runtime-compat-java-weston-already' ;;
     runtime-compat-pyxel-fullscreen-patched) printf 'runtime-compat-pyxel-fullscreen-already' ;;
     runtime-compat-pyxel-fullscreen-already) printf 'runtime-compat-pyxel-fullscreen-already' ;;
     runtime-compat-pyxel-fullscreen-no-source) printf 'runtime-compat-pyxel-fullscreen-no-source' ;;
@@ -3093,7 +3094,7 @@ script_cache_action() {
     runtime-compat-neverball-texture-alias-no-source) printf 'runtime-compat-neverball-texture-alias-no-source' ;;
     lowercase-path-move-patched) printf 'lowercase-path-move-already' ;;
     lowercase-path-move-already) printf 'lowercase-path-move-already' ;;
-    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|runtime-compat-love-project-window-missing-anchor|runtime-compat-love-project-window-error|runtime-compat-java8-weston-missing-anchor|runtime-compat-java8-weston-error|runtime-compat-pyxel-fullscreen-missing-anchor|runtime-compat-pyxel-fullscreen-error|runtime-compat-neverball-texture-alias-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error|aarch64-compat-libs-missing-anchor|aarch64-compat-libs-error)
+    runtime-compat-soh-display-missing-anchor|runtime-compat-soh-display-error|runtime-compat-love-11-5-libs-missing-anchor|runtime-compat-love-11-5-libs-error|runtime-compat-love-project-window-missing-anchor|runtime-compat-love-project-window-error|runtime-compat-java-weston-missing-anchor|runtime-compat-java-weston-error|runtime-compat-java8-weston-missing-anchor|runtime-compat-java8-weston-error|runtime-compat-pyxel-fullscreen-missing-anchor|runtime-compat-pyxel-fullscreen-error|runtime-compat-neverball-texture-alias-error|lowercase-path-move-error|godot-wayland-runtime-missing-anchor|godot-wayland-runtime-error|weston-cleanup-error|godot-direct-sdl2-error|godot-frt-sdl2-error|sdl2-fullscreen-env-missing-anchor|sdl2-fullscreen-env-error|aarch64-compat-libs-missing-anchor|aarch64-compat-libs-error)
       return 1
       ;;
     *) printf '' ;;
@@ -3216,18 +3217,18 @@ record_script_action() {
       runtime_compat_love_project_window_errors=$((runtime_compat_love_project_window_errors + 1))
       errors=$((errors + 1))
       ;;
-    runtime-compat-java8-weston-patched)
-      runtime_compat_java8_weston_patched=$((runtime_compat_java8_weston_patched + 1))
+    runtime-compat-java-weston-patched)
+      runtime_compat_java_weston_patched=$((runtime_compat_java_weston_patched + 1))
       ;;
-    runtime-compat-java8-weston-already)
-      runtime_compat_java8_weston_already=$((runtime_compat_java8_weston_already + 1))
+    runtime-compat-java-weston-already|runtime-compat-java8-weston-already)
+      runtime_compat_java_weston_already=$((runtime_compat_java_weston_already + 1))
       ;;
-    runtime-compat-java8-weston-missing-anchor)
-      runtime_compat_java8_weston_missing_anchor=$((runtime_compat_java8_weston_missing_anchor + 1))
+    runtime-compat-java-weston-missing-anchor|runtime-compat-java8-weston-missing-anchor)
+      runtime_compat_java_weston_missing_anchor=$((runtime_compat_java_weston_missing_anchor + 1))
       errors=$((errors + 1))
       ;;
-    runtime-compat-java8-weston-error)
-      runtime_compat_java8_weston_errors=$((runtime_compat_java8_weston_errors + 1))
+    runtime-compat-java-weston-error|runtime-compat-java8-weston-error)
+      runtime_compat_java_weston_errors=$((runtime_compat_java_weston_errors + 1))
       errors=$((errors + 1))
       ;;
     runtime-compat-pyxel-fullscreen-patched)
@@ -3489,10 +3490,10 @@ runtime_compat_love_project_window_no_gamedir=0
 runtime_compat_love_project_window_no_source=0
 runtime_compat_love_project_window_missing_anchor=0
 runtime_compat_love_project_window_errors=0
-runtime_compat_java8_weston_patched=0
-runtime_compat_java8_weston_already=0
-runtime_compat_java8_weston_missing_anchor=0
-runtime_compat_java8_weston_errors=0
+runtime_compat_java_weston_patched=0
+runtime_compat_java_weston_already=0
+runtime_compat_java_weston_missing_anchor=0
+runtime_compat_java_weston_errors=0
 runtime_compat_pyxel_fullscreen_patched=0
 runtime_compat_pyxel_fullscreen_already=0
 runtime_compat_pyxel_fullscreen_no_source=0
@@ -3756,10 +3757,10 @@ cat >"$tmp_json" <<EOF
   "runtime_compat_love_project_window_scripts_no_source": $runtime_compat_love_project_window_no_source,
   "runtime_compat_love_project_window_scripts_missing_anchor": $runtime_compat_love_project_window_missing_anchor,
   "runtime_compat_love_project_window_script_errors": $runtime_compat_love_project_window_errors,
-  "runtime_compat_java8_weston_scripts_patched": $runtime_compat_java8_weston_patched,
-  "runtime_compat_java8_weston_scripts_already_patched": $runtime_compat_java8_weston_already,
-  "runtime_compat_java8_weston_scripts_missing_anchor": $runtime_compat_java8_weston_missing_anchor,
-  "runtime_compat_java8_weston_script_errors": $runtime_compat_java8_weston_errors,
+  "runtime_compat_java_weston_scripts_patched": $runtime_compat_java_weston_patched,
+  "runtime_compat_java_weston_scripts_already_patched": $runtime_compat_java_weston_already,
+  "runtime_compat_java_weston_scripts_missing_anchor": $runtime_compat_java_weston_missing_anchor,
+  "runtime_compat_java_weston_script_errors": $runtime_compat_java_weston_errors,
   "runtime_compat_pyxel_fullscreen_scripts_patched": $runtime_compat_pyxel_fullscreen_patched,
   "runtime_compat_pyxel_fullscreen_scripts_already_patched": $runtime_compat_pyxel_fullscreen_already,
   "runtime_compat_pyxel_fullscreen_scripts_no_source": $runtime_compat_pyxel_fullscreen_no_source,
@@ -3794,4 +3795,4 @@ if [ "$scan_duration_ms" -lt 0 ]; then
   scan_duration_ms=0
 fi
 
-log "mode=$scan_mode duration_ms=$scan_duration_ms scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched runtime_compat_love_project_window_patched=$runtime_compat_love_project_window_patched runtime_compat_java8_weston_patched=$runtime_compat_java8_weston_patched runtime_compat_pyxel_fullscreen_patched=$runtime_compat_pyxel_fullscreen_patched runtime_compat_neverball_texture_alias_patched=$runtime_compat_neverball_texture_alias_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
+log "mode=$scan_mode duration_ms=$scan_duration_ms scripts=$shell_scripts_seen seen=$seen aarch64=$aarch64_elfs_seen wrapped=$wrapped shared=$shared needs_compat=$needs_wrapper skipped=$files_skipped processed=$files_processed cache=$cache_state port_env_patched=$port_env_patched port_paths_patched=$port_paths_patched libretro_retroarch_patched=$libretro_retroarch_patched godot_patched=$godot_patched godot_wayland_runtime_patched=$godot_wayland_runtime_patched godot_direct_sdl2_patched=$godot_direct_sdl2_patched godot_frt_sdl2_patched=$godot_frt_sdl2_patched sdl2_fullscreen_env_patched=$sdl2_fullscreen_env_patched sdl2_fullscreen_env_already=$sdl2_fullscreen_env_already sdl2_fullscreen_env_missing_shim=$sdl2_fullscreen_env_missing_shim sdl2_fullscreen_env_errors=$sdl2_fullscreen_env_errors sdl2_ports_aarch64=$sdl2_fullscreen_ports_aarch64 sdl2_ports_armhf=$sdl2_fullscreen_ports_armhf aarch64_compat_ports=${#port_aarch64_compat_needed[@]} aarch64_compat_patched=$aarch64_compat_libs_patched aarch64_unresolved_ports=${#port_aarch64_unresolved[@]} weston_cleanup_patched=$weston_cleanup_patched runtime_compat_gothic_machismo_vulkan_rotate_patched=$runtime_compat_gothic_machismo_vulkan_rotate_patched runtime_compat_soh_display_patched=$runtime_compat_soh_display_patched runtime_compat_love_11_5_libs_patched=$runtime_compat_love_11_5_libs_patched runtime_compat_love_project_window_patched=$runtime_compat_love_project_window_patched runtime_compat_java_weston_patched=$runtime_compat_java_weston_patched runtime_compat_pyxel_fullscreen_patched=$runtime_compat_pyxel_fullscreen_patched runtime_compat_neverball_texture_alias_patched=$runtime_compat_neverball_texture_alias_patched lowercase_path_move_patched=$lowercase_path_move_patched report=$report_tsv"
