@@ -13,15 +13,6 @@
 
 #define PM_SELF_HEAL_JSON_MAX_BYTES (2 * 1024 * 1024)
 
-static long pm_self_heal_mtime_nsec(const struct stat *st)
-{
-#if defined(__APPLE__)
-    return st->st_mtimespec.tv_nsec;
-#else
-    return st->st_mtim.tv_nsec;
-#endif
-}
-
 static void pm_self_heal_timespecs(const struct stat *st, struct timespec times[2])
 {
 #if defined(__APPLE__)
@@ -31,15 +22,6 @@ static void pm_self_heal_timespecs(const struct stat *st, struct timespec times[
     times[0] = st->st_atim;
     times[1] = st->st_mtim;
 #endif
-}
-
-static bool pm_self_heal_source_newer(const struct stat *src,
-                                      const struct stat *dst)
-{
-    if (src->st_mtime != dst->st_mtime) {
-        return src->st_mtime > dst->st_mtime;
-    }
-    return pm_self_heal_mtime_nsec(src) > pm_self_heal_mtime_nsec(dst);
 }
 
 static bool pm_self_heal_path_under(const char *path, const char *root)
@@ -94,6 +76,72 @@ static int pm_self_heal_stamp_times(const char *path, const struct stat *src_st)
     close(fd);
     errno = saved_errno;
     return rc;
+}
+
+static int pm_self_heal_files_equal(const char *src,
+                                    const struct stat *src_st,
+                                    const char *dst,
+                                    const struct stat *dst_st,
+                                    bool *equal,
+                                    char *detail,
+                                    size_t detail_size)
+{
+    if (!src || !src_st || !dst || !dst_st || !equal) {
+        snprintf(detail, detail_size, "%s", "invalid self-heal comparison");
+        return -1;
+    }
+
+    *equal = false;
+    if (src_st->st_size != dst_st->st_size) {
+        return 0;
+    }
+
+    FILE *src_fp = fopen(src, "rb");
+    if (!src_fp) {
+        snprintf(detail, detail_size, "cannot open %s: %s", src, strerror(errno));
+        return -1;
+    }
+    FILE *dst_fp = fopen(dst, "rb");
+    if (!dst_fp) {
+        int saved_errno = errno;
+        fclose(src_fp);
+        snprintf(detail, detail_size, "cannot open %s: %s", dst, strerror(saved_errno));
+        return -1;
+    }
+
+    unsigned char src_buf[64 * 1024];
+    unsigned char dst_buf[64 * 1024];
+    bool same = true;
+    bool read_failed = false;
+    for (;;) {
+        size_t src_count = fread(src_buf, 1, sizeof(src_buf), src_fp);
+        size_t dst_count = fread(dst_buf, 1, sizeof(dst_buf), dst_fp);
+        if (src_count != dst_count ||
+            (src_count > 0 && memcmp(src_buf, dst_buf, src_count) != 0)) {
+            same = false;
+            break;
+        }
+        if (src_count == 0) {
+            break;
+        }
+    }
+    if (ferror(src_fp) || ferror(dst_fp)) {
+        read_failed = true;
+        snprintf(detail, detail_size, "cannot compare %s and %s", src, dst);
+    }
+
+    int src_close = fclose(src_fp);
+    int dst_close = fclose(dst_fp);
+    if (src_close != 0 || dst_close != 0) {
+        snprintf(detail, detail_size, "cannot close comparison files for %s", dst);
+        return -1;
+    }
+    if (read_failed) {
+        return -1;
+    }
+
+    *equal = same;
+    return 0;
 }
 
 static bool pm_json_string_matches(cJSON *object, const char *key, const char *value)
@@ -602,7 +650,12 @@ int pm_self_heal_leaf_ports_launcher(const pm_context *ctx,
         }
         return -1;
     } else {
-        should_update = pm_self_heal_source_newer(&src_st, &dst_st);
+        bool equal = false;
+        if (pm_self_heal_files_equal(src, &src_st, dst, &dst_st,
+                                     &equal, detail, detail_size) != 0) {
+            return -1;
+        }
+        should_update = !equal;
     }
 
     if (!should_update) {
@@ -686,7 +739,12 @@ int pm_self_heal_leaf_ports_system_icon(const pm_context *ctx,
         }
         return -1;
     } else {
-        should_update = pm_self_heal_source_newer(&src_st, &dst_st);
+        bool equal = false;
+        if (pm_self_heal_files_equal(src, &src_st, dst, &dst_st,
+                                     &equal, detail, detail_size) != 0) {
+            return -1;
+        }
+        should_update = !equal;
     }
 
     if (!should_update) {
