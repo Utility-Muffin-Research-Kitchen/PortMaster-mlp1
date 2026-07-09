@@ -17,21 +17,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static bool pm_armhf_compat_available(pm_context *ctx, char *root, size_t root_size)
-{
-    if (!ctx ||
-        pm_join3(root, root_size, ctx->data_dir, "compat", "armhf") != 0) {
-        return false;
-    }
-
-    char loader[PM_PATH_MAX];
-    char runner[PM_PATH_MAX];
-    return pm_join3(loader, sizeof(loader), root, "lib", "ld-linux-armhf.so.3") == 0 &&
-           pm_join3(runner, sizeof(runner), root, "bin", "leaf-armhf-run") == 0 &&
-           pm_file_exists(loader) &&
-           pm_file_exists(runner);
-}
-
 static bool pm_env_truthy(const char *name)
 {
     const char *value = getenv(name);
@@ -194,6 +179,13 @@ bool pm_portmaster_launch_ready(const pm_context *ctx, char *reason, size_t reas
         if (reason && reason_size > 0) {
             snprintf(reason, reason_size,
                      "PortMaster setup is incomplete.\n\nUse Repair PortMaster to finish setup.");
+        }
+        return false;
+    }
+    if (!pm_armhf_compat_current(ctx)) {
+        if (reason && reason_size > 0) {
+            snprintf(reason, reason_size,
+                     "PortMaster armhf support is missing or outdated.\n\nUse Repair PortMaster to finish setup.");
         }
         return false;
     }

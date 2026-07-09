@@ -37,16 +37,23 @@ MLP1 Buildroot toolchain and depend only on the stock aarch64 libc/loader.
 Tool licenses are included in the pak under `LICENSES/rsync/` and
 `LICENSES/zip/`.
 
-## Initial armhf pack
+## Managed armhf pack
 
 `make build-armhf-compat` builds the compatibility pack from Debian Bookworm
 armhf packages plus a pinned Rockchip Mali armhf userspace blob. The generated
-zip is a release-asset candidate, not a git-vendored payload:
+zip is a hash-locked release asset, not a git-vendored payload:
 
 ```text
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.zip
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.json
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.zip
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.json
 ```
+
+Clean Install PortMaster and Repair PortMaster flows read
+`locks/armhf-compat.lock.json`, download and verify the archive, validate its
+embedded version and required loader/runner/box86 files in staging, and then
+replace the live pack atomically. A failed download or validation keeps the
+previous pack. PortMaster is not considered launch-ready until the installed
+manifest matches the lock, ensuring the GUI advertises `armhf` by default.
 
 The pack installs under `$USERDATA_PATH/portmaster/compat/armhf` and includes:
 

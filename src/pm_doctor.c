@@ -1,6 +1,7 @@
 #include "pm_doctor.h"
 
 #include "pm_env_snapshot.h"
+#include "pm_installer.h"
 #include "pm_launcher.h"
 
 #include "cJSON.h"
@@ -430,6 +431,16 @@ static void check_setup_baseline(const pm_context *ctx, pm_doctor_report *r, cJS
                   "PortMaster UI runtime lock is not loaded", ctx->runtime_lock_path);
     }
 
+    if (ctx->armhf_lock_loaded) {
+        char summary[2048];
+        pm_armhf_compat_lock_summary(&ctx->armhf_lock, summary, sizeof(summary));
+        add_check(r, checks, "setup.armhf_compat_lock", PM_CHECK_OK, "required",
+                  "armhf compatibility lock loaded", summary);
+    } else {
+        add_check(r, checks, "setup.armhf_compat_lock", PM_CHECK_FAIL, "required",
+                  "armhf compatibility lock is not loaded", ctx->armhf_lock_path);
+    }
+
     add_check(r, checks, "setup.manager_data",
               pm_dir_exists(ctx->data_dir) ? PM_CHECK_OK : PM_CHECK_WARN,
               "required",
@@ -452,6 +463,16 @@ static void check_setup_baseline(const pm_context *ctx, pm_doctor_report *r, cJS
               "required",
               has_runtime ? "Python runtime available for managed GUI" : "Python runtime missing",
               has_runtime ? runtime_python : "Install or repair the managed UI runtime.");
+
+    char armhf_root[PM_PATH_MAX];
+    bool has_armhf = pm_armhf_compat_current(ctx);
+    (void)pm_armhf_compat_available(ctx, armhf_root, sizeof(armhf_root));
+    add_check(r, checks, "setup.armhf_compat",
+              has_armhf ? PM_CHECK_APP_LOCAL_OK : PM_CHECK_FAIL,
+              "required",
+              has_armhf ? "Locked armhf compatibility is installed" :
+                          "armhf compatibility is missing or outdated",
+              has_armhf ? armhf_root : "Use Repair PortMaster to install the locked armhf pack.");
 
     add_check(r, checks, "setup.ports_dir",
               pm_dir_exists(ctx->ports_dir) ? PM_CHECK_OK : PM_CHECK_WARN,

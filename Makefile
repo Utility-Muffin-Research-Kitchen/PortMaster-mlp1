@@ -57,7 +57,7 @@ ifeq ($(shell uname -s),Darwin)
 LDLIBS_COMMON += -lobjc
 endif
 
-.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke self-heal-smoke update-failure-fixtures smoke-matrix fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
+.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke self-heal-smoke armhf-install-fixtures update-failure-fixtures smoke-matrix fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
 
 all: native
 
@@ -147,6 +147,9 @@ pakrat-local-smoke:
 
 self-heal-smoke: package
 	@tools/self-heal-smoke.sh "$(PACKAGE_DIR)"
+
+armhf-install-fixtures:
+	@tools/armhf-install-fixtures.sh
 
 update-failure-fixtures:
 	@tools/update-failure-fixtures.sh

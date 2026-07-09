@@ -3,7 +3,7 @@
   "id": "org.umrk.portmaster",
   "name": "PortMaster",
   "summary": "Install, launch, repair, and verify PortMaster on Leaf for MLP1.",
-  "description": "PortMaster for Leaf is a first-party optional manager for the Miniloong Pocket 1. It installs the upstream PortMaster app into user data, verifies downloads, records a Leaf manifest, and prepares later repair, runtime, and armhf compatibility flows.",
+  "description": "PortMaster for Leaf is a first-party optional manager for the Miniloong Pocket 1. It installs the upstream PortMaster app, managed UI runtime, and locked armhf compatibility pack into user data, verifies downloads, records a Leaf manifest, and provides automatic repair.",
   "author": "Utility Muffin Research Kitchen",
   "repo_url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1",
   "categories": ["tools", "ports"],

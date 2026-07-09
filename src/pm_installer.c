@@ -31,6 +31,15 @@ static int pm_install_compat_assets(const pm_context *ctx,
                                     char *err,
                                     size_t err_size);
 
+static bool env_truthy(const char *name)
+{
+    const char *value = getenv(name);
+    return value && value[0] &&
+           strcmp(value, "0") != 0 &&
+           strcmp(value, "false") != 0 &&
+           strcmp(value, "no") != 0;
+}
+
 static void source_from_lock(const pm_context *ctx, pm_portmaster_source *out)
 {
     memset(out, 0, sizeof(*out));
@@ -593,6 +602,7 @@ static int write_manifest(const pm_context *ctx, const pm_portmaster_source *sou
             "    \"aarch64_sdl2_fullscreen_shim\": \"compat/sdl2/aarch64/leaf-sdl2-fullscreen.so\",\n"
             "    \"aarch64_drm_rotate_shim\": \"compat/drm/aarch64/leaf-drm-rotate.so\",\n"
             "    \"aarch64_compat_libs\": \"compat/libs/aarch64\",\n"
+            "    \"armhf\": { \"version\": \"%s\", \"sha256\": \"%s\", \"installed\": %s },\n"
             "    \"native_tools\": {\n"
             "      \"rsync\": \"compat/tools/aarch64/bin/rsync\",\n"
             "      \"zip\": \"compat/tools/aarch64/bin/zip\",\n"
@@ -624,7 +634,10 @@ static int write_manifest(const pm_context *ctx, const pm_portmaster_source *sou
             "    \"report\": \".leaf/armhf-scan.json\",\n"
             "    \"refreshed_by\": \"scripts/scan-and-fix-port-elfs.sh\"\n"
             "  }\n"
-            "}\n") > 0;
+            "}\n",
+            ctx->armhf_lock_loaded ? ctx->armhf_lock.version : "",
+            ctx->armhf_lock_loaded ? ctx->armhf_lock.sha256 : "",
+            pm_armhf_compat_current(ctx) ? "true" : "false") > 0;
     }
 
     if (fclose(fp) != 0 || !ok) {
@@ -1163,6 +1176,223 @@ static int pm_install_compat_assets(const pm_context *ctx,
         return -1;
     }
 
+    return 0;
+}
+
+bool pm_armhf_compat_available(const pm_context *ctx, char *root, size_t root_size)
+{
+    char local_root[PM_PATH_MAX];
+    char *resolved_root = root ? root : local_root;
+    size_t resolved_size = root ? root_size : sizeof(local_root);
+    if (root && root_size > 0) {
+        root[0] = '\0';
+    }
+    if (!ctx || resolved_size == 0 ||
+        pm_join3(resolved_root, resolved_size, ctx->data_dir,
+                 "compat", "armhf") != 0) {
+        return false;
+    }
+
+    char loader[PM_PATH_MAX];
+    char runner[PM_PATH_MAX];
+    char box86[PM_PATH_MAX];
+    char manifest[PM_PATH_MAX];
+    return pm_join3(loader, sizeof(loader), resolved_root,
+                    "lib", "ld-linux-armhf.so.3") == 0 &&
+           pm_join3(runner, sizeof(runner), resolved_root,
+                    "bin", "leaf-armhf-run") == 0 &&
+           pm_join3(box86, sizeof(box86), resolved_root, "bin", "box86") == 0 &&
+           pm_join(manifest, sizeof(manifest), resolved_root,
+                   ".leaf-armhf-compat-manifest.json") == 0 &&
+           pm_file_exists(loader) &&
+           pm_file_exists(runner) &&
+           pm_file_exists(box86) &&
+           pm_file_exists(manifest);
+}
+
+static bool armhf_manifest_matches(const char *root, const char *expected_version)
+{
+    char manifest_path[PM_PATH_MAX];
+    if (!root || !expected_version || !expected_version[0] ||
+        pm_join(manifest_path, sizeof(manifest_path), root,
+                ".leaf-armhf-compat-manifest.json") != 0) {
+        return false;
+    }
+
+    char read_err[128];
+    char *text = pm_read_text_file(manifest_path, 1024 * 1024,
+                                   read_err, sizeof(read_err));
+    if (!text) {
+        return false;
+    }
+    cJSON *manifest = cJSON_Parse(text);
+    free(text);
+    if (!manifest) {
+        return false;
+    }
+    cJSON *version = cJSON_GetObjectItemCaseSensitive(manifest, "version");
+    bool matches = cJSON_IsString(version) && version->valuestring &&
+                   strcmp(version->valuestring, expected_version) == 0;
+    cJSON_Delete(manifest);
+    return matches;
+}
+
+bool pm_armhf_compat_current(const pm_context *ctx)
+{
+    char root[PM_PATH_MAX];
+    return ctx && ctx->armhf_lock_loaded &&
+           pm_armhf_compat_available(ctx, root, sizeof(root)) &&
+           armhf_manifest_matches(root, ctx->armhf_lock.version);
+}
+
+static bool verified_armhf_archive(const pm_armhf_compat_lock *lock,
+                                    const char *path)
+{
+    if (!lock || !path || !lock->sha256[0] ||
+        pm_file_size(path) != (off_t)lock->size) {
+        return false;
+    }
+    char actual[65];
+    char hash_err[128];
+    return pm_sha256_file_hex(path, actual, hash_err, sizeof(hash_err)) == 0 &&
+           strcmp(actual, lock->sha256) == 0;
+}
+
+static int restore_armhf_backup(const char *target,
+                                 const char *backup,
+                                 bool had_backup,
+                                 const char *failure,
+                                 char *err,
+                                 size_t err_size)
+{
+    char cleanup_err[256];
+    if (pm_rm_rf(target, cleanup_err, sizeof(cleanup_err)) != 0) {
+        snprintf(err, err_size, "%s; cannot remove failed armhf install: %s",
+                 failure, cleanup_err);
+        return -1;
+    }
+    if (had_backup && rename(backup, target) != 0) {
+        snprintf(err, err_size, "%s; cannot restore previous armhf install: %s",
+                 failure, strerror(errno));
+        return -1;
+    }
+    snprintf(err, err_size, "%s", failure);
+    return -1;
+}
+
+int pm_install_armhf_compat(pm_context *ctx, char *err, size_t err_size)
+{
+    if (err && err_size > 0) {
+        err[0] = '\0';
+    }
+    if (!ctx || !ctx->armhf_lock_loaded) {
+        snprintf(err, err_size, "armhf compatibility lock is not loaded");
+        return -1;
+    }
+    if (pm_armhf_compat_current(ctx)) {
+        return 0;
+    }
+    if (pm_context_ensure_manager_dirs(ctx, err, err_size) != 0) {
+        return -1;
+    }
+
+    char archive_path[PM_PATH_MAX];
+    if (pm_join(archive_path, sizeof(archive_path), ctx->downloads_dir,
+                ctx->armhf_lock.filename) != 0) {
+        snprintf(err, err_size, "armhf compatibility download path too long");
+        return -1;
+    }
+    if (!verified_armhf_archive(&ctx->armhf_lock, archive_path)) {
+        pm_download_spec spec = {
+            .url = ctx->armhf_lock.url,
+            .dest_path = archive_path,
+            .expected_size = ctx->armhf_lock.size,
+            .expected_sha256 = ctx->armhf_lock.sha256,
+            .allow_http = env_truthy("LEAF_PM_ALLOW_HTTP_ARMHF_COMPAT"),
+        };
+        if (pm_download_file(&spec, err, err_size) != 0) {
+            return -1;
+        }
+    }
+
+    char extract_dir[PM_PATH_MAX];
+    if (pm_join(extract_dir, sizeof(extract_dir), ctx->staging_dir,
+                "armhf-compat-extract") != 0) {
+        snprintf(err, err_size, "armhf compatibility staging path too long");
+        return -1;
+    }
+    if (pm_rm_rf(extract_dir, err, err_size) != 0 ||
+        pm_mkdir_p(extract_dir, err, err_size) != 0) {
+        return -1;
+    }
+    char *unzip_argv[] = { "unzip", "-q", "-o", archive_path,
+                           "-d", extract_dir, NULL };
+    if (pm_run_argv(unzip_argv, err, err_size) != 0) {
+        return -1;
+    }
+
+    char extracted_loader[PM_PATH_MAX];
+    char extracted_runner[PM_PATH_MAX];
+    char extracted_box86[PM_PATH_MAX];
+    if (pm_join3(extracted_loader, sizeof(extracted_loader), extract_dir,
+                 "lib", "ld-linux-armhf.so.3") != 0 ||
+        pm_join3(extracted_runner, sizeof(extracted_runner), extract_dir,
+                 "bin", "leaf-armhf-run") != 0 ||
+        pm_join3(extracted_box86, sizeof(extracted_box86), extract_dir,
+                 "bin", "box86") != 0 ||
+        !pm_file_exists(extracted_loader) ||
+        !pm_file_exists(extracted_runner) ||
+        !pm_file_exists(extracted_box86) ||
+        !armhf_manifest_matches(extract_dir, ctx->armhf_lock.version)) {
+        snprintf(err, err_size,
+                 "verified armhf archive did not contain the locked compatibility pack");
+        return -1;
+    }
+
+    char compat_parent[PM_PATH_MAX];
+    char target[PM_PATH_MAX];
+    char backup[PM_PATH_MAX];
+    if (pm_join(compat_parent, sizeof(compat_parent), ctx->data_dir, "compat") != 0 ||
+        pm_join(target, sizeof(target), compat_parent, "armhf") != 0 ||
+        pm_join(backup, sizeof(backup), ctx->staging_dir,
+                "armhf-compat-previous") != 0) {
+        snprintf(err, err_size, "armhf compatibility install path too long");
+        return -1;
+    }
+    if (pm_mkdir_p(compat_parent, err, err_size) != 0 ||
+        pm_rm_rf(backup, err, err_size) != 0) {
+        return -1;
+    }
+
+    bool had_backup = pm_dir_exists(target);
+    if (had_backup && rename(target, backup) != 0) {
+        snprintf(err, err_size, "cannot back up existing armhf compatibility: %s",
+                 strerror(errno));
+        return -1;
+    }
+    if (rename(extract_dir, target) != 0) {
+        char failure[256];
+        snprintf(failure, sizeof(failure),
+                 "cannot promote armhf compatibility install: %s", strerror(errno));
+        return restore_armhf_backup(target, backup, had_backup,
+                                     failure, err, err_size);
+    }
+
+    if (!pm_armhf_compat_current(ctx)) {
+        return restore_armhf_backup(target, backup, had_backup,
+                                     "installed armhf compatibility failed validation",
+                                     err, err_size);
+    }
+
+    char path[PM_PATH_MAX];
+    if (pm_join3(path, sizeof(path), target, "bin", "leaf-armhf-run") == 0) {
+        chmod_if_present(path);
+    }
+    if (pm_join3(path, sizeof(path), target, "bin", "box86") == 0) {
+        chmod_if_present(path);
+    }
+    (void)pm_rm_rf(backup, NULL, 0);
+    unlink(archive_path);
     return 0;
 }
 

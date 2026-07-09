@@ -6,6 +6,7 @@ FEED_ROOT="$APP_DIR/build/local-pakrat-feed"
 BASE_URL="${PAKRAT_LOCAL_BASE_URL:-http://127.0.0.1:${PAKRAT_LOCAL_PORT:-8765}/pakrat/v1/}"
 BUILD_FIRST=1
 INCLUDE_RUNTIME=auto
+INCLUDE_ARMHF=auto
 
 usage() {
     cat <<USAGE
@@ -16,6 +17,7 @@ Options:
   --base-url URL         Pak Rat v1 base URL. Default: $BASE_URL
   --skip-build           Use the existing build/mlp1 package.
   --no-runtime           Do not copy/rewrite the UI runtime lock for local use.
+  --no-armhf             Do not copy/rewrite the armhf compatibility lock.
 
 The generated catalog is local-only and may use http://127.0.0.1 URLs.
 USAGE
@@ -39,6 +41,10 @@ while [ "$#" -gt 0 ]; do
             INCLUDE_RUNTIME=0
             shift
             ;;
+        --no-armhf)
+            INCLUDE_ARMHF=0
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -60,7 +66,8 @@ if [ "$BUILD_FIRST" -eq 1 ]; then
     make -C "$APP_DIR" dist-pakrat
 fi
 
-APP_DIR="$APP_DIR" FEED_ROOT="$FEED_ROOT" BASE_URL="$BASE_URL" INCLUDE_RUNTIME="$INCLUDE_RUNTIME" python3 - <<'PY'
+APP_DIR="$APP_DIR" FEED_ROOT="$FEED_ROOT" BASE_URL="$BASE_URL" \
+INCLUDE_RUNTIME="$INCLUDE_RUNTIME" INCLUDE_ARMHF="$INCLUDE_ARMHF" python3 - <<'PY'
 import hashlib
 import json
 import os
@@ -74,11 +81,13 @@ app_dir = Path(os.environ["APP_DIR"])
 feed_root = Path(os.environ["FEED_ROOT"])
 base_url = os.environ["BASE_URL"]
 include_runtime = os.environ["INCLUDE_RUNTIME"] != "0"
+include_armhf = os.environ["INCLUDE_ARMHF"] != "0"
 
 package_src = app_dir / "build/mlp1/package/PortMaster.pak"
 pak_json_path = package_src / "pak.json"
 pakrat_json_path = app_dir / "pakrat.json"
 runtime_build_dir = app_dir / "build/ui-runtime/cpython"
+armhf_build_dir = app_dir / "build/armhf-compat"
 
 if not package_src.is_dir():
     raise SystemExit(f"missing package directory: {package_src}")
@@ -126,6 +135,28 @@ if include_runtime and lock_path.is_file():
         runtime_included = True
         break
     lock_path.write_text(json.dumps(lock, indent=2) + "\n")
+
+armhf_included = False
+armhf_lock_path = staged_package / "locks/armhf-compat.lock.json"
+if include_armhf and armhf_lock_path.is_file():
+    lock = json.loads(armhf_lock_path.read_text())
+    artifacts = lock.get("artifacts", [])
+    if len(artifacts) == 1:
+        artifact = artifacts[0]
+        archive = armhf_build_dir / artifact["name"]
+        manifest = artifact.get("manifest", {})
+        manifest_path = armhf_build_dir / manifest.get("filename", "")
+        if archive.is_file() and manifest_path.is_file():
+            for source in (archive, manifest_path):
+                shutil.copy2(source, artifact_dir / source.name)
+            artifact["url"] = base_url + "artifacts/" + archive.name
+            artifact["size"] = archive.stat().st_size
+            artifact["sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+            manifest["url"] = base_url + "artifacts/" + manifest_path.name
+            manifest["size"] = manifest_path.stat().st_size
+            manifest["sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+            armhf_included = True
+    armhf_lock_path.write_text(json.dumps(lock, indent=2) + "\n")
 
 installed_size = 0
 for path in staged_package.rglob("*"):
@@ -193,6 +224,7 @@ catalog = {
     "Local PortMaster Pak Rat feed.\n"
     f"Base URL: {base_url}\n"
     f"Runtime included: {'yes' if runtime_included else 'no'}\n"
+    f"armhf compatibility included: {'yes' if armhf_included else 'no'}\n"
 )
 
 print(f"Local Pak Rat feed: {feed_root}")
@@ -202,4 +234,8 @@ if runtime_included:
     print("UI runtime lock rewritten to local feed artifacts.")
 else:
     print("UI runtime artifact not included; runtime install will use the lock's existing URL.")
+if armhf_included:
+    print("armhf compatibility lock rewritten to local feed artifacts.")
+else:
+    print("armhf compatibility artifact not included; install will use the lock's existing URL.")
 PY

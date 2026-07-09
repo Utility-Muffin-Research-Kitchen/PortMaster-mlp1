@@ -49,6 +49,8 @@ typedef struct {
     bool uses_system_python;
     bool lock_loaded;
     bool runtime_lock_loaded;
+    bool armhf_lock_loaded;
+    bool has_armhf;
     bool manifest_exists;
     bool launchable;
     pm_ui_setup_state setup_state;
@@ -491,12 +493,14 @@ static void build_ui_state(pm_context *ctx,
     memset(state, 0, sizeof(*state));
     state->lock_loaded = ctx->lock_loaded;
     state->runtime_lock_loaded = ctx->runtime_lock_loaded;
+    state->armhf_lock_loaded = ctx->armhf_lock_loaded;
     state->installed = pm_portmaster_is_installed(ctx);
     state->manifest_exists = pm_file_exists(ctx->manifest_path);
     state->has_runtime = pm_portmaster_runtime_available(ctx,
                                                          state->runtime_path,
                                                          sizeof(state->runtime_path),
                                                          &state->uses_system_python);
+    state->has_armhf = pm_armhf_compat_current(ctx);
     state->launchable = pm_portmaster_launch_ready(ctx,
                                                    state->launch_disabled_reason,
                                                    sizeof(state->launch_disabled_reason));
@@ -508,6 +512,8 @@ static void build_ui_state(pm_context *ctx,
         state->setup_state = PM_UI_SETUP_INCOMPLETE;
         if (!state->has_runtime) {
             pm_copy(state->setup_summary, sizeof(state->setup_summary), "Python runtime missing");
+        } else if (!state->has_armhf) {
+            pm_copy(state->setup_summary, sizeof(state->setup_summary), "armhf support missing");
         } else {
             pm_copy(state->setup_summary, sizeof(state->setup_summary), "Setup needed");
         }
@@ -590,13 +596,13 @@ static int repair_core(pm_context *ctx,
     if (runtime_installed) {
         *runtime_installed = false;
     }
-    setup_progress_set(progress, 0.36f, "Checking runtime");
+    setup_progress_set(progress, 0.34f, "Checking runtime");
     if (!pm_portmaster_runtime_available(ctx, NULL, 0, NULL)) {
         if (!ctx->runtime_lock_loaded) {
             snprintf(err, err_size, "PortMaster runtime setup metadata is missing");
             return -1;
         }
-        setup_progress_set(progress, 0.46f, "Downloading Python runtime");
+        setup_progress_set(progress, 0.43f, "Downloading Python runtime");
         if (pm_install_ui_runtime(ctx, err, err_size) != 0) {
             return -1;
         }
@@ -605,7 +611,19 @@ static int repair_core(pm_context *ctx,
         }
     }
 
-    setup_progress_set(progress, 0.76f, "Applying Leaf support files");
+    setup_progress_set(progress, 0.56f, "Checking armhf support");
+    if (!pm_armhf_compat_current(ctx)) {
+        if (!ctx->armhf_lock_loaded) {
+            snprintf(err, err_size, "armhf compatibility setup metadata is missing");
+            return -1;
+        }
+        setup_progress_set(progress, 0.64f, "Downloading armhf compatibility");
+        if (pm_install_armhf_compat(ctx, err, err_size) != 0) {
+            return -1;
+        }
+    }
+
+    setup_progress_set(progress, 0.78f, "Applying Leaf support files");
     if (pm_repatch_portmaster_repair(ctx, err, err_size) != 0) {
         return -1;
     }
@@ -663,9 +681,13 @@ static int install_worker(void *userdata)
 
 static void show_install(pm_context *ctx)
 {
-    if (!ctx->lock_loaded) {
+    if (!ctx->lock_loaded || !ctx->runtime_lock_loaded || !ctx->armhf_lock_loaded) {
         char summary[8192];
-        snprintf(summary, sizeof(summary), "PortMaster setup metadata is missing.\n\n%s", ctx->lock_path);
+        const char *missing_path = !ctx->lock_loaded ? ctx->lock_path :
+                                   !ctx->runtime_lock_loaded ? ctx->runtime_lock_path :
+                                   ctx->armhf_lock_path;
+        snprintf(summary, sizeof(summary),
+                 "PortMaster setup metadata is missing.\n\n%s", missing_path);
         show_message(summary);
         return;
     }
@@ -1147,7 +1169,9 @@ static int build_menu_rows(pm_context *ctx,
     };
 
     if (!state->installed) {
-        bool disabled = !ctx->lock_loaded;
+        bool disabled = !ctx->lock_loaded ||
+                        !ctx->runtime_lock_loaded ||
+                        !ctx->armhf_lock_loaded;
         items[count] = (cat_list_item){
             .label = "Install PortMaster",
             .trailing_text = disabled ? "Metadata missing" : "Ready",
@@ -1156,7 +1180,7 @@ static int build_menu_rows(pm_context *ctx,
         rows[count++] = (pm_menu_row){
             .action = PM_ACTION_INSTALL,
             .disabled = disabled,
-            .disabled_message = "PortMaster setup metadata is missing.",
+            .disabled_message = "PortMaster, runtime, or armhf setup metadata is missing.",
         };
     } else if (state->update_status_valid && state->update.update_available) {
         items[count] = (cat_list_item){
@@ -1243,10 +1267,11 @@ int pm_ui_menu_state_text(pm_context *ctx, char *out, size_t out_size)
     int rc = 0;
     size_t used = 0;
     if (appendf(out, out_size, &used,
-                "setup=%s\tinstalled=%d\tlaunchable=%d\tupdate_status=%s\tupdate_available=%d\n",
+                "setup=%s\tinstalled=%d\tlaunchable=%d\tarmhf=%d\tupdate_status=%s\tupdate_available=%d\n",
                 setup_state_slug(state.setup_state),
                 state.installed ? 1 : 0,
                 state.launchable ? 1 : 0,
+                state.has_armhf ? 1 : 0,
                 state.update_summary,
                 state.update_status_valid && state.update.update_available ? 1 : 0) != 0) {
         rc = -1;

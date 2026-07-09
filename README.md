@@ -164,6 +164,7 @@ LEAF_PM_DOCTOR_LOOP_STRESS=1 ./launch.sh --doctor-cfw-text
 ./launch.sh --check-portmaster-update-cached
 ./launch.sh --update-portmaster
 ./launch.sh --install-ui-runtime
+./launch.sh --install-armhf-compat
 ./launch.sh --install-runtime-archive /path/to/portmaster-runtime.7z
 ./launch.sh --launch-portmaster
 ```
@@ -303,8 +304,12 @@ build/ui-runtime/cpython/portmaster-mlp1-ui-runtime-python310-aarch64-cpython-3.
 ## Armhf Compatibility Pack
 
 Armhf support is automatic in the manager UI. Users do not install it from a
-separate menu row; install/repair/launch flows refresh the compatibility files
-and wrappers as needed.
+separate menu row. A clean Install PortMaster setup downloads the hash-locked
+compatibility release asset, validates its embedded manifest, and installs it
+atomically. Repair repeats that process when the pack is missing, damaged, or
+outdated; launch is held in `Setup needed` until the locked pack is current.
+Launch and post-exit flows then refresh the generated compatibility files and
+port wrappers as needed.
 
 The armhf compatibility pack is generated from Debian armhf packages in Docker,
 plus a pinned Rockchip Mali 32-bit userspace blob for GLES ports. Package/file
@@ -317,8 +322,8 @@ make build-armhf-compat
 Output:
 
 ```text
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.zip
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-20260630.json
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.zip
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.json
 ```
 
 The zip installs under:

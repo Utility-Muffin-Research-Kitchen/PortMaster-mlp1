@@ -16,7 +16,13 @@
   "artifacts": [
     {
       "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.zip",
-      "manifest": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.json",
+      "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.2/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.zip",
+      "manifest": {
+        "filename": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.json",
+        "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.2/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.json",
+        "size": 280639,
+        "sha256": "2771bc203d1fdf1fbabb357ad00e35c3eadbd880cccf4d3f2f05fb780fa295d1"
+      },
       "size": 61990341,
       "sha256": "7774177443fe98ed519457b2e08e774fa4a6f543283d2dd4a19a280b5410b331",
       "package_count": 104,

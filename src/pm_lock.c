@@ -202,3 +202,100 @@ void pm_ui_runtime_lock_summary(const pm_ui_runtime_lock *lock, char *out, size_
              lock->sha256,
              lock->url);
 }
+
+int pm_armhf_compat_lock_load(const char *path, pm_armhf_compat_lock *out,
+                              char *err, size_t err_size)
+{
+    if (err && err_size > 0) {
+        err[0] = '\0';
+    }
+    if (!out) {
+        return -1;
+    }
+    memset(out, 0, sizeof(*out));
+
+    char read_err[256];
+    char *text = pm_read_text_file(path, 512 * 1024, read_err, sizeof(read_err));
+    if (!text) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "%s", read_err);
+        }
+        return -1;
+    }
+
+    cJSON *root = cJSON_Parse(text);
+    free(text);
+    if (!root) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "invalid JSON in %s", path);
+        }
+        return -1;
+    }
+
+    int ok = -1;
+    cJSON *builder = cJSON_GetObjectItemCaseSensitive(root, "builder");
+    cJSON *artifacts = cJSON_GetObjectItemCaseSensitive(root, "artifacts");
+    if (json_string(root, "status", out->status, sizeof(out->status)) != 0 ||
+        !cJSON_IsObject(builder) ||
+        json_string(builder, "version", out->version, sizeof(out->version)) != 0 ||
+        !cJSON_IsArray(artifacts) || cJSON_GetArraySize(artifacts) != 1) {
+        goto done;
+    }
+
+    cJSON *artifact = cJSON_GetArrayItem(artifacts, 0);
+    cJSON *size = cJSON_GetObjectItemCaseSensitive(artifact, "size");
+    cJSON *manifest = cJSON_GetObjectItemCaseSensitive(artifact, "manifest");
+    if (!cJSON_IsObject(artifact) ||
+        json_string(artifact, "name", out->filename, sizeof(out->filename)) != 0 ||
+        json_string(artifact, "url", out->url, sizeof(out->url)) != 0 ||
+        json_string(artifact, "sha256", out->sha256, sizeof(out->sha256)) != 0 ||
+        !cJSON_IsNumber(size) || size->valuedouble <= 0.0 ||
+        !cJSON_IsObject(manifest)) {
+        goto done;
+    }
+
+    cJSON *manifest_size = cJSON_GetObjectItemCaseSensitive(manifest, "size");
+    if (json_string(manifest, "filename", out->manifest_filename,
+                    sizeof(out->manifest_filename)) != 0 ||
+        json_string(manifest, "url", out->manifest_url,
+                    sizeof(out->manifest_url)) != 0 ||
+        json_string(manifest, "sha256", out->manifest_sha256,
+                    sizeof(out->manifest_sha256)) != 0 ||
+        !cJSON_IsNumber(manifest_size) || manifest_size->valuedouble <= 0.0) {
+        goto done;
+    }
+
+    out->size = (uint64_t)size->valuedouble;
+    out->manifest_size = (uint64_t)manifest_size->valuedouble;
+    ok = 0;
+
+done:
+    cJSON_Delete(root);
+    if (ok != 0) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size,
+                     "missing required armhf compatibility lock fields in %s", path);
+        }
+        return -1;
+    }
+    return 0;
+}
+
+void pm_armhf_compat_lock_summary(const pm_armhf_compat_lock *lock,
+                                  char *out, size_t out_size)
+{
+    if (!out || out_size == 0) {
+        return;
+    }
+    if (!lock) {
+        snprintf(out, out_size, "%s", "No armhf compatibility lock loaded.");
+        return;
+    }
+    snprintf(out, out_size,
+             "Version: %s\nAsset: %s\nSize: %llu bytes\nSHA-256: %.16s...\n\n%s",
+             lock->version,
+             lock->filename,
+             (unsigned long long)lock->size,
+             lock->sha256,
+             lock->url);
+}

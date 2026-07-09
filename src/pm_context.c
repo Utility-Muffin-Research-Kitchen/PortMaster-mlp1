@@ -245,6 +245,8 @@ int pm_context_init(pm_context *ctx, const char *argv0, char *err, size_t err_si
     pm_join(ctx->port_images_dir, sizeof(ctx->port_images_dir), ctx->images_path, "PORTS");
     pm_join3(ctx->lock_path, sizeof(ctx->lock_path), ctx->pak_dir, "locks", "portmaster-gui-stable.lock.json");
     pm_join3(ctx->runtime_lock_path, sizeof(ctx->runtime_lock_path), ctx->pak_dir, "locks", "ui-runtime.lock.json");
+    pm_join3(ctx->armhf_lock_path, sizeof(ctx->armhf_lock_path), ctx->pak_dir,
+             "locks", "armhf-compat.lock.json");
     pm_join(ctx->manifest_path, sizeof(ctx->manifest_path), ctx->leaf_dir, "manifest.json");
 
     char lock_err[256];
@@ -259,6 +261,14 @@ int pm_context_init(pm_context *ctx, const char *argv0, char *err, size_t err_si
                                                        sizeof(runtime_lock_err)) == 0;
     if (ctx->lock_loaded && !ctx->runtime_lock_loaded && err && err_size > 0) {
         snprintf(err, err_size, "runtime lock warning: %s", runtime_lock_err);
+    }
+    char armhf_lock_err[256];
+    ctx->armhf_lock_loaded = pm_armhf_compat_lock_load(ctx->armhf_lock_path,
+                                                       &ctx->armhf_lock,
+                                                       armhf_lock_err,
+                                                       sizeof(armhf_lock_err)) == 0;
+    if (ctx->lock_loaded && !ctx->armhf_lock_loaded && err && err_size > 0) {
+        snprintf(err, err_size, "armhf lock warning: %s", armhf_lock_err);
     }
     return 0;
 }

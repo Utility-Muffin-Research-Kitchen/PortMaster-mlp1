@@ -3,6 +3,7 @@
 
 #include "pm_context.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,6 +29,9 @@ int pm_install_portmaster_source(pm_context *ctx, const pm_portmaster_source *so
                                  char *err, size_t err_size);
 int pm_repatch_portmaster(pm_context *ctx, char *err, size_t err_size);
 int pm_repatch_portmaster_repair(pm_context *ctx, char *err, size_t err_size);
+bool pm_armhf_compat_available(const pm_context *ctx, char *root, size_t root_size);
+bool pm_armhf_compat_current(const pm_context *ctx);
+int pm_install_armhf_compat(pm_context *ctx, char *err, size_t err_size);
 int pm_install_runtime_archive(pm_context *ctx, const char *archive_path, char *err, size_t err_size);
 int pm_install_ui_runtime(pm_context *ctx, char *err, size_t err_size);
 

@@ -317,6 +317,16 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (argc > 1 && strcmp(argv[1], "--install-armhf-compat") == 0) {
+        char err[512];
+        if (pm_install_armhf_compat(&ctx, err, sizeof(err)) != 0) {
+            fprintf(stderr, "armhf compatibility install failed: %s\n", err);
+            return 1;
+        }
+        puts("PortMaster armhf compatibility installed");
+        return 0;
+    }
+
     if (argc > 1 && strcmp(argv[1], "--launch-portmaster") == 0) {
         char err[512];
         if (pm_launch_portmaster(&ctx, err, sizeof(err)) != 0) {

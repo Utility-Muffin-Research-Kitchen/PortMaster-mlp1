@@ -23,11 +23,14 @@ typedef struct {
     char port_images_dir[PM_PATH_MAX];
     char lock_path[PM_PATH_MAX];
     char runtime_lock_path[PM_PATH_MAX];
+    char armhf_lock_path[PM_PATH_MAX];
     char manifest_path[PM_PATH_MAX];
     pm_portmaster_lock lock;
     pm_ui_runtime_lock runtime_lock;
+    pm_armhf_compat_lock armhf_lock;
     bool lock_loaded;
     bool runtime_lock_loaded;
+    bool armhf_lock_loaded;
 } pm_context;
 
 int pm_context_init(pm_context *ctx, const char *argv0, char *err, size_t err_size);
