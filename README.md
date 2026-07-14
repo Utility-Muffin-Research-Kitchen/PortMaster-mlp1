@@ -58,9 +58,11 @@ the staged test package's runtime lock is rewritten to the local feed too.
 `make update-failure-fixtures` exercises the manager-owned GUI update failure
 paths against a temporary SD/userdata root.
 
-PortMaster is Pak Rat-owned. Do not add it to Leaf's direct `stage-app`
-release-managed app policy; device installs and smoke tests should go through a
-Pak Rat catalog.
+PortMaster is Pak Rat-owned. Leaf exposes
+`make stage-app APP=PortMaster-mlp1 DEVICE=mlp1` only for explicit developer
+and acceptance staging; PortMaster must remain absent from default
+`STAGE_APPS`, release ZIPs, and `managed_apps`. Install, update, adoption, and
+uninstall testing must still go through a Pak Rat catalog.
 
 ## Manager UI
 
