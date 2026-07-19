@@ -56,9 +56,18 @@ export PORTMASTER_LEAF_DEVICE_INFO="\${PORTMASTER_LEAF_DEVICE_INFO:-1}"
 export HOME="\$LEAF_PM_DATA_DIR"
 export XDG_DATA_HOME="\$LEAF_PM_DATA_DIR"
 export HM_TOOLS_DIR="\${HM_TOOLS_DIR:-\$LEAF_PM_DATA_DIR}"
-if [ -n "\${ROMS_PATH:-}" ]; then
+if [ -n "\${PORTMASTER_PORTS_DIR:-}" ]; then
+  _leaf_pm_ports_dir="\${PORTMASTER_PORTS_DIR%/}"
+  _leaf_pm_roms_dir="\$(dirname "\$_leaf_pm_ports_dir")"
+elif [ -n "\${ROMS_PATH:-}" ]; then
   _leaf_pm_roms_dir="\${ROMS_PATH%/}"
   _leaf_pm_ports_dir="\$ROMS_PATH/PORTS"
+elif [ -n "\${PORTMASTER_ROMS_DIRECTORY:-}" ]; then
+  case "\$PORTMASTER_ROMS_DIRECTORY" in
+    /*) _leaf_pm_roms_dir="\${PORTMASTER_ROMS_DIRECTORY%/}" ;;
+    *) _leaf_pm_roms_dir="/\${PORTMASTER_ROMS_DIRECTORY%/}" ;;
+  esac
+  _leaf_pm_ports_dir="\$_leaf_pm_roms_dir/PORTS"
 elif [ -n "\${SDCARD_PATH:-}" ]; then
   _leaf_pm_roms_dir="\${SDCARD_PATH%/}/Roms"
   _leaf_pm_ports_dir="\$SDCARD_PATH/Roms/PORTS"

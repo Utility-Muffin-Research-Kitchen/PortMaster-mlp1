@@ -2,6 +2,7 @@
 #define PM_CONTEXT_H
 
 #include "pm_lock.h"
+#include "pm_sources.h"
 #include "pm_util.h"
 
 typedef struct {
@@ -21,6 +22,9 @@ typedef struct {
     char portmaster_dir[PM_PATH_MAX];
     char ports_dir[PM_PATH_MAX];
     char port_images_dir[PM_PATH_MAX];
+    char source_id[32];
+    char preferred_install_source[32];
+    char effective_install_source[32];
     char lock_path[PM_PATH_MAX];
     char runtime_lock_path[PM_PATH_MAX];
     char armhf_lock_path[PM_PATH_MAX];
@@ -31,9 +35,13 @@ typedef struct {
     bool lock_loaded;
     bool runtime_lock_loaded;
     bool armhf_lock_loaded;
+    pm_source_list sources;
 } pm_context;
 
 int pm_context_init(pm_context *ctx, const char *argv0, char *err, size_t err_size);
 int pm_context_ensure_manager_dirs(const pm_context *ctx, char *err, size_t err_size);
+int pm_context_refresh_sources(pm_context *ctx, char *err, size_t err_size);
+int pm_context_for_source(const pm_context *base, const pm_source *source,
+                          pm_context *out, char *err, size_t err_size);
 
 #endif /* PM_CONTEXT_H */

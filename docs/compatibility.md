@@ -124,10 +124,13 @@ again after upstream PortMaster exits:
   available, to inventory `DT_NEEDED` libraries for app-local compatibility
 
 The scanner has two layers of speed control. The Leaf wrapper first checks a
-cheap top-level `Roms/PORTS` stamp and skips the scanner entirely when no port
-tree entry changed. When a scan is needed, `scan-and-fix-port-elfs.sh` uses
-`$USERDATA_PATH/portmaster/.leaf/armhf-scan.manifest` to skip unchanged files by
-size, mtime, and path. The manifest key includes the script's internal
+cheap top-level `Roms/PORTS` stamp for each configured and available source,
+then scans only sources whose tree changed. When a scan is needed,
+`scan-and-fix-port-elfs.sh` uses the source-specific
+`$USERDATA_PATH/portmaster/.leaf/armhf-scan.<source-id>.manifest` to skip
+unchanged files by size, mtime, and path. Keeping independent manifests prevents
+one SD source from invalidating the other source's cache. The manifest key
+includes the script's internal
 `RULESET_VERSION`, scan mode, compat availability, SDL fullscreen shim
 availability, and `ports_dir`, so changing those inputs naturally forces a cold
 scan. Manifest format v3 also records per-ELF SDL2 fullscreen tags, per-ELF
@@ -179,7 +182,7 @@ selects the active SD-managed PortMaster tree through `XDG_DATA_HOME` and
 quoted or unquoted `GAMEDIR=/$directory/ports/<game>` and
 `PORTDIR=/$directory/ports` assignments to prefer `HM_PORTS_DIR`, and the
 generated hook only overrides `directory` from the active `ROMS_PATH`/`SDCARD_PATH`
-when Jawaka's `/roms/ports` bind mount is not present. This keeps the runtime on
+when the launcher's `/roms/ports` bind mount is not present. This keeps the runtime on
 SD and avoids writing compatibility state to eMMC/rootfs.
 
 The generated hook also exposes `LEAF_PM_RETROARCH_BIN` and
@@ -263,7 +266,7 @@ for these older Godot runtimes with `Could not get EGL display`.
 
 For Gothic/Machismo launchers such as Mina the Hollower, the scanner patches a
 small runtime compatibility block that defaults `GOTHIC_BACKEND=gles` on
-Leaf/MLP1. The block does not depend on `CFW_NAME`, because direct Jawaka
+Leaf/MLP1. The block does not depend on `CFW_NAME`, because direct launcher
 launches and source-built local installs may not inherit the PortMaster GUI
 environment. It also forwards `GOTHIC_BACKEND` through the final `env` launcher
 so `sudo`-based setups do not scrub it.
@@ -304,7 +307,7 @@ On MLP1, Westonpack's Crusty SDL host path is direct DRM/KMSDRM, not a normal
 Leaf Weston surface. For this runtime family the hook therefore sets
 `CRUSTY_RESOLUTION` to `DISPLAY_WIDTH`x`DISPLAY_HEIGHT`, preloads
 `leaf-drm-rotate.so` through `WRAPPED_PRELOAD`, and uses `SDL_VIDEODRIVER=kmsdrm`
-when the packaged rotate shim is present. Unless Jawaka already marked the
+when the packaged rotate shim is present. Unless the launcher already marked the
 launch with `JAWAKA_DIRECT_DRM=1`, the hook temporarily stops host Weston while
 the port runs and restarts it on shell exit. This avoids the host-compositor
 flicker and makes Crusty see the landscape `960x720` mode while the shim rotates
@@ -464,7 +467,19 @@ therefore advertises `armhf` to HarbourMaster only when
 `$USERDATA_PATH/portmaster/compat/armhf/lib/ld-linux-armhf.so.3` exists, while
 keeping `primary_arch` as `aarch64`.
 
-Reports are written to:
+Source-specific reports and caches are written to:
+
+```text
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.primary.json
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.primary.tsv
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.primary.manifest
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.secondary_sd.json
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.secondary_sd.tsv
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.secondary_sd.manifest
+```
+
+The latest completed source scan is also mirrored to the legacy paths used by
+Doctor and support bundles:
 
 ```text
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.json
@@ -632,7 +647,7 @@ MLP1 manual launch probe on 2026-07-06 for Slime 3K Demake:
 | --- | --- | --- |
 | Godot 4.3 Westonpack | Slime 3K Demake | Direct ADB launch reached Godot's Wayland display path and remained running until the 12 second timeout after the hook intercepted `$ESUDO env $weston_dir/westonwrap.sh ...` and left the stock Mali EGL stack active. |
 
-After the post-exit scan, the manager asks Jawaka to run `scan-library` through
+After the post-exit scan, the manager asks the Leaf launcher to run `scan-library` through
 `jawaka-platformctl`. The request is best-effort so PortMaster remains usable
-when Jawaka is not running, but normal Leaf launches refresh the Ports list
+when the launcher is not running, but normal Leaf launches refresh the Ports list
 after installing or removing ports.

@@ -1,5 +1,7 @@
 #include "pm_context.h"
 
+#include "pm_preferences.h"
+
 #include <libgen.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -243,6 +245,14 @@ int pm_context_init(pm_context *ctx, const char *argv0, char *err, size_t err_si
     pm_join(ctx->portmaster_dir, sizeof(ctx->portmaster_dir), ctx->data_dir, "PortMaster");
     pm_join(ctx->ports_dir, sizeof(ctx->ports_dir), ctx->roms_path, "PORTS");
     pm_join(ctx->port_images_dir, sizeof(ctx->port_images_dir), ctx->images_path, "PORTS");
+    pm_copy(ctx->source_id, sizeof(ctx->source_id), "primary");
+    pm_copy(ctx->preferred_install_source,
+            sizeof(ctx->preferred_install_source), PM_INSTALL_SOURCE_PRIMARY);
+    pm_copy(ctx->effective_install_source,
+            sizeof(ctx->effective_install_source), PM_INSTALL_SOURCE_PRIMARY);
+    if (pm_context_refresh_sources(ctx, err, err_size) != 0) {
+        return -1;
+    }
     pm_join3(ctx->lock_path, sizeof(ctx->lock_path), ctx->pak_dir, "locks", "portmaster-gui-stable.lock.json");
     pm_join3(ctx->runtime_lock_path, sizeof(ctx->runtime_lock_path), ctx->pak_dir, "locks", "ui-runtime.lock.json");
     pm_join3(ctx->armhf_lock_path, sizeof(ctx->armhf_lock_path), ctx->pak_dir,
@@ -269,6 +279,46 @@ int pm_context_init(pm_context *ctx, const char *argv0, char *err, size_t err_si
                                                        sizeof(armhf_lock_err)) == 0;
     if (ctx->lock_loaded && !ctx->armhf_lock_loaded && err && err_size > 0) {
         snprintf(err, err_size, "armhf lock warning: %s", armhf_lock_err);
+    }
+    char preference_err[256];
+    if (pm_install_source_preference_load(ctx, preference_err,
+                                          sizeof(preference_err)) != 0) {
+        fprintf(stderr, "PortMaster preference warning: %s\n", preference_err);
+    }
+    return 0;
+}
+
+int pm_context_refresh_sources(pm_context *ctx, char *err, size_t err_size)
+{
+    if (!ctx) {
+        return -1;
+    }
+    return pm_sources_resolve(&ctx->sources, ctx->platform,
+                              ctx->sdcard_path, ctx->roms_path, ctx->images_path,
+                              err, err_size);
+}
+
+int pm_context_for_source(const pm_context *base, const pm_source *source,
+                          pm_context *out, char *err, size_t err_size)
+{
+    if (!base || !source || !out || !source->configured) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "invalid PortMaster source context");
+        }
+        return -1;
+    }
+    *out = *base;
+    if (pm_copy(out->source_id, sizeof(out->source_id), source->id) != 0 ||
+        pm_copy(out->sdcard_path, sizeof(out->sdcard_path), source->root) != 0 ||
+        pm_copy(out->roms_path, sizeof(out->roms_path), source->roms_path) != 0 ||
+        pm_copy(out->images_path, sizeof(out->images_path), source->images_path) != 0 ||
+        pm_copy(out->ports_dir, sizeof(out->ports_dir), source->ports_path) != 0 ||
+        pm_copy(out->port_images_dir, sizeof(out->port_images_dir),
+                source->port_images_path) != 0) {
+        if (err && err_size > 0) {
+            snprintf(err, err_size, "PortMaster source path is too long");
+        }
+        return -1;
     }
     return 0;
 }

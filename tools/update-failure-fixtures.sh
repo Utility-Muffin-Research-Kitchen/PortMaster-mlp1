@@ -112,6 +112,9 @@ update_log="$USERDATA/portmaster/.leaf/logs/update.log"
 
 echo "Installing locked PortMaster fixture"
 run_pm --install-portmaster >/dev/null
+echo "Verifying repeated repatches are idempotent"
+run_pm --repatch-portmaster >/dev/null
+run_pm --repatch-portmaster >/dev/null
 lower_installed_version
 printf 'live-marker\n' >"$USERDATA/portmaster/PortMaster/.leaf-fixture-marker"
 

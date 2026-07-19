@@ -437,6 +437,36 @@ static int apply_patch_records(const char *tree, const pm_patch_record *records,
                 continue;
             }
             free(content);
+        } else if (strcmp(records[i].name, "0009-leaf-multi-source-inventory.patch") == 0) {
+            char target[PM_PATH_MAX];
+            if (pm_join3(target, sizeof(target), tree,
+                         "pylibs/harbourmaster", "leaf_sources.py") != 0) {
+                snprintf(err, err_size, "leaf_sources.py path too long");
+                return -1;
+            }
+            char marker_err[128];
+            char *content = pm_read_text_file(target, 512 * 1024,
+                                              marker_err, sizeof(marker_err));
+            if (content && strstr(content, "LEAF_PM_SELECTED_SOURCE_ID")) {
+                free(content);
+                continue;
+            }
+            free(content);
+        } else if (strcmp(records[i].name, "0010-leaf-ignore-move-staging.patch") == 0) {
+            char target[PM_PATH_MAX];
+            if (pm_join3(target, sizeof(target), tree,
+                         "pylibs/harbourmaster", "harbour.py") != 0) {
+                snprintf(err, err_size, "harbour.py path too long");
+                return -1;
+            }
+            char marker_err[128];
+            char *content = pm_read_text_file(target, 2 * 1024 * 1024,
+                                              marker_err, sizeof(marker_err));
+            if (content && strstr(content, "leaf_reserved")) {
+                free(content);
+                continue;
+            }
+            free(content);
         }
 
         char patch_path[PM_PATH_MAX];
@@ -486,11 +516,18 @@ static int validate_patched_portmaster_tree(const char *tree, char *err, size_t 
     char control[PM_PATH_MAX];
     char device_info[PM_PATH_MAX];
     char hardware[PM_PATH_MAX];
+    char harbour[PM_PATH_MAX];
+    char leaf_sources[PM_PATH_MAX];
     if (pm_join(portmaster_sh, sizeof(portmaster_sh), tree, "PortMaster.sh") != 0 ||
         pm_join(pugwash, sizeof(pugwash), tree, "pugwash") != 0 ||
         pm_join(control, sizeof(control), tree, "control.txt") != 0 ||
         pm_join(device_info, sizeof(device_info), tree, "device_info.txt") != 0 ||
-        pm_join3(hardware, sizeof(hardware), tree, "pylibs/harbourmaster", "hardware.py") != 0) {
+        pm_join3(hardware, sizeof(hardware), tree,
+                 "pylibs/harbourmaster", "hardware.py") != 0 ||
+        pm_join3(harbour, sizeof(harbour), tree,
+                 "pylibs/harbourmaster", "harbour.py") != 0 ||
+        pm_join3(leaf_sources, sizeof(leaf_sources), tree,
+                 "pylibs/harbourmaster", "leaf_sources.py") != 0) {
         snprintf(err, err_size, "candidate validation path too long");
         return -1;
     }
@@ -515,10 +552,22 @@ static int validate_patched_portmaster_tree(const char *tree, char *err, size_t 
         snprintf(err, err_size, "candidate validation failed: missing harbourmaster hardware.py");
         return -1;
     }
+    if (!pm_file_exists(leaf_sources)) {
+        snprintf(err, err_size,
+                 "candidate validation failed: missing harbourmaster leaf_sources.py");
+        return -1;
+    }
+    if (!pm_file_exists(harbour)) {
+        snprintf(err, err_size,
+                 "candidate validation failed: missing harbourmaster harbour.py");
+        return -1;
+    }
 
     if (file_contains_required(portmaster_sh, "./pugwash $PORTMASTER_CMDS",
                                "PortMaster.sh", err, err_size) != 0 ||
         file_contains_required(pugwash, "LEAF_PM_DISABLE_SELF_UPDATE",
+                               "pugwash", err, err_size) != 0 ||
+        file_contains_required(pugwash, "leaf_ports_dir",
                                "pugwash", err, err_size) != 0 ||
         file_contains_required(control, "PORTMASTER_CONTROLFOLDER",
                                "control.txt", err, err_size) != 0 ||
@@ -531,7 +580,13 @@ static int validate_patched_portmaster_tree(const char *tree, char *err, size_t 
         file_contains_required(hardware, "leaf-mlp1",
                                "harbourmaster hardware.py", err, err_size) != 0 ||
         file_contains_required(hardware, "LEAF_PM_ARMHF_ROOT",
-                               "harbourmaster hardware.py", err, err_size) != 0) {
+                               "harbourmaster hardware.py", err, err_size) != 0 ||
+        file_contains_required(harbour, "leaf_reserved",
+                               "harbourmaster harbour.py", err, err_size) != 0 ||
+        file_contains_required(leaf_sources, "LEAF_PM_SELECTED_SOURCE_ID",
+                               "harbourmaster leaf_sources.py", err, err_size) != 0 ||
+        file_contains_required(leaf_sources, "leaf_source_id",
+                               "harbourmaster leaf_sources.py", err, err_size) != 0) {
         return -1;
     }
     return 0;

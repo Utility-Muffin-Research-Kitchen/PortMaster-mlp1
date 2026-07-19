@@ -4,10 +4,12 @@
 #include "pm_controller_layout.h"
 #include "pm_env_snapshot.h"
 #include "pm_installer.h"
+#include "pm_preferences.h"
 #include "pm_util.h"
 
 #include "cJSON.h"
 
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <stdint.h>
@@ -263,15 +265,152 @@ static bool pm_ports_tree_stamp(pm_context *ctx, uint64_t *out)
     return true;
 }
 
-static bool pm_port_scan_stamp_path(pm_context *ctx, char *out, size_t out_size)
+typedef struct {
+    char source_id[32];
+    bool available;
+    bool stamp_valid;
+    uint64_t stamp;
+} pm_source_tree_stamp;
+
+typedef struct {
+    pm_source_tree_stamp items[PM_MAX_SOURCES];
+    size_t count;
+} pm_source_tree_snapshot;
+
+static bool pm_source_id_is_safe(const char *source_id)
 {
-    return ctx && pm_join(out, out_size, ctx->leaf_dir, "port-tree.stamp") == 0;
+    if (!source_id || !source_id[0]) {
+        return false;
+    }
+    for (const unsigned char *p = (const unsigned char *)source_id; *p; p++) {
+        if (!isalnum(*p) && *p != '_' && *p != '-') {
+            return false;
+        }
+    }
+    return true;
 }
 
-static bool pm_read_port_scan_stamp(pm_context *ctx, uint64_t *out)
+static bool pm_source_artifact_path(pm_context *ctx,
+                                    const char *stem,
+                                    const char *source_id,
+                                    const char *extension,
+                                    char *out,
+                                    size_t out_size)
+{
+    char filename[128];
+    return ctx && stem && extension && pm_source_id_is_safe(source_id) &&
+           pm_format(filename, sizeof(filename), "%s.%s.%s",
+                     stem, source_id, extension) == 0 &&
+           pm_join(out, out_size, ctx->leaf_dir, filename) == 0;
+}
+
+static bool pm_capture_source_tree_snapshot(pm_context *ctx,
+                                            pm_source_tree_snapshot *out)
+{
+    if (!ctx || !out) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    for (size_t i = 0; i < ctx->sources.count; i++) {
+        const pm_source *source = &ctx->sources.items[i];
+        if (!source->configured || out->count >= PM_MAX_SOURCES) {
+            continue;
+        }
+        pm_source_tree_stamp *item = &out->items[out->count++];
+        if (pm_copy(item->source_id, sizeof(item->source_id), source->id) != 0) {
+            return false;
+        }
+        item->available = source->available;
+        if (!source->available) {
+            continue;
+        }
+        pm_context source_ctx;
+        char context_err[128];
+        if (pm_context_for_source(ctx, source, &source_ctx,
+                                  context_err, sizeof(context_err)) != 0) {
+            return false;
+        }
+        item->stamp_valid = pm_ports_tree_stamp(&source_ctx, &item->stamp);
+    }
+    return out->count > 0;
+}
+
+static const pm_source_tree_stamp *
+pm_snapshot_source(const pm_source_tree_snapshot *snapshot, const char *source_id)
+{
+    if (!snapshot || !source_id) {
+        return NULL;
+    }
+    for (size_t i = 0; i < snapshot->count; i++) {
+        if (strcmp(snapshot->items[i].source_id, source_id) == 0) {
+            return &snapshot->items[i];
+        }
+    }
+    return NULL;
+}
+
+static bool pm_snapshot_union_stamp(const pm_source_tree_snapshot *snapshot,
+                                    uint64_t *out)
+{
+    if (!snapshot || !out) {
+        return false;
+    }
+    uint64_t acc = 1469598103934665603ULL;
+    size_t available_count = 0;
+    for (size_t i = 0; i < snapshot->count; i++) {
+        const pm_source_tree_stamp *item = &snapshot->items[i];
+        if (!item->available) {
+            continue;
+        }
+        acc = pm_hash_bytes(acc, item->source_id, strlen(item->source_id));
+        acc = pm_hash_u64(acc, item->stamp_valid ? 1u : 0u);
+        acc = pm_hash_u64(acc, item->stamp);
+        available_count++;
+    }
+    *out = pm_hash_u64(acc, available_count);
+    return available_count > 0;
+}
+
+static bool pm_source_snapshots_equal(const pm_source_tree_snapshot *left,
+                                      const pm_source_tree_snapshot *right)
+{
+    if (!left || !right || left->count != right->count) {
+        return false;
+    }
+    for (size_t i = 0; i < left->count; i++) {
+        const pm_source_tree_stamp *a = &left->items[i];
+        const pm_source_tree_stamp *b =
+            pm_snapshot_source(right, a->source_id);
+        if (!b ||
+            a->available != b->available ||
+            a->stamp_valid != b->stamp_valid ||
+            (a->stamp_valid && a->stamp != b->stamp)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool pm_port_scan_stamp_path(pm_context *ctx,
+                                    const char *source_id,
+                                    char *out,
+                                    size_t out_size)
+{
+    if (source_id) {
+        return pm_source_artifact_path(ctx, "port-tree", source_id,
+                                       "stamp", out, out_size);
+    }
+    return ctx && pm_join(out, out_size, ctx->leaf_dir,
+                          "port-tree.stamp") == 0;
+}
+
+static bool pm_read_port_scan_stamp(pm_context *ctx,
+                                    const char *source_id,
+                                    uint64_t *out)
 {
     char path[PM_PATH_MAX];
-    if (!out || !pm_port_scan_stamp_path(ctx, path, sizeof(path))) {
+    if (!out ||
+        !pm_port_scan_stamp_path(ctx, source_id, path, sizeof(path))) {
         return false;
     }
 
@@ -289,11 +428,13 @@ static bool pm_read_port_scan_stamp(pm_context *ctx, uint64_t *out)
     return true;
 }
 
-static void pm_write_port_scan_stamp(pm_context *ctx, uint64_t stamp)
+static void pm_write_port_scan_stamp(pm_context *ctx,
+                                     const char *source_id,
+                                     uint64_t stamp)
 {
     char path[PM_PATH_MAX];
     char tmp[PM_PATH_MAX];
-    if (!pm_port_scan_stamp_path(ctx, path, sizeof(path)) ||
+    if (!pm_port_scan_stamp_path(ctx, source_id, path, sizeof(path)) ||
         pm_format(tmp, sizeof(tmp), "%s.tmp", path) != 0) {
         return;
     }
@@ -310,14 +451,6 @@ static void pm_write_port_scan_stamp(pm_context *ctx, uint64_t stamp)
     if (rename(tmp, path) != 0) {
         unlink(tmp);
     }
-}
-
-static bool pm_armhf_scan_report_exists(pm_context *ctx)
-{
-    char path[PM_PATH_MAX];
-    return ctx &&
-           pm_join(path, sizeof(path), ctx->leaf_dir, "armhf-scan.json") == 0 &&
-           pm_file_exists(path);
 }
 
 static bool pm_text_file_contains(const char *path, const char *needle, size_t max_bytes)
@@ -338,13 +471,14 @@ static bool pm_text_file_contains(const char *path, const char *needle, size_t m
 
 static bool pm_armhf_scan_artifacts_match_context(pm_context *ctx)
 {
-    if (!ctx) {
+    if (!ctx || !pm_source_id_is_safe(ctx->source_id)) {
         return false;
     }
 
     char scan_path[PM_PATH_MAX];
     char hook_path[PM_PATH_MAX];
-    if (pm_join(scan_path, sizeof(scan_path), ctx->leaf_dir, "armhf-scan.json") != 0 ||
+    if (!pm_source_artifact_path(ctx, "armhf-scan", ctx->source_id,
+                                 "json", scan_path, sizeof(scan_path)) ||
         pm_join(hook_path, sizeof(hook_path), ctx->portmaster_dir, "leaf-armhf-env.sh") != 0) {
         return false;
     }
@@ -357,10 +491,35 @@ static bool pm_armhf_scan_artifacts_match_context(pm_context *ctx)
 bool pm_refresh_armhf_port_wrappers(pm_context *ctx)
 {
     char script[PM_PATH_MAX];
+    char report_tsv[PM_PATH_MAX];
+    char report_json[PM_PATH_MAX];
+    char manifest[PM_PATH_MAX];
+    char latest_tsv[PM_PATH_MAX];
+    char latest_json[PM_PATH_MAX];
+    char latest_manifest[PM_PATH_MAX];
     if (!ctx ||
+        !pm_source_id_is_safe(ctx->source_id) ||
         pm_join3(script, sizeof(script), ctx->pak_dir,
                  "scripts", "scan-and-fix-port-elfs.sh") != 0 ||
+        !pm_source_artifact_path(ctx, "armhf-scan", ctx->source_id,
+                                 "tsv", report_tsv, sizeof(report_tsv)) ||
+        !pm_source_artifact_path(ctx, "armhf-scan", ctx->source_id,
+                                 "json", report_json, sizeof(report_json)) ||
+        !pm_source_artifact_path(ctx, "armhf-scan", ctx->source_id,
+                                 "manifest", manifest, sizeof(manifest)) ||
+        pm_join(latest_tsv, sizeof(latest_tsv), ctx->leaf_dir,
+                "armhf-scan.tsv") != 0 ||
+        pm_join(latest_json, sizeof(latest_json), ctx->leaf_dir,
+                "armhf-scan.json") != 0 ||
+        pm_join(latest_manifest, sizeof(latest_manifest), ctx->leaf_dir,
+                "armhf-scan.manifest") != 0 ||
         !pm_file_exists(script)) {
+        return false;
+    }
+
+    char mkdir_err[128];
+    if (pm_mkdir_p(ctx->ports_dir, mkdir_err, sizeof(mkdir_err)) != 0) {
+        fprintf(stderr, "PortMaster armhf scan warning: %s\n", mkdir_err);
         return false;
     }
 
@@ -372,6 +531,12 @@ bool pm_refresh_armhf_port_wrappers(pm_context *ctx)
         { "IMAGES_PATH", ctx->images_path },
         { "PORTMASTER_MLP1_DATA_DIR", ctx->data_dir },
         { "PORTMASTER_CONTROLFOLDER", ctx->portmaster_dir },
+        { "LEAF_PM_ARMHF_SCAN_TSV", report_tsv },
+        { "LEAF_PM_ARMHF_SCAN_JSON", report_json },
+        { "LEAF_PM_ARMHF_SCAN_MANIFEST", manifest },
+        { "LEAF_PM_ARMHF_SCAN_LATEST_TSV", latest_tsv },
+        { "LEAF_PM_ARMHF_SCAN_LATEST_JSON", latest_json },
+        { "LEAF_PM_ARMHF_SCAN_LATEST_MANIFEST", latest_manifest },
         { NULL, NULL },
     };
     char *argv[] = { "bash", script, ctx->ports_dir, NULL };
@@ -383,9 +548,148 @@ bool pm_refresh_armhf_port_wrappers(pm_context *ctx)
     }
     uint64_t stamp = 0;
     if (pm_ports_tree_stamp(ctx, &stamp)) {
-        pm_write_port_scan_stamp(ctx, stamp);
+        pm_write_port_scan_stamp(ctx, ctx->source_id, stamp);
     }
     return true;
+}
+
+static bool pm_refresh_armhf_source_mask(pm_context *ctx,
+                                         unsigned int source_mask,
+                                         const char *selected_source_id,
+                                         size_t *scanned_count)
+{
+    bool all_ok = true;
+    size_t scanned = 0;
+    if (!ctx) {
+        return false;
+    }
+    for (int pass = 0; pass < 2; pass++) {
+        for (size_t i = 0; i < ctx->sources.count; i++) {
+            const pm_source *source = &ctx->sources.items[i];
+            bool selected = selected_source_id &&
+                            strcmp(source->id, selected_source_id) == 0;
+            if (!(source_mask & (1u << i)) ||
+                !source->configured || !source->available ||
+                (pass == 0 && selected) || (pass == 1 && !selected)) {
+                continue;
+            }
+            pm_context source_ctx;
+            char context_err[128];
+            if (pm_context_for_source(ctx, source, &source_ctx,
+                                      context_err, sizeof(context_err)) != 0 ||
+                !pm_refresh_armhf_port_wrappers(&source_ctx)) {
+                all_ok = false;
+                continue;
+            }
+            scanned++;
+        }
+    }
+    if (scanned_count) {
+        *scanned_count = scanned;
+    }
+    return all_ok;
+}
+
+static unsigned int
+pm_stale_armhf_source_mask(pm_context *ctx,
+                           const pm_source_tree_snapshot *snapshot,
+                           bool force)
+{
+    unsigned int mask = 0;
+    if (!ctx || !snapshot) {
+        return 0;
+    }
+    for (size_t i = 0; i < ctx->sources.count; i++) {
+        const pm_source *source = &ctx->sources.items[i];
+        const pm_source_tree_stamp *current =
+            pm_snapshot_source(snapshot, source->id);
+        if (!source->configured || !source->available) {
+            continue;
+        }
+        if (!current) {
+            mask |= 1u << i;
+            continue;
+        }
+        pm_context source_ctx;
+        char context_err[128];
+        uint64_t stored_stamp = 0;
+        bool context_ok =
+            pm_context_for_source(ctx, source, &source_ctx,
+                                  context_err, sizeof(context_err)) == 0;
+        bool stored_ok = context_ok &&
+                         pm_read_port_scan_stamp(&source_ctx, source->id,
+                                                 &stored_stamp);
+        bool artifacts_ok = context_ok &&
+                            pm_armhf_scan_artifacts_match_context(&source_ctx);
+        if (force || !current->stamp_valid || !stored_ok ||
+            current->stamp != stored_stamp || !artifacts_ok) {
+            mask |= 1u << i;
+        }
+    }
+    return mask;
+}
+
+static unsigned int
+pm_changed_armhf_source_mask(pm_context *ctx,
+                             const pm_source_tree_snapshot *before,
+                             const pm_source_tree_snapshot *after)
+{
+    unsigned int mask = 0;
+    if (!ctx || !after) {
+        return 0;
+    }
+    for (size_t i = 0; i < ctx->sources.count; i++) {
+        const pm_source *source = &ctx->sources.items[i];
+        const pm_source_tree_stamp *old =
+            pm_snapshot_source(before, source->id);
+        const pm_source_tree_stamp *current =
+            pm_snapshot_source(after, source->id);
+        if (!source->configured || !source->available || !current) {
+            continue;
+        }
+        if (!old || !old->available ||
+            old->stamp_valid != current->stamp_valid ||
+            (current->stamp_valid && old->stamp != current->stamp)) {
+            mask |= 1u << i;
+        }
+    }
+    return mask;
+}
+
+static bool pm_write_union_port_scan_stamp(pm_context *ctx,
+                                           const pm_source_tree_snapshot *snapshot)
+{
+    uint64_t union_stamp = 0;
+    if (!pm_snapshot_union_stamp(snapshot, &union_stamp)) {
+        return false;
+    }
+    pm_write_port_scan_stamp(ctx, NULL, union_stamp);
+    return true;
+}
+
+int pm_refresh_stale_armhf_port_wrappers(pm_context *ctx,
+                                         const char *selected_source_id,
+                                         bool force,
+                                         size_t *scanned_count)
+{
+    pm_source_tree_snapshot snapshot;
+    if (scanned_count) {
+        *scanned_count = 0;
+    }
+    if (!pm_capture_source_tree_snapshot(ctx, &snapshot)) {
+        return -1;
+    }
+    unsigned int source_mask =
+        pm_stale_armhf_source_mask(ctx, &snapshot, force);
+    if (!pm_refresh_armhf_source_mask(ctx, source_mask,
+                                      selected_source_id, scanned_count)) {
+        return -1;
+    }
+    if (!pm_capture_source_tree_snapshot(ctx, &snapshot) ||
+        !pm_write_union_port_scan_stamp(ctx, &snapshot)) {
+        return -1;
+    }
+    return 0;
 }
 
 static bool pm_resolve_jawaka_platformctl(pm_context *ctx, char *out, size_t out_size)
@@ -452,7 +756,7 @@ void pm_request_jawaka_library_rescan(pm_context *ctx)
     };
     char scan_err[256];
     if (pm_run_argv(argv, scan_err, sizeof(scan_err)) != 0) {
-        fprintf(stderr, "Jawaka library rescan warning: %s\n", scan_err);
+        fprintf(stderr, "Leaf launcher library rescan warning: %s\n", scan_err);
     }
 }
 
@@ -465,17 +769,127 @@ static void pm_launch_status(pm_launch_status_fn status_fn,
     }
 }
 
-int pm_launch_portmaster_with_status(pm_context *ctx,
-                                     pm_launch_status_fn status_fn,
-                                     void *status_userdata,
-                                     char *err,
-                                     size_t err_size)
+static int pm_append_source_field(char *out, size_t out_size,
+                                  const char *value)
+{
+    size_t used = strlen(out);
+    int written = snprintf(out + used, out_size - used, "%s%s",
+                           used ? ":" : "", value ? value : "");
+    return written >= 0 && (size_t)written < out_size - used ? 0 : -1;
+}
+
+int pm_launch_portmaster_from_source_with_status(pm_context *ctx,
+                                                 const char *session_source_id,
+                                                 pm_launch_status_fn status_fn,
+                                                 void *status_userdata,
+                                                 char *err,
+                                                 size_t err_size)
 {
     if (err && err_size > 0) {
         err[0] = '\0';
     }
     if (!ctx) {
         snprintf(err, err_size, "missing PortMaster context");
+        return -1;
+    }
+    pm_context *base_ctx = ctx;
+    const pm_source *selected_source = NULL;
+    if (pm_install_source_resolve(base_ctx, session_source_id,
+                                  &selected_source, err, err_size) != 0) {
+        return -1;
+    }
+    char selected_source_id[32];
+    if (pm_copy(selected_source_id, sizeof(selected_source_id),
+                selected_source->id) != 0) {
+        snprintf(err, err_size, "selected source ID is too long");
+        return -1;
+    }
+    const pm_source *primary_source =
+        pm_sources_by_id(&base_ctx->sources, "primary");
+    if (!primary_source || !primary_source->available) {
+        snprintf(err, err_size, "Primary SD source is no longer available");
+        return -1;
+    }
+    pm_context launch_ctx;
+    if (pm_context_for_source(base_ctx, selected_source, &launch_ctx,
+                              err, err_size) != 0) {
+        return -1;
+    }
+    ctx = &launch_ctx;
+
+    char read_ports[PM_PATH_MAX * PM_MAX_SOURCES + PM_MAX_SOURCES];
+    char read_scripts[sizeof(read_ports)];
+    char read_ids[128];
+    char read_roots[PM_PATH_MAX * PM_MAX_SOURCES + PM_MAX_SOURCES];
+    char read_mount_ids[128];
+    char read_devices[128];
+    char read_st_devs[128];
+    char read_ports_st_devs[128];
+    char read_fingerprints[512];
+    read_ports[0] = read_scripts[0] = read_ids[0] = read_roots[0] = '\0';
+    read_mount_ids[0] = read_devices[0] = read_st_devs[0] = '\0';
+    read_ports_st_devs[0] = '\0';
+    read_fingerprints[0] = '\0';
+    for (size_t i = 0; i < base_ctx->sources.count; i++) {
+        const pm_source *source = &base_ctx->sources.items[i];
+        if (!source->configured || !source->available) {
+            continue;
+        }
+        char mount_id[32];
+        char st_dev[32];
+        char ports_st_dev[32];
+        char device[32];
+        char fingerprint[128];
+        snprintf(mount_id, sizeof(mount_id), "%lu", source->mount_id);
+        snprintf(st_dev, sizeof(st_dev), "%llu",
+                 (unsigned long long)source->st_dev);
+        snprintf(ports_st_dev, sizeof(ports_st_dev), "%llu",
+                 (unsigned long long)source->roms_st_dev);
+        (void)pm_copy(device, sizeof(device), source->device_id);
+        if (!device[0]) {
+            (void)pm_copy(device, sizeof(device), "-");
+        }
+        char *device_separator = strchr(device, ':');
+        if (device_separator) {
+            *device_separator = ',';
+        }
+        (void)pm_copy(fingerprint, sizeof(fingerprint),
+                      source->filesystem_fingerprint);
+        if (!fingerprint[0]) {
+            (void)pm_copy(fingerprint, sizeof(fingerprint), "-");
+        }
+        for (char *p = fingerprint; *p; p++) {
+            if (*p == ':') {
+                *p = ',';
+            }
+        }
+        if (pm_append_source_field(read_ports, sizeof(read_ports),
+                                   source->ports_path) != 0 ||
+            pm_append_source_field(read_scripts, sizeof(read_scripts),
+                                   source->ports_path) != 0 ||
+            pm_append_source_field(read_ids, sizeof(read_ids), source->id) != 0 ||
+            pm_append_source_field(read_roots, sizeof(read_roots),
+                                   source->root) != 0 ||
+            pm_append_source_field(read_mount_ids, sizeof(read_mount_ids),
+                                   mount_id) != 0 ||
+            pm_append_source_field(read_devices, sizeof(read_devices),
+                                   device) != 0 ||
+            pm_append_source_field(read_st_devs, sizeof(read_st_devs),
+                                   st_dev) != 0 ||
+            pm_append_source_field(read_ports_st_devs,
+                                   sizeof(read_ports_st_devs),
+                                   ports_st_dev) != 0 ||
+            pm_append_source_field(read_fingerprints,
+                                   sizeof(read_fingerprints),
+                                   fingerprint) != 0) {
+            snprintf(err, err_size, "multi-source launch environment is too long");
+            return -1;
+        }
+    }
+    char last_known_inventory[PM_PATH_MAX];
+    if (pm_join(last_known_inventory, sizeof(last_known_inventory),
+                base_ctx->leaf_dir, "installed-inventory.json") != 0) {
+        snprintf(err, err_size, "inventory path is too long");
         return -1;
     }
 
@@ -493,21 +907,24 @@ int pm_launch_portmaster_with_status(pm_context *ctx,
         return -1;
     }
 
-    uint64_t ports_stamp_before = 0;
-    uint64_t stored_ports_stamp = 0;
-    bool have_ports_stamp_before = pm_ports_tree_stamp(ctx, &ports_stamp_before);
-    bool have_stored_ports_stamp = pm_read_port_scan_stamp(ctx, &stored_ports_stamp);
-    bool scan_artifacts_match_context = pm_armhf_scan_artifacts_match_context(ctx);
+    pm_source_tree_snapshot ports_before;
+    bool have_ports_before =
+        pm_capture_source_tree_snapshot(base_ctx, &ports_before);
+    bool force_scan = pm_env_truthy("LEAF_PM_SCAN_BEFORE_LAUNCH");
+    unsigned int stale_source_mask =
+        pm_stale_armhf_source_mask(base_ctx, &ports_before, force_scan);
     bool scanned_before_launch = false;
-    if (pm_env_truthy("LEAF_PM_SCAN_BEFORE_LAUNCH") ||
-        !pm_armhf_scan_report_exists(ctx) ||
-        !scan_artifacts_match_context ||
-        !have_ports_stamp_before ||
-        !have_stored_ports_stamp ||
-        ports_stamp_before != stored_ports_stamp) {
+    if (!have_ports_before || stale_source_mask != 0) {
         pm_launch_status(status_fn, status_userdata, "Scanning ports...");
-        scanned_before_launch = pm_refresh_armhf_port_wrappers(ctx);
-        have_ports_stamp_before = pm_ports_tree_stamp(ctx, &ports_stamp_before);
+        size_t scanned_count = 0;
+        bool scans_ok = pm_refresh_armhf_source_mask(
+            base_ctx, stale_source_mask, selected_source_id, &scanned_count);
+        scanned_before_launch = scanned_count > 0;
+        have_ports_before =
+            pm_capture_source_tree_snapshot(base_ctx, &ports_before);
+        if (scans_ok && have_ports_before) {
+            (void)pm_write_union_port_scan_stamp(base_ctx, &ports_before);
+        }
     }
 
     pm_launch_status(status_fn, status_userdata, "Preparing runtime...");
@@ -614,6 +1031,17 @@ int pm_launch_portmaster_with_status(pm_context *ctx,
         { "LEAF_PM_NATIVE_COMPAT_LIB_DIR", has_compat_libs ? compat_lib_dir : "" },
         { "HM_PORTS_DIR", ctx->ports_dir },
         { "HM_SCRIPTS_DIR", ctx->ports_dir },
+        { "HM_PORTS_READ_DIRS", read_ports },
+        { "HM_SCRIPTS_READ_DIRS", read_scripts },
+        { "HM_PORTS_READ_SOURCE_IDS", read_ids },
+        { "LEAF_PM_SOURCE_ROOTS", read_roots },
+        { "LEAF_PM_SOURCE_MOUNT_IDS", read_mount_ids },
+        { "LEAF_PM_SOURCE_DEVICES", read_devices },
+        { "LEAF_PM_SOURCE_ST_DEVS", read_st_devs },
+        { "LEAF_PM_SOURCE_PORTS_ST_DEVS", read_ports_st_devs },
+        { "LEAF_PM_SOURCE_FINGERPRINTS", read_fingerprints },
+        { "LEAF_PM_SELECTED_SOURCE_ID", selected_source_id },
+        { "LEAF_PM_LAST_KNOWN_INVENTORY", last_known_inventory },
         { "PORTMASTER_CONTROLFOLDER", ctx->portmaster_dir },
         { "PORTMASTER_LEAF_DEVICE_INFO", "1" },
         { "LEAF_PM_DISABLE_SELF_UPDATE", allow_upstream_self_update ? "0" : "1" },
@@ -657,6 +1085,17 @@ int pm_launch_portmaster_with_status(pm_context *ctx,
         { "HM_TOOLS_DIR", ctx->data_dir, "manager" },
         { "HM_PORTS_DIR", ctx->ports_dir, "manager" },
         { "HM_SCRIPTS_DIR", ctx->ports_dir, "manager" },
+        { "HM_PORTS_READ_DIRS", read_ports, "manager" },
+        { "HM_SCRIPTS_READ_DIRS", read_scripts, "manager" },
+        { "HM_PORTS_READ_SOURCE_IDS", read_ids, "manager" },
+        { "LEAF_PM_SOURCE_ROOTS", read_roots, "manager" },
+        { "LEAF_PM_SOURCE_MOUNT_IDS", read_mount_ids, "manager" },
+        { "LEAF_PM_SOURCE_DEVICES", read_devices, "manager" },
+        { "LEAF_PM_SOURCE_ST_DEVS", read_st_devs, "manager" },
+        { "LEAF_PM_SOURCE_PORTS_ST_DEVS", read_ports_st_devs, "manager" },
+        { "LEAF_PM_SOURCE_FINGERPRINTS", read_fingerprints, "manager" },
+        { "LEAF_PM_SELECTED_SOURCE_ID", selected_source_id, "manager" },
+        { "LEAF_PM_LAST_KNOWN_INVENTORY", last_known_inventory, "manager" },
         { "PORTMASTER_CONTROLFOLDER", ctx->portmaster_dir, "manager" },
         { "PATH", path_env, "shim" },
         { "LD_LIBRARY_PATH", ld_env, "shim" },
@@ -712,31 +1151,55 @@ int pm_launch_portmaster_with_status(pm_context *ctx,
                 repair_err[0] ? repair_err : "unknown error");
     }
 
-    uint64_t ports_stamp_after = 0;
-    bool have_ports_stamp_after = pm_ports_tree_stamp(ctx, &ports_stamp_after);
-    bool ports_changed_during_session = !have_ports_stamp_before ||
-                                        !have_ports_stamp_after ||
-                                        ports_stamp_before != ports_stamp_after;
-    if (ports_changed_during_session && pm_refresh_armhf_port_wrappers(ctx)) {
-        have_ports_stamp_after = pm_ports_tree_stamp(ctx, &ports_stamp_after);
-        if (have_ports_stamp_after) {
-            pm_write_port_scan_stamp(ctx, ports_stamp_after);
+    char refresh_sources_err[256];
+    if (pm_context_refresh_sources(base_ctx, refresh_sources_err,
+                                   sizeof(refresh_sources_err)) != 0) {
+        fprintf(stderr, "PortMaster source refresh warning: %s\n",
+                refresh_sources_err);
+    }
+    pm_source_tree_snapshot ports_after;
+    bool have_ports_after =
+        pm_capture_source_tree_snapshot(base_ctx, &ports_after);
+    bool ports_changed_during_session =
+        !have_ports_before || !have_ports_after ||
+        !pm_source_snapshots_equal(&ports_before, &ports_after);
+    if (ports_changed_during_session && have_ports_after) {
+        unsigned int changed_source_mask =
+            pm_changed_armhf_source_mask(base_ctx, &ports_before, &ports_after);
+        size_t scanned_count = 0;
+        bool scans_ok = pm_refresh_armhf_source_mask(
+            base_ctx, changed_source_mask, selected_source_id, &scanned_count);
+        if (scans_ok &&
+            pm_capture_source_tree_snapshot(base_ctx, &ports_after)) {
+            (void)pm_write_union_port_scan_stamp(base_ctx, &ports_after);
         }
     }
     (void)pm_controller_layout_sync_hook(ctx, NULL, 0);
     if (scanned_before_launch || ports_changed_during_session) {
         pm_artwork_sync_result art = {0};
         char art_err[512];
-        if (pm_artwork_sync(ctx, &art, art_err, sizeof(art_err)) != 0) {
+        if (pm_artwork_sync(base_ctx, &art, art_err, sizeof(art_err)) != 0) {
             fprintf(stderr, "PortMaster artwork sync warning: %s\n", art_err);
         } else if (art.failed > 0) {
             fprintf(stderr,
-                    "PortMaster artwork sync completed with warnings: scanned=%d synced=%d skipped=%d missing=%d failed=%d\n",
-                    art.scanned, art.synced, art.skipped_existing, art.missing_source, art.failed);
+                    "PortMaster artwork sync completed with warnings: scanned=%d synced=%d "
+                    "skipped=%d preserved_custom=%d missing=%d failed=%d\n",
+                    art.scanned, art.synced, art.skipped_existing,
+                    art.preserved_custom, art.missing_source, art.failed);
         }
         pm_request_jawaka_library_rescan(ctx);
     }
     return rc;
+}
+
+int pm_launch_portmaster_with_status(pm_context *ctx,
+                                     pm_launch_status_fn status_fn,
+                                     void *status_userdata,
+                                     char *err,
+                                     size_t err_size)
+{
+    return pm_launch_portmaster_from_source_with_status(
+        ctx, NULL, status_fn, status_userdata, err, err_size);
 }
 
 int pm_launch_portmaster(pm_context *ctx, char *err, size_t err_size)

@@ -1,0 +1,40 @@
+--- pylibs/harbourmaster/harbour.py
++++ pylibs/harbourmaster/harbour.py
+@@ -700,7 +700,14 @@
+         """
+         Find all installed ports, because ports can be installed by zips we need to recheck every time.
+         """
+-        port_files = list(self.ports_dir.glob('*/*.port.json')) + list(self.ports_dir.glob('*/port.json'))
++        leaf_reserved = (
++            '.leaf-portmaster-move-',
++            '.leaf-portmaster-quarantine-',
++        )
++        port_files = [
++            item for item in
++            list(self.ports_dir.glob('*/*.port.json')) + list(self.ports_dir.glob('*/port.json'))
++            if not item.relative_to(self.ports_dir).parts[0].startswith(leaf_reserved)]
+         port_files.sort()
+ 
+         self.installed_ports = {}
+@@ -786,7 +793,10 @@
+ 
+         if changes:
+             # Reload the port_files list.
+-            port_files = list(self.ports_dir.glob('*/*.port.json')) + list(self.ports_dir.glob('*/port.json'))
++            port_files = [
++                item for item in
++                list(self.ports_dir.glob('*/*.port.json')) + list(self.ports_dir.glob('*/port.json'))
++                if not item.relative_to(self.ports_dir).parts[0].startswith(leaf_reserved)]
+ 
+ 
+         ## Phase 1: Load all the known ports with port.json files
+@@ -842,6 +852,9 @@
+ 
+         ## Phase 2: Check all files
+         for file_item in self._iter_ports_dir():
++            if file_item.name.startswith(leaf_reserved):
++                continue
++
+             ## Skip these
+             if file_item.name.lower() in (
+                     'gamelist.xml',

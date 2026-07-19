@@ -18,6 +18,11 @@ Current scope:
 
 ```sh
 make native
+make source-fixtures
+make preference-fixtures
+make multi-source-fixtures
+make artwork-fixtures
+make move-fixtures
 make package-platform PLATFORM=mlp1
 make dist-pakrat
 ```
@@ -52,7 +57,7 @@ build/local-pakrat-feed
 ```
 
 `make pakrat-local-smoke` serves that feed on a temporary localhost port, asks
-Jawaka's Pak Rat helper to install `org.umrk.portmaster` into a temp SD root,
+the Leaf launcher's Pak Rat helper to install `org.umrk.portmaster` into a temp SD root,
 and verifies the installed pak. When the generated UI runtime artifact exists,
 the staged test package's runtime lock is rewritten to the local feed too.
 `make update-failure-fixtures` exercises the manager-owned GUI update failure
@@ -74,15 +79,27 @@ The on-device manager is state-driven:
 - `Install PortMaster` is shown only before the managed upstream GUI exists.
   That action performs the full user setup: upstream PortMaster install,
   managed UI runtime install when needed, Leaf patches, compatibility assets,
-  artwork sync, and Jawaka rescan.
+  artwork sync, and launcher rescan.
 - `Repair PortMaster` is shown once PortMaster is installed. It is the recovery
   path for missing runtime, stale/missing manifest, missing Leaf patches, or
   compatibility asset drift.
 - `Update PortMaster` appears only when the manager has found a newer compatible
   stable GUI release.
 - `Controller Layout` remains a normal user setting.
+- `Default Install Card` opens a two-row source picker. Primary and Secondary
+  remain visible; an unavailable card is disabled with its mount reason.
+  The saved logical id controls only genuinely new installs.
+- `Manage Ports` shows `Move packages` and lists authoritative installed packages across both available
+  cards, including every launcher owned by a multi-launcher package. Selecting
+  a safe package offers the other card as its destination. Manual launchers,
+  shared ownership, incomplete/unsafe metadata, duplicate packages, and
+  case-folded destination collisions remain visible but cannot be moved.
 - `Troubleshooting` contains the detailed health check, manual update check,
-  logs, and paths.
+  artwork refresh, pending-move recovery, logs, and paths. Managed refresh
+  updates only wrapper-owned
+  output whose digest still matches the provenance manifest. The separately
+  confirmed Replace All action can overwrite untracked or user-modified
+  artwork.
 
 Game runtimes and armhf compatibility are not main-menu choices. Upstream
 PortMaster manages game runtimes from inside its GUI; Leaf's armhf, SDL,
@@ -99,6 +116,34 @@ $ROMS_PATH/PORTS
 $IMAGES_PATH/PORTS
 ```
 
+On MLP1 it also resolves the aligned `SDCARD_PATHS`, `ROMS_PATHS`, and
+`IMAGES_PATHS` lists into the logical `primary` and `secondary_sd` slots.
+Configured-but-unmounted Secondary remains identifiable but is never scanned:
+Linux availability requires an exact `/proc/self/mountinfo` mountpoint match,
+not merely the stock mountpoint directory. Source state is re-resolved before
+manager launch and each artwork action.
+
+The wrapper exports the selected source as `HM_PORTS_DIR`/`HM_SCRIPTS_DIR` and
+all available sources as `HM_PORTS_READ_DIRS`/`HM_SCRIPTS_READ_DIRS`.
+The pinned HarbourMaster overlay merges that inventory and tags each installed
+record with its owning logical source. New installs use the selected source;
+updates and uninstalls rebind to the existing package's owner. Duplicate
+packages are conflicts, and last-known records from an unavailable card block
+accidental duplicate installs. Each mutation rechecks the source mount,
+device, content-filesystem identity, and volume fingerprint captured at
+manager launch.
+
+Generated launcher artwork provenance is stored beside the output:
+
+```text
+$IMAGES_PATH/PORTS/.portmaster-artwork.json
+```
+
+The resolver associates each launcher with its installed HarbourMaster
+package, prefers that launcher's `gameinfo.xml` cover mapping, and uses the
+shared `images_pm` screenshot cache only as a fallback. It rejects unsafe,
+ambiguous, symlinked, or package-external artwork paths.
+
 Managed PortMaster state lives under:
 
 ```text
@@ -106,6 +151,44 @@ $USERDATA_PATH/portmaster/PortMaster
 $USERDATA_PATH/portmaster/runtime
 $USERDATA_PATH/portmaster/compat
 $USERDATA_PATH/portmaster/.leaf
+```
+
+The Default Install Card preference is stored in
+`$USERDATA_PATH/portmaster/.leaf/preferences.json`; the advisory union
+inventory is stored beside it as `installed-inventory.json`. Both remain on
+Primary. If saved Secondary is unavailable, launch asks whether to use Primary
+for that session and never rewrites the preference.
+
+Cross-card package moves keep their durable state under:
+
+```text
+$USERDATA_PATH/portmaster/.leaf/moves/<operation_id>.json
+```
+
+The move unit is the complete HarbourMaster package, not one launcher. The
+manager capability-probes the launcher, acquires its suspend inhibitor, revalidates
+both filesystem identities, rejects symlinks/special files and FAT
+case-collisions, checks per-filesystem free space, copies to hidden adjacent
+staging, and reads every file back through SHA-256. It then reserves and
+atomically relocates every launcher row through `relocate-games-v1`, publishes
+data/artwork before launcher scripts, quarantines the complete source, and
+waits for the launcher's reconciliation scan before deleting quarantine or the
+journal. An interrupted committed move rolls forward on startup or through
+`Troubleshooting > Recover Package Moves`; an unavailable or replaced card
+leaves the journal pending without deleting either side.
+
+Only package-owned `Roms/PORTS` content, launcher artwork, and the matching
+artwork-provenance entries move. PortMaster control data, downloads, runtimes,
+saves/configuration, the launcher database/socket, and Leaf system payloads stay
+Primary-owned.
+
+Diagnostic CLI equivalents are:
+
+```sh
+portmaster-mlp1 --ports-text
+portmaster-mlp1 --move-capability
+portmaster-mlp1 --move-port primary <package-slug> secondary_sd
+portmaster-mlp1 --recover-port-moves
 ```
 
 The manager also stores the global controller-layout preference there. Nintendo
@@ -147,7 +230,7 @@ On launch it sources:
 $SDCARD_PATH/.system/leaf/platforms/$PLATFORM/launcher/env.sh
 ```
 
-when present. `SDCARD_PATH` may be supplied by Leaf/Jawaka, inferred from the
+when present. `SDCARD_PATH` may be supplied by the Leaf launcher, inferred from the
 pak's own `Apps/<platform>/PortMaster.pak` location, or resolved from a single
 Leaf-marked SD mount. If the SD root cannot be resolved unambiguously, launch
 fails instead of guessing a mount path.
@@ -169,6 +252,12 @@ LEAF_PM_DOCTOR_LOOP_STRESS=1 ./launch.sh --doctor-cfw-text
 ./launch.sh --install-armhf-compat
 ./launch.sh --install-runtime-archive /path/to/portmaster-runtime.7z
 ./launch.sh --launch-portmaster
+./launch.sh --install-source
+./launch.sh --set-install-source primary
+./launch.sh --set-install-source secondary_sd
+./launch.sh --sync-port-artwork
+./launch.sh --refresh-port-artwork
+./launch.sh --replace-port-artwork
 ```
 
 `--ui-state-text` prints the same top-level row model used by the GUI. It is
@@ -225,7 +314,7 @@ upstream path.
 
 Before promotion, the staged tree is structurally validated for the expected
 Leaf markers in `PortMaster.sh`, `pugwash`, `control.txt`, `device_info.txt`,
-and HarbourMaster `hardware.py`.
+HarbourMaster `hardware.py`, and the Leaf union-inventory overlay.
 
 Manager-owned update state lives at:
 
@@ -350,7 +439,9 @@ pack includes the upstream Debian copyright file under `licenses/mali/`; that
 file contains the Arm Mali userspace driver EULA and redistribution notice
 requirements.
 
-On PortMaster launch, and again after the upstream GUI exits, the manager runs:
+Before PortMaster launch, the manager runs the scanner for each available SD
+source whose port-tree stamp or scan artifacts are stale. After the upstream
+GUI exits, it scans only the source or sources whose port tree changed:
 
 ```text
 scripts/scan-and-fix-port-elfs.sh
@@ -358,7 +449,20 @@ scripts/scan-and-fix-port-elfs.sh
 
 That scanner calls `scripts/write-leaf-runtime-hook.sh` to refresh
 `$USERDATA_PATH/portmaster/PortMaster/leaf-armhf-env.sh`, ensures upstream
-`control.txt` sources it, and records installed armhf port ELFs in:
+`control.txt` sources it, and records installed armhf port ELFs in
+source-specific artifacts:
+
+```text
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.primary.json
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.primary.tsv
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.primary.manifest
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.secondary_sd.json
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.secondary_sd.tsv
+$USERDATA_PATH/portmaster/.leaf/armhf-scan.secondary_sd.manifest
+```
+
+The unsuffixed paths remain a latest-scan mirror for Doctor and support
+bundles:
 
 ```text
 $USERDATA_PATH/portmaster/.leaf/armhf-scan.json
@@ -377,8 +481,8 @@ invalidate the related script decision. Set
 set `LEAF_PM_FULL_PORT_SCAN=1` when running
 `scripts/scan-and-fix-port-elfs.sh` manually to force the older exhaustive walk
 of every file under `Roms/PORTS` without reading or writing the manifest. The
-wrapper also stores a cheap top-level `Roms/PORTS` stamp so repeated PortMaster
-open/close cycles skip port repair, artwork sync, and Jawaka rescan when no
+wrapper also stores a cheap top-level `Roms/PORTS` stamp per source so repeated
+PortMaster open/close cycles skip port repair, artwork sync, and launcher rescan when no
 ports changed.
 
 ## Native Compatibility Tools
@@ -485,7 +589,7 @@ letterbox instead of being cropped on the right edge.
 The scanner also owns narrow runtime compatibility rules for installed launch
 scripts. One native-display rule targets Gothic/Machismo launchers on Leaf.
 When `compat/drm/aarch64/leaf-drm-rotate.so` is installed, the generated hook can
-opt those launchers into Vulkan during Leaf's direct-DRM handoff. Jawaka marks
+opt those launchers into Vulkan during Leaf's direct-DRM handoff. The launcher marks
 that handoff with `JAWAKA_DIRECT_DRM=1`, so the hook preloads the DRM ioctl
 rotation shim without trying to stop Leaf/Weston from inside the child port
 script. Manual adb runs can still force the path with
@@ -495,11 +599,11 @@ through RGA into the real `720x960` scanout, and stores all state in
 per-process/tmp kernel objects. The hook prefers the SD-installed g29 Mali
 compat directory as its Vulkan stack when its generated `rk_vk_g29.json` is
 present, so the packaged path does not depend on stock ICD metadata or a
-reboot-cleared `/tmp` test directory. Without the Jawaka handoff, explicit manual
+reboot-cleared `/tmp` test directory. Without the launcher handoff, explicit manual
 opt-in, or the installed shim, the scanner block falls back to
 `GOTHIC_BACKEND=gles`.
 
-The generated block does not depend on `CFW_NAME`, because direct Jawaka port
+The generated block does not depend on `CFW_NAME`, because direct launcher port
 launches and source-built local installs may not inherit the PortMaster GUI
 environment. It forwards `GOTHIC_BACKEND`, `LD_PRELOAD`, `LEAF_DRM_ROTATE`,
 `SDL_VIDEODRIVER`, `VK_ICD_FILENAMES`, and `VK_LOADER_LAYERS_DISABLE` through
@@ -524,7 +628,7 @@ before creating a GL context, crash in Crusty's native backend setup, or hit
 Java 8's `No fonts found` fatal error. On MLP1, the same hook also treats
 Crusty's SDL host as a direct-DRM path: it sets `CRUSTY_RESOLUTION` from the
 Leaf display size, preloads the packaged DRM rotate shim through
-`WRAPPED_PRELOAD`, and temporarily stops host Weston unless Jawaka already
+`WRAPPED_PRELOAD`, and temporarily stops host Weston unless the launcher already
 performed the direct-DRM handoff. Existing Java 8 launcher markers and
 `LEAF_PM_JAVA8_*` overrides remain supported.
 
@@ -543,7 +647,7 @@ shim links only libc and resolves `librga.so.2` dynamically inside the target
 process, so it does not add a persistent system dependency or modify stock
 graphics files.
 
-After the post-exit scan, the manager sends Jawaka a non-fatal
+After the post-exit scan, the manager sends the Leaf launcher a non-fatal
 `scan-library` IPC request through `jawaka-platformctl` so newly installed
 PortMaster `.sh` launchers appear in the Ports list without restarting the
 launcher stack.
