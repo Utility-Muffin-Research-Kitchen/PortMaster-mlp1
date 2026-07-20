@@ -9,7 +9,7 @@ CJSON    ?= /workspace/Jawaka/third_party/cjson
 OUT      := $(APP)/build/mlp1/bin/portmaster-mlp1
 EGL_SHIM := $(APP)/build/mlp1/compat/egl/aarch64/libEGL.so.1
 SRC      := $(wildcard $(APP)/src/*.c)
-VERSION  ?= 0.1.2
+VERSION  ?= 0.2.0
 
 PKG_CONFIG_SYSROOT_DIR := $(SYSROOT)
 PKG_CONFIG_LIBDIR := $(SYSROOT)/usr/lib/pkgconfig:$(SYSROOT)/usr/share/pkgconfig

@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 APP_ID := portmaster-mlp1
 PAK_NAME := PortMaster
-VERSION := 0.1.2
+VERSION := 0.2.0
 BUILD ?= build
 PLATFORM ?= mac
 WORKSPACE_ROOT ?= $(abspath ..)

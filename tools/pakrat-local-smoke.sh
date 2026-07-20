@@ -50,6 +50,8 @@ done
 
 curl -fsS "$BASE_URL/storefront.json" >/dev/null
 curl -fsS "$BASE_URL/storefront.json" | grep -F "org.umrk.portmaster" >/dev/null
+curl -fsS "$BASE_URL/storefront.json" | grep -F '"min_leaf_version": "0.7.0"' >/dev/null
+curl -fsS "$BASE_URL/storefront.json" | grep -F '"version": "0.1.2"' >/dev/null
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/portmaster-pakrat-smoke.XXXXXX")"
 cleanup_tmp() {
@@ -92,11 +94,23 @@ expect_contains() {
 }
 
 LIST_AVAILABLE="$TMP_ROOT/list-available.tsv"
+LIST_OLD_LEAF="$TMP_ROOT/list-old-leaf.tsv"
 LIST_INSTALLED="$TMP_ROOT/list-installed.tsv"
 
+cat >"$STATE_DIR/release.json" <<'JSON'
+{ "schema": 1, "product": "leaf", "platform": "mlp1", "version": "v0.6.1", "release_id": "v0.6.1" }
+JSON
+run_smoke list >"$LIST_OLD_LEAF"
+expect_contains "$LIST_OLD_LEAF" \
+    $'available\torg.umrk.portmaster\t0.1.2\t' \
+    "Leaf 0.6.1 did not retain the released PortMaster safe floor"
+
+cat >"$STATE_DIR/release.json" <<'JSON'
+{ "schema": 1, "product": "leaf", "platform": "mlp1", "version": "v0.7.0", "release_id": "v0.7.0" }
+JSON
 run_smoke list >"$LIST_AVAILABLE"
 expect_contains "$LIST_AVAILABLE" \
-    $'available\torg.umrk.portmaster\t0.1.2\t' \
+    $'available\torg.umrk.portmaster\t0.2.0\t' \
     "local catalog did not expose PortMaster"
 expect_contains "$LIST_AVAILABLE" \
     $'managed=0\tpath=Apps/mlp1/PortMaster.pak' \
@@ -105,15 +119,17 @@ expect_contains "$LIST_AVAILABLE" \
 run_smoke install org.umrk.portmaster >/dev/null
 run_smoke list >"$LIST_INSTALLED"
 expect_contains "$LIST_INSTALLED" \
-    $'installed\torg.umrk.portmaster\t0.1.2\tinstalled=0.1.2' \
+    $'installed\torg.umrk.portmaster\t0.2.0\tinstalled=0.2.0' \
     "Pak Rat did not install PortMaster from the local catalog"
 
 test -x "$SD_ROOT/Apps/mlp1/PortMaster.pak/launch.sh" ||
     fail_with_output "installed PortMaster launch.sh is not executable"
 test -x "$SD_ROOT/Apps/mlp1/PortMaster.pak/bin/portmaster-mlp1" ||
     fail_with_output "installed PortMaster binary is not executable"
-grep -F '"pak_version": "0.1.2"' "$SD_ROOT/Apps/mlp1/PortMaster.pak/pak.json" >/dev/null ||
+grep -F '"pak_version": "0.2.0"' "$SD_ROOT/Apps/mlp1/PortMaster.pak/pak.json" >/dev/null ||
     fail_with_output "installed PortMaster pak.json version was unexpected"
+grep -F '"min_leaf_version": "0.7.0"' "$SD_ROOT/Apps/mlp1/PortMaster.pak/pak.json" >/dev/null ||
+    fail_with_output "installed PortMaster minimum Leaf version was unexpected"
 
 if grep -F "$BASE_URL" "$SD_ROOT/Apps/mlp1/PortMaster.pak/locks/ui-runtime.lock.json" >/dev/null; then
     echo "Installed UI runtime lock points at the local feed."
