@@ -2,7 +2,8 @@
   "name": "PortMaster",
   "icon": "res/icon.png",
   "platform": "mlp1",
-  "pak_version": "0.1.2",
+  "pak_version": "0.2.0",
+  "min_leaf_version": "0.7.0",
   "min_jawaka_version": "0.0.1",
   "author": "UMRK",
   "repo_url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1"

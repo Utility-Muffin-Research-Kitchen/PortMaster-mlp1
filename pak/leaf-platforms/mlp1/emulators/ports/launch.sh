@@ -152,6 +152,7 @@ ports_dir="$(CDPATH= cd "$(dirname "$port_script")" && pwd)"
 roms_dir="$(CDPATH= cd "$ports_dir/.." && pwd)"
 export HOME="$pm_data"
 export XDG_DATA_HOME="$pm_data"
+export PORTMASTER_PORTS_DIR="${PORTMASTER_PORTS_DIR:-$ports_dir}"
 export PORTMASTER_CONTROLFOLDER="${PORTMASTER_CONTROLFOLDER:-$pm_data/PortMaster}"
 export PORTMASTER_LEAF_PORT_LAYOUT_SCOPE=ports
 export PORTMASTER_ROMS_DIRECTORY="${PORTMASTER_ROMS_DIRECTORY:-${roms_dir#/}}"
@@ -196,9 +197,9 @@ if [ "${PLATFORM:-mlp1}" = "mlp1" ] && [ -z "${SDL_JOYSTICK_DEVICE:-}" ]; then
 
     if [ -n "$MLP1_VIRTUAL_GAMEPAD" ] && [ -e "$MLP1_VIRTUAL_GAMEPAD" ]; then
         export SDL_JOYSTICK_DEVICE="$MLP1_VIRTUAL_GAMEPAD"
-        echo "[ports] using calibrated Jawaka virtual gamepad: $SDL_JOYSTICK_DEVICE"
+        echo "[ports] using calibrated Leaf virtual gamepad: $SDL_JOYSTICK_DEVICE"
     else
-        echo "[ports] calibrated Jawaka virtual gamepad not found; using SDL default joystick scan"
+        echo "[ports] calibrated Leaf virtual gamepad not found; using SDL default joystick scan"
     fi
 fi
 

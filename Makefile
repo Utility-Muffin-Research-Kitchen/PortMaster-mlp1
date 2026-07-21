@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 APP_ID := portmaster-mlp1
 PAK_NAME := PortMaster
-VERSION := 0.1.2
+VERSION := 0.2.0
 BUILD ?= build
 PLATFORM ?= mac
 WORKSPACE_ROOT ?= $(abspath ..)
@@ -57,7 +57,7 @@ ifeq ($(shell uname -s),Darwin)
 LDLIBS_COMMON += -lobjc
 endif
 
-.PHONY: all native run-native mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke self-heal-smoke armhf-install-fixtures update-failure-fixtures smoke-matrix fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
+.PHONY: all native run-native artwork-fixtures source-fixtures scan-source-fixtures multi-source-fixtures preference-fixtures move-fixtures mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke self-heal-smoke armhf-install-fixtures update-failure-fixtures smoke-matrix fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
 
 all: native
 
@@ -73,6 +73,24 @@ run-native: native
 	CAT_THEMES_DIR="$(CATASTROPHE_RES)/themes" \
 	PORTMASTER_MLP1_PAK_DIR="$(CURDIR)" \
 	"$(APP_BIN)"
+
+artwork-fixtures: native
+	@ARTWORK_TEST_BINARY="$(abspath $(APP_BIN))" ./tools/artwork-fixtures.sh
+
+source-fixtures: native
+	@SOURCE_TEST_BINARY="$(abspath $(APP_BIN))" ./tools/source-fixtures.sh
+
+scan-source-fixtures: native
+	@SCAN_SOURCE_TEST_BINARY="$(abspath $(APP_BIN))" ./tools/scan-source-fixtures.sh
+
+multi-source-fixtures:
+	@python3 ./tools/multi-source-fixtures.py
+
+preference-fixtures: native
+	@PREFERENCE_TEST_BINARY="$(abspath $(APP_BIN))" bash ./tools/preference-fixtures.sh
+
+move-fixtures: native
+	@MOVE_TEST_BINARY="$(abspath $(APP_BIN))" bash ./tools/move-fixtures.sh
 
 mlp1:
 	@VERSION="$(VERSION)" ./scripts/build-mlp1.sh

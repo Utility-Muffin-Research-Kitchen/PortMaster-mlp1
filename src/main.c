@@ -11,6 +11,9 @@
 #include "pm_env_snapshot.h"
 #include "pm_installer.h"
 #include "pm_launcher.h"
+#include "pm_move.h"
+#include "pm_ports.h"
+#include "pm_preferences.h"
 #include "pm_self_heal.h"
 #include "pm_update.h"
 #include "pm_ui.h"
@@ -136,6 +139,107 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (argc > 1 && strcmp(argv[1], "--sources-text") == 0) {
+        char source_err[256];
+        if (pm_context_refresh_sources(&ctx, source_err, sizeof(source_err)) != 0) {
+            fprintf(stderr, "source resolution failed: %s\n", source_err);
+            return 1;
+        }
+        for (size_t i = 0; i < ctx.sources.count; i++) {
+            const pm_source *source = &ctx.sources.items[i];
+            printf("id=%s configured=%s available=%s root=%s roms=%s images=%s "
+                   "mount_id=%lu device=%s st_dev=%llu roms_st_dev=%llu "
+                   "images_st_dev=%llu fingerprint=%s "
+                   "roms_mount_id=%lu roms_device=%s roms_fingerprint=%s "
+                   "images_mount_id=%lu images_device=%s images_fingerprint=%s\n",
+                   source->id,
+                   source->configured ? "yes" : "no",
+                   source->available ? "yes" : "no",
+                   source->root,
+                   source->roms_path,
+                   source->images_path,
+                   source->mount_id,
+                   source->device_id[0] ? source->device_id : "(unavailable)",
+                   (unsigned long long)source->st_dev,
+                   (unsigned long long)source->roms_st_dev,
+                   (unsigned long long)source->images_st_dev,
+                   source->filesystem_fingerprint[0]
+                       ? source->filesystem_fingerprint : "(unavailable)",
+                   source->roms_mount_id,
+                   source->roms_device_id[0]
+                       ? source->roms_device_id : "(unavailable)",
+                   source->roms_filesystem_fingerprint[0]
+                       ? source->roms_filesystem_fingerprint : "(unavailable)",
+                   source->images_mount_id,
+                   source->images_device_id[0]
+                       ? source->images_device_id : "(unavailable)",
+                   source->images_filesystem_fingerprint[0]
+                       ? source->images_filesystem_fingerprint : "(unavailable)");
+        }
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--ports-text") == 0) {
+        char text[64 * 1024];
+        char err[512];
+        if (pm_port_inventory_text(&ctx, text, sizeof(text),
+                                   err, sizeof(err)) != 0) {
+            fprintf(stderr, "installed-port inventory failed: %s\n",
+                    err[0] ? err : "output truncated");
+            fputs(text, stdout);
+            return 1;
+        }
+        fputs(text, stdout);
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--move-capability") == 0) {
+        pm_move_capability capability;
+        char err[512];
+        if (pm_move_probe_capability(&ctx, &capability,
+                                     err, sizeof(err)) != 0) {
+            fprintf(stderr, "move capability probe failed: %s\n", err);
+            return 1;
+        }
+        printf("relocate-games-v1=%s\tdetail=%s\n",
+               capability.supported ? "yes" : "no", capability.detail);
+        return capability.supported ? 0 : 1;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--recover-port-moves") == 0) {
+        char summary[1024];
+        int rc = pm_move_recover_all(&ctx, NULL, NULL,
+                                     summary, sizeof(summary));
+        puts(summary);
+        return rc == 0 ? 0 : 1;
+    }
+
+    if (argc > 4 && strcmp(argv[1], "--move-port") == 0) {
+        pm_port_inventory inventory;
+        char err[512];
+        if (pm_port_inventory_load(&ctx, &inventory, err, sizeof(err)) != 0) {
+            fprintf(stderr, "installed-port inventory failed: %s\n", err);
+            return 1;
+        }
+        const pm_port_package *package =
+            pm_port_inventory_find(&inventory, argv[2], argv[3]);
+        if (!package) {
+            fprintf(stderr, "installed package not found: %s:%s\n",
+                    argv[2], argv[3]);
+            pm_port_inventory_free(&inventory);
+            return 1;
+        }
+        int rc = pm_move_package(&ctx, package, argv[4],
+                                 NULL, NULL, err, sizeof(err));
+        pm_port_inventory_free(&inventory);
+        if (rc != 0) {
+            fprintf(stderr, "package move failed: %s\n", err);
+            return 1;
+        }
+        printf("package moved: %s:%s -> %s\n", argv[2], argv[3], argv[4]);
+        return 0;
+    }
+
     if (argc > 1 && strcmp(argv[1], "--support-bundle") == 0) {
         char script[PM_PATH_MAX];
         if (pm_join3(script, sizeof(script), ctx.pak_dir,
@@ -178,6 +282,33 @@ int main(int argc, char **argv)
             return 1;
         }
         printf("controller layout set: %s\n", pm_controller_layout_slug(layout));
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--install-source") == 0) {
+        char err[512];
+        const pm_source *source = NULL;
+        if (pm_install_source_resolve(&ctx, NULL, &source,
+                                      err, sizeof(err)) != 0) {
+            fprintf(stderr, "install source unavailable: %s\n", err);
+            return 1;
+        }
+        printf("preferred=%s effective=%s available=yes root=%s ports=%s\n",
+               ctx.preferred_install_source,
+               ctx.effective_install_source,
+               source->root,
+               source->ports_path);
+        return 0;
+    }
+
+    if (argc > 2 && strcmp(argv[1], "--set-install-source") == 0) {
+        char err[512];
+        if (pm_install_source_preference_save(&ctx, argv[2],
+                                              err, sizeof(err)) != 0) {
+            fprintf(stderr, "install source save failed: %s\n", err);
+            return 1;
+        }
+        printf("install source set: %s\n", ctx.preferred_install_source);
         return 0;
     }
 
@@ -231,6 +362,20 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (argc > 1 && strcmp(argv[1], "--refresh-stale-port-wrappers") == 0) {
+        size_t scanned_count = 0;
+        bool force = argc > 2 && strcmp(argv[2], "--force") == 0;
+        if (pm_refresh_stale_armhf_port_wrappers(
+                &ctx, ctx.effective_install_source, force,
+                &scanned_count) != 0) {
+            fprintf(stderr, "stale port wrapper refresh failed\n");
+            return 1;
+        }
+        printf("PortMaster stale port wrappers refreshed: %zu source(s)\n",
+               scanned_count);
+        return 0;
+    }
+
     if (argc > 1 && strcmp(argv[1], "--check-portmaster-update") == 0) {
         pm_portmaster_update_status status;
         char err[512];
@@ -281,17 +426,28 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if (argc > 1 && strcmp(argv[1], "--sync-port-artwork") == 0) {
+    if (argc > 1 &&
+        (strcmp(argv[1], "--sync-port-artwork") == 0 ||
+         strcmp(argv[1], "--refresh-port-artwork") == 0 ||
+         strcmp(argv[1], "--replace-port-artwork") == 0)) {
         pm_artwork_sync_result result = {0};
         char err[512];
-        if (pm_artwork_sync(&ctx, &result, err, sizeof(err)) != 0) {
+        pm_artwork_policy policy = strcmp(argv[1], "--refresh-port-artwork") == 0
+            ? PM_ARTWORK_MANAGED_REFRESH
+            : strcmp(argv[1], "--replace-port-artwork") == 0
+                ? PM_ARTWORK_REPLACE_ALL
+                : PM_ARTWORK_MISSING_ONLY;
+        if (pm_artwork_sync_with_policy(&ctx, policy, &result,
+                                        err, sizeof(err)) != 0) {
             fprintf(stderr, "artwork sync failed: %s\n", err);
             return 1;
         }
-        printf("port artwork sync: scanned=%d synced=%d skipped_existing=%d missing_source=%d failed=%d\n",
+        printf("port artwork sync: scanned=%d synced=%d skipped_existing=%d "
+               "preserved_custom=%d missing_source=%d failed=%d\n",
                result.scanned,
                result.synced,
                result.skipped_existing,
+               result.preserved_custom,
                result.missing_source,
                result.failed);
         return 0;
@@ -334,6 +490,15 @@ int main(int argc, char **argv)
             return 1;
         }
         return 0;
+    }
+
+    if (pm_move_pending_count(&ctx) > 0) {
+        char summary[1024];
+        int recovery = pm_move_recover_all(&ctx, NULL, NULL,
+                                           summary, sizeof(summary));
+        if (recovery != 0) {
+            fprintf(stderr, "%s\n", summary);
+        }
     }
 
     cat_config cfg = {0};

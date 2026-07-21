@@ -8,6 +8,9 @@
 #include "pm_doctor.h"
 #include "pm_installer.h"
 #include "pm_launcher.h"
+#include "pm_move.h"
+#include "pm_ports.h"
+#include "pm_preferences.h"
 #include "pm_update.h"
 
 #include <errno.h>
@@ -22,6 +25,8 @@ typedef enum {
     PM_ACTION_INSTALL,
     PM_ACTION_UPDATE,
     PM_ACTION_CONTROLLER_LAYOUT,
+    PM_ACTION_INSTALL_SOURCE,
+    PM_ACTION_MANAGE_PORTS,
     PM_ACTION_REPAIR,
     PM_ACTION_TROUBLESHOOTING,
     PM_ACTION_QUIT,
@@ -31,6 +36,8 @@ typedef enum {
     PM_TROUBLE_ACTION_NONE = 0,
     PM_TROUBLE_ACTION_QUICK_DIAGNOSTICS,
     PM_TROUBLE_ACTION_HEALTH,
+    PM_TROUBLE_ACTION_REFRESH_ARTWORK,
+    PM_TROUBLE_ACTION_RECOVER_MOVES,
     PM_TROUBLE_ACTION_CHECK_UPDATE,
     PM_TROUBLE_ACTION_LOGS,
     PM_TROUBLE_ACTION_PATHS,
@@ -109,6 +116,10 @@ static const char *action_slug(pm_action action)
             return "update";
         case PM_ACTION_CONTROLLER_LAYOUT:
             return "controller_layout";
+        case PM_ACTION_INSTALL_SOURCE:
+            return "install_source";
+        case PM_ACTION_MANAGE_PORTS:
+            return "manage_ports";
         case PM_ACTION_REPAIR:
             return "repair";
         case PM_ACTION_TROUBLESHOOTING:
@@ -630,7 +641,8 @@ static int repair_core(pm_context *ctx,
     if (artwork) {
         setup_progress_set(progress, 0.88f, "Refreshing artwork");
         memset(artwork, 0, sizeof(*artwork));
-        if (pm_artwork_sync(ctx, artwork, err, err_size) != 0) {
+        if (pm_artwork_sync_with_policy(ctx, PM_ARTWORK_MANAGED_REFRESH,
+                                        artwork, err, err_size) != 0) {
             return -1;
         }
     }
@@ -898,6 +910,7 @@ static void run_startup_update_check(pm_context *ctx,
 
 typedef struct {
     pm_context *ctx;
+    const char *session_source_id;
     char *phase;
     char err[512];
 } pm_launch_job;
@@ -914,11 +927,9 @@ static int launch_worker(void *userdata)
 {
     pm_launch_job *job = (pm_launch_job *)userdata;
     job->err[0] = '\0';
-    return pm_launch_portmaster_with_status(job->ctx,
-                                            launch_status,
-                                            job,
-                                            job->err,
-                                            sizeof(job->err));
+    return pm_launch_portmaster_from_source_with_status(
+        job->ctx, job->session_source_id, launch_status, job,
+        job->err, sizeof(job->err));
 }
 
 static void show_launch(pm_context *ctx, const pm_ui_state *state)
@@ -930,8 +941,32 @@ static void show_launch(pm_context *ctx, const pm_ui_state *state)
         return;
     }
 
+    const char *session_source_id = NULL;
+    char source_err[512];
+    const pm_source *preferred = NULL;
+    if (pm_install_source_resolve(ctx, NULL, &preferred,
+                                  source_err, sizeof(source_err)) != 0) {
+        if (strcmp(ctx->preferred_install_source,
+                   PM_INSTALL_SOURCE_SECONDARY) != 0) {
+            char msg[768];
+            snprintf(msg, sizeof(msg),
+                     "Could not resolve Default Install Card.\n\n%s",
+                     source_err[0] ? source_err : "Unknown error");
+            show_message(msg);
+            return;
+        }
+        if (!confirm_message(
+                "Secondary SD is your Default Install Card, but it is not mounted.\n\n"
+                "Use Primary for this session? Your saved preference will not change.",
+                "Use Primary")) {
+            return;
+        }
+        session_source_id = PM_INSTALL_SOURCE_PRIMARY;
+    }
+
     pm_launch_job job = {
         .ctx = ctx,
+        .session_source_id = session_source_id,
         .phase = "Starting PortMaster...",
     };
     cat_process_opts opts = {
@@ -948,6 +983,244 @@ static void show_launch(pm_context *ctx, const pm_ui_state *state)
                  job.err[0] ? job.err : "Unknown error");
         show_message(msg);
     }
+}
+
+static void show_install_source(pm_context *ctx)
+{
+    char err[512];
+    if (pm_context_refresh_sources(ctx, err, sizeof(err)) != 0 ||
+        pm_install_source_preference_load(ctx, err, sizeof(err)) != 0) {
+        char msg[768];
+        snprintf(msg, sizeof(msg), "Could not load install-card settings.\n\n%s",
+                 err[0] ? err : "Unknown error");
+        show_message(msg);
+        return;
+    }
+
+    const pm_source *primary =
+        pm_sources_by_id(&ctx->sources, PM_INSTALL_SOURCE_PRIMARY);
+    const pm_source *secondary =
+        pm_sources_by_id(&ctx->sources, PM_INSTALL_SOURCE_SECONDARY);
+    cat_list_item items[] = {
+        {
+            .label = "Primary SD",
+            .trailing_text =
+                primary && primary->available ? "Available" : "Not mounted",
+            .disabled = !primary || !primary->available,
+        },
+        {
+            .label = "Secondary SD",
+            .trailing_text =
+                secondary && secondary->available
+                    ? "Available" : "Not mounted — insert card",
+            .disabled = !secondary || !secondary->available,
+        },
+    };
+    cat_footer_item footer[] = {
+        { .button = CAT_BTN_B, .label = "Back" },
+        { .button = CAT_BTN_A, .label = "Select", .is_confirm = true },
+    };
+    cat_list_opts opts = cat_list_default_opts(
+        "Default Install Card", items, 2);
+    opts.footer = footer;
+    opts.footer_count = 2;
+    opts.initial_index =
+        strcmp(ctx->preferred_install_source, PM_INSTALL_SOURCE_SECONDARY) == 0
+            ? 1 : 0;
+
+    cat_list_result result = {0};
+    if (cat_list(&opts, &result) != CAT_OK ||
+        result.selected_index < 0 || result.selected_index > 1) {
+        return;
+    }
+    if (items[result.selected_index].disabled) {
+        show_message(result.selected_index == 1
+                         ? "Secondary SD is not mounted.\n\nInsert the card, then reopen this setting."
+                         : "Primary SD is not available. PortMaster cannot change settings safely.");
+        return;
+    }
+    const char *selected = result.selected_index == 1
+        ? PM_INSTALL_SOURCE_SECONDARY : PM_INSTALL_SOURCE_PRIMARY;
+    if (pm_install_source_preference_save(ctx, selected,
+                                          err, sizeof(err)) != 0) {
+        char msg[768];
+        snprintf(msg, sizeof(msg), "Could not save Default Install Card.\n\n%s",
+                 err[0] ? err : "Unknown error");
+        show_message(msg);
+        return;
+    }
+    (void)pm_copy(ctx->effective_install_source,
+                  sizeof(ctx->effective_install_source), selected);
+}
+
+typedef struct {
+    pm_context *ctx;
+    const pm_port_package *package;
+    const char *destination_id;
+    char *phase;
+    char err[512];
+} pm_move_job;
+
+static void move_status(const char *message, void *userdata)
+{
+    pm_move_job *job = (pm_move_job *)userdata;
+    if (job) {
+        job->phase = (char *)message;
+    }
+}
+
+static int move_worker(void *userdata)
+{
+    pm_move_job *job = (pm_move_job *)userdata;
+    job->err[0] = '\0';
+    return pm_move_package(job->ctx, job->package, job->destination_id,
+                           move_status, job, job->err, sizeof(job->err));
+}
+
+static void show_move_package(pm_context *ctx,
+                              const pm_port_package *package)
+{
+    if (!package->movable) {
+        show_message(package->blocked_reason[0]
+                         ? package->blocked_reason
+                         : "This package cannot be moved safely.");
+        return;
+    }
+    pm_move_capability capability;
+    char err[512];
+    if (pm_move_probe_capability(ctx, &capability, err, sizeof(err)) != 0 ||
+        !capability.supported) {
+        char msg[768];
+        snprintf(msg, sizeof(msg), "Move is disabled.\n\n%s",
+                 err[0] ? err : capability.detail);
+        show_message(msg);
+        return;
+    }
+    if (pm_context_refresh_sources(ctx, err, sizeof(err)) != 0) {
+        show_message(err);
+        return;
+    }
+    const char *destination_id = !strcmp(package->source_id, "primary")
+        ? "secondary_sd" : "primary";
+    const pm_source *destination =
+        pm_sources_by_id(&ctx->sources, destination_id);
+    char prompt[2048];
+    size_t used = 0;
+    int written = snprintf(prompt, sizeof(prompt),
+                           "Move %s from %s to %s?\n\nLaunchers:\n",
+                           package->display_name, package->source_id,
+                           destination_id);
+    if (written > 0) used = (size_t)written;
+    for (size_t i = 0; i < package->launcher_count && used < sizeof(prompt); i++) {
+        written = snprintf(prompt + used, sizeof(prompt) - used,
+                           "• %s\n", package->launchers[i].relpath);
+        if (written > 0) used += (size_t)written;
+    }
+    if (!destination || !destination->available) {
+        strncat(prompt,
+                "\nThe destination card is not mounted. Insert it and try again.",
+                sizeof(prompt) - strlen(prompt) - 1);
+        show_message(prompt);
+        return;
+    }
+    if (!confirm_message(prompt, "Move")) {
+        return;
+    }
+    pm_move_job job = {
+        .ctx = ctx,
+        .package = package,
+        .destination_id = destination_id,
+        .phase = "Preparing package move...",
+    };
+    cat_process_opts opts = {
+        .message = "Moving Port",
+        .show_progress = false,
+        .interrupt_button = CAT_BTN_NONE,
+        .dynamic_message = &job.phase,
+        .message_lines = 1,
+    };
+    int rc = cat_process_message(&opts, move_worker, &job);
+    if (rc != 0) {
+        char msg[1024];
+        snprintf(msg, sizeof(msg),
+                 "Package move did not complete.\n\n%s\n\n"
+                 "Any durable pending operation is available under "
+                 "Troubleshooting > Recover Package Moves.",
+                 job.err[0] ? job.err : "Unknown error");
+        show_message(msg);
+    } else {
+        show_message("Package move complete.\n\nLeaf game identity and state were preserved.");
+    }
+}
+
+static void show_manage_ports(pm_context *ctx)
+{
+    pm_port_inventory inventory;
+    char err[512];
+    if (pm_port_inventory_load(ctx, &inventory, err, sizeof(err)) != 0) {
+        char msg[768];
+        snprintf(msg, sizeof(msg), "Could not build installed-port inventory.\n\n%s",
+                 err[0] ? err : "Unknown error");
+        show_message(msg);
+        return;
+    }
+    size_t count = inventory.package_count + inventory.unmanaged_count;
+    if (count == 0) {
+        pm_port_inventory_free(&inventory);
+        show_message("No installed PortMaster packages or manual launchers were found.");
+        return;
+    }
+    cat_list_item *items = calloc(count, sizeof(*items));
+    char (*trailing)[128] = calloc(count, sizeof(*trailing));
+    if (!items || !trailing) {
+        free(items);
+        free(trailing);
+        pm_port_inventory_free(&inventory);
+        show_message("Installed-port inventory is too large to display.");
+        return;
+    }
+    for (size_t i = 0; i < inventory.package_count; i++) {
+        pm_port_package *package = &inventory.packages[i];
+        snprintf(trailing[i], sizeof(trailing[i]), "%s · %zu launcher%s%s",
+                 package->source_id, package->launcher_count,
+                 package->launcher_count == 1 ? "" : "s",
+                 package->movable ? "" : " · blocked");
+        items[i] = (cat_list_item){
+            .label = package->display_name,
+            .trailing_text = trailing[i],
+        };
+    }
+    for (size_t i = 0; i < inventory.unmanaged_count; i++) {
+        size_t row = inventory.package_count + i;
+        snprintf(trailing[row], sizeof(trailing[row]),
+                 "Unmanaged · cannot move");
+        items[row] = (cat_list_item){
+            .label = inventory.unmanaged_launchers[i],
+            .trailing_text = trailing[row],
+        };
+    }
+    cat_footer_item footer[] = {
+        { .button = CAT_BTN_B, .label = "Back" },
+        { .button = CAT_BTN_A, .label = "Details", .is_confirm = true },
+    };
+    cat_list_opts opts = cat_list_default_opts("Manage Ports", items, (int)count);
+    opts.footer = footer;
+    opts.footer_count = 2;
+    cat_list_result result = {0};
+    if (cat_list(&opts, &result) == CAT_OK && result.selected_index >= 0) {
+        size_t selected = (size_t)result.selected_index;
+        if (selected < inventory.package_count) {
+            show_move_package(ctx, &inventory.packages[selected]);
+        } else {
+            show_message(
+                "This launcher is not owned by installed HarbourMaster metadata.\n\n"
+                "It remains visible, but PortMaster will not guess its data directory "
+                "or move it.");
+        }
+    }
+    free(items);
+    free(trailing);
+    pm_port_inventory_free(&inventory);
 }
 
 static void show_controller_layout(pm_context *ctx)
@@ -1005,18 +1278,85 @@ static void show_controller_layout(pm_context *ctx)
     show_message(msg);
 }
 
+static void format_source_summary(pm_context *ctx, char *out, size_t out_size)
+{
+    char err[256];
+    if (pm_context_refresh_sources(ctx, err, sizeof(err)) != 0) {
+        snprintf(out, out_size, "Invalid source environment: %s",
+                 err[0] ? err : "unknown error");
+        return;
+    }
+    size_t used = 0;
+    out[0] = '\0';
+    for (size_t i = 0; i < ctx->sources.count; i++) {
+        const pm_source *source = &ctx->sources.items[i];
+        int written = snprintf(out + used, out_size - used,
+                               "%s%s (%s): %s\n"
+                               "  Root: %s\n  ROMs: %s\n  Images: %s\n"
+                               "  PORTS: %s\n  Artwork: %s\n"
+                               "  Mount: %lu device=%s st_dev=%llu roms_st_dev=%llu "
+                               "images_st_dev=%llu\n"
+                               "  Fingerprint: %s\n"
+                               "  ROM FS: mount=%lu device=%s fingerprint=%s\n"
+                               "  Image FS: mount=%lu device=%s fingerprint=%s",
+                               used ? "\n" : "",
+                               strcmp(source->id, "primary") == 0
+                                   ? "Primary" : "Secondary",
+                               source->id,
+                               source->available ? "Available" : "Not mounted",
+                               source->root,
+                               source->roms_path,
+                               source->images_path,
+                               source->ports_path,
+                               source->port_images_path,
+                               source->mount_id,
+                               source->device_id[0]
+                                   ? source->device_id : "(unavailable)",
+                               (unsigned long long)source->st_dev,
+                               (unsigned long long)source->roms_st_dev,
+                               (unsigned long long)source->images_st_dev,
+                               source->filesystem_fingerprint[0]
+                                   ? source->filesystem_fingerprint
+                                   : "(unavailable)",
+                               source->roms_mount_id,
+                               source->roms_device_id[0]
+                                   ? source->roms_device_id : "(unavailable)",
+                               source->roms_filesystem_fingerprint[0]
+                                   ? source->roms_filesystem_fingerprint
+                                   : "(unavailable)",
+                               source->images_mount_id,
+                               source->images_device_id[0]
+                                   ? source->images_device_id : "(unavailable)",
+                               source->images_filesystem_fingerprint[0]
+                                   ? source->images_filesystem_fingerprint
+                                   : "(unavailable)");
+        if (written < 0 || (size_t)written >= out_size - used) {
+            out[out_size - 1] = '\0';
+            return;
+        }
+        used += (size_t)written;
+    }
+}
+
 static void show_paths(pm_context *ctx)
 {
     char msg[65536];
+    char sources[PM_PATH_MAX * 4];
+    format_source_summary(ctx, sources, sizeof(sources));
     snprintf(msg, sizeof(msg),
-             "Pak:\n%s\n\nData:\n%s\n\nRuntime:\n%s\n\nManifest:\n%s\n\nDownloads:\n%s\n\nPorts:\n%s\n\nImages:\n%s\n\nLogs:\n%s",
+             "Pak:\n%s\n\nData (Primary userdata):\n%s\n\nRuntime:\n%s\n\n"
+             "Manifest:\n%s\n\nDownloads:\n%s\n\n"
+             "Preferred install source: %s\nEffective session source: %s\n\n"
+             "Sources:\n%s\n\nLogs:\n%s",
              ctx->pak_dir,
              ctx->data_dir,
              ctx->runtime_dir,
              ctx->manifest_path,
              ctx->downloads_dir,
-             ctx->ports_dir,
-             ctx->port_images_dir,
+             ctx->preferred_install_source,
+             ctx->effective_install_source[0]
+                 ? ctx->effective_install_source : "(not resolved)",
+             sources,
              ctx->logs_path);
     show_text_detail("Paths", msg);
 }
@@ -1032,9 +1372,68 @@ static void show_logs(pm_context *ctx)
 
 static void show_health(pm_context *ctx)
 {
+    char source_err[256];
+    (void)pm_context_refresh_sources(ctx, source_err, sizeof(source_err));
     pm_doctor_report report;
     pm_doctor_run(ctx, &report);
     show_text_detail("Health Check", report.text);
+}
+
+static void show_refresh_artwork(pm_context *ctx)
+{
+    cat_list_item items[] = {
+        {
+            .label = "Refresh Managed Artwork",
+            .trailing_text = "Preserve custom",
+        },
+        {
+            .label = "Replace All Artwork",
+            .trailing_text = "Overwrite custom",
+        },
+    };
+    cat_footer_item footer[] = {
+        { .button = CAT_BTN_B, .label = "Back" },
+        { .button = CAT_BTN_A, .label = "Select", .is_confirm = true },
+    };
+    cat_list_opts opts = cat_list_default_opts(
+        "Refresh Artwork", items, (int)(sizeof(items) / sizeof(items[0])));
+    opts.footer = footer;
+    opts.footer_count = 2;
+
+    cat_list_result selection = {0};
+    if (cat_list(&opts, &selection) != CAT_OK ||
+        selection.selected_index < 0 || selection.selected_index > 1) {
+        return;
+    }
+    pm_artwork_policy policy = selection.selected_index == 0
+        ? PM_ARTWORK_MANAGED_REFRESH
+        : PM_ARTWORK_REPLACE_ALL;
+    if (policy == PM_ARTWORK_REPLACE_ALL &&
+        !confirm_message(
+            "Replace all PortMaster launcher artwork?\n\n"
+            "This overwrites untracked and user-modified images in Images/PORTS.",
+            "Replace All")) {
+        return;
+    }
+
+    pm_artwork_sync_result result = {0};
+    char err[512];
+    if (pm_artwork_sync_with_policy(ctx, policy, &result, err, sizeof(err)) != 0) {
+        char msg[1024];
+        snprintf(msg, sizeof(msg), "Artwork refresh failed.\n\n%s",
+                 err[0] ? err : "Unknown error");
+        show_message(msg);
+        return;
+    }
+    pm_request_jawaka_library_rescan(ctx);
+    char msg[512];
+    snprintf(msg, sizeof(msg),
+             "Artwork refresh complete.\n\n"
+             "Updated: %d\nPreserved custom: %d\n"
+             "Already present: %d\nNo source: %d\nFailed: %d",
+             result.synced, result.preserved_custom, result.skipped_existing,
+             result.missing_source, result.failed);
+    show_message(msg);
 }
 
 static void show_troubleshooting_summary(pm_context *ctx,
@@ -1053,15 +1452,23 @@ static void show_troubleshooting_summary(pm_context *ctx,
         updates = "Check timed out";
     }
 
-    char msg[2048];
+    char msg[4096];
+    char sources[3072];
+    format_source_summary(ctx, sources, sizeof(sources));
     snprintf(msg, sizeof(msg),
-             "Status: %s\nPortMaster: %s\nUpdates: %s\nSetup: %s\nPorts folder: %s\nArtwork folder: %s",
+             "Status: %s\nPortMaster: %s\nUpdates: %s\nSetup: %s\n"
+             "Preferred install source: %s\nEffective session source: %s\n"
+             "Pending package moves: %d\n\n"
+             "Sources:\n%s",
              status,
              state->installed ? "Installed" : "Not installed",
              updates,
              state->setup_summary,
-             pm_dir_exists(ctx->ports_dir) ? "Found" : "Missing",
-             pm_dir_exists(ctx->port_images_dir) ? "Found" : "Missing");
+             ctx->preferred_install_source,
+             ctx->effective_install_source[0]
+                 ? ctx->effective_install_source : "(not resolved)",
+             pm_move_pending_count(ctx),
+             sources);
     show_text_detail("Quick Diagnostics", msg);
 }
 
@@ -1070,6 +1477,8 @@ static pm_trouble_action troubleshooting_menu(int *cursor)
     cat_list_item items[] = {
         { .label = "Quick Diagnostics" },
         { .label = "Run Health Check" },
+        { .label = "Refresh Artwork" },
+        { .label = "Recover Package Moves" },
         { .label = "Check For Updates" },
         { .label = "View Logs" },
         { .label = "View Paths" },
@@ -1077,6 +1486,8 @@ static pm_trouble_action troubleshooting_menu(int *cursor)
     static const pm_trouble_action map[] = {
         PM_TROUBLE_ACTION_QUICK_DIAGNOSTICS,
         PM_TROUBLE_ACTION_HEALTH,
+        PM_TROUBLE_ACTION_REFRESH_ARTWORK,
+        PM_TROUBLE_ACTION_RECOVER_MOVES,
         PM_TROUBLE_ACTION_CHECK_UPDATE,
         PM_TROUBLE_ACTION_LOGS,
         PM_TROUBLE_ACTION_PATHS,
@@ -1122,6 +1533,21 @@ static void show_troubleshooting(pm_context *ctx,
             case PM_TROUBLE_ACTION_HEALTH:
                 show_health(ctx);
                 break;
+            case PM_TROUBLE_ACTION_REFRESH_ARTWORK:
+                if (!state.installed) {
+                    show_message("PortMaster is not installed yet.\n\n"
+                                 "Install PortMaster before refreshing artwork.");
+                    break;
+                }
+                show_refresh_artwork(ctx);
+                break;
+            case PM_TROUBLE_ACTION_RECOVER_MOVES: {
+                char summary[1024];
+                (void)pm_move_recover_all(ctx, NULL, NULL,
+                                          summary, sizeof(summary));
+                show_message(summary);
+                break;
+            }
             case PM_TROUBLE_ACTION_CHECK_UPDATE:
                 if (!state.installed) {
                     show_message("PortMaster is not installed yet.\n\nInstall PortMaster before checking for updates.");
@@ -1151,7 +1577,7 @@ static int build_menu_rows(pm_context *ctx,
                            int max_rows)
 {
     int count = 0;
-    if (!ctx || !state || !items || !rows || max_rows < 5) {
+    if (!ctx || !state || !items || !rows || max_rows < 7) {
         return 0;
     }
 
@@ -1206,6 +1632,23 @@ static int build_menu_rows(pm_context *ctx,
     rows[count++] = (pm_menu_row){ .action = PM_ACTION_CONTROLLER_LAYOUT };
 
     items[count] = (cat_list_item){
+        .label = "Default Install Card",
+        .trailing_text = pm_install_source_label(ctx->preferred_install_source),
+    };
+    rows[count++] = (pm_menu_row){ .action = PM_ACTION_INSTALL_SOURCE };
+
+    static char manage_summary[64];
+    int pending_moves = pm_move_pending_count(ctx);
+    snprintf(manage_summary, sizeof(manage_summary),
+             pending_moves > 0 ? "%d recovery pending" : "Move packages",
+             pending_moves);
+    items[count] = (cat_list_item){
+        .label = "Manage Ports",
+        .trailing_text = manage_summary,
+    };
+    rows[count++] = (pm_menu_row){ .action = PM_ACTION_MANAGE_PORTS };
+
+    items[count] = (cat_list_item){
         .label = "Troubleshooting",
         .trailing_text = state->setup_state == PM_UI_SETUP_READY ? state->update_summary : state->setup_summary,
     };
@@ -1216,8 +1659,8 @@ static int build_menu_rows(pm_context *ctx,
 
 static pm_action menu(pm_context *ctx, const pm_ui_state *state)
 {
-    cat_list_item items[6];
-    pm_menu_row rows[6];
+    cat_list_item items[8];
+    pm_menu_row rows[8];
     int count = build_menu_rows(ctx, state, items, rows, (int)(sizeof(items) / sizeof(items[0])));
     if (count <= 0) {
         return PM_ACTION_QUIT;
@@ -1259,8 +1702,8 @@ int pm_ui_menu_state_text(pm_context *ctx, char *out, size_t out_size)
     pm_ui_state state;
     build_ui_state(ctx, &session, &state);
 
-    cat_list_item items[6];
-    pm_menu_row rows[6];
+    cat_list_item items[8];
+    pm_menu_row rows[8];
     int count = build_menu_rows(ctx, &state, items, rows,
                                 (int)(sizeof(items) / sizeof(items[0])));
 
@@ -1328,6 +1771,12 @@ void pm_ui_run(pm_context *ctx)
                 break;
             case PM_ACTION_CONTROLLER_LAYOUT:
                 show_controller_layout(ctx);
+                break;
+            case PM_ACTION_INSTALL_SOURCE:
+                show_install_source(ctx);
+                break;
+            case PM_ACTION_MANAGE_PORTS:
+                show_manage_ports(ctx);
                 break;
             case PM_ACTION_REPAIR:
                 show_repair(ctx);

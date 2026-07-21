@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "product": "pak-rat",
+  "catalog_revision": "released-v0.1.2",
+  "generated_at": "2026-07-09T21:57:11Z",
+  "apps": [
+    {
+      "id": "org.umrk.portmaster",
+      "name": "PortMaster",
+      "summary": "Install, launch, repair, and verify PortMaster on Leaf for MLP1.",
+      "description": "Immutable Pak Rat history seed for the released PortMaster 0.1.2 safe floor.",
+      "author": "Utility Muffin Research Kitchen",
+      "repo_url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1",
+      "categories": [
+        "tools",
+        "ports"
+      ],
+      "version": "0.1.2",
+      "packages": [
+        {
+          "platform": "mlp1",
+          "runtime": "leaf",
+          "version": "0.1.2",
+          "install_name": "PortMaster.pak",
+          "runtime_manifest_path": "pak.json",
+          "artifact": {
+            "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.2/PortMaster.mlp1.pak.zip",
+            "name": "PortMaster.mlp1.pak.zip",
+            "archive": "zip",
+            "size": 58224259,
+            "installed_size": 128325801,
+            "sha256": "a46f8f56a9cb01bb9c5888d88cd0e4efdba05e8c495d2b7c9228d7eb004a710a"
+          },
+          "versions": [
+            {
+              "version": "0.1.2",
+              "artifact": {
+                "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.2/PortMaster.mlp1.pak.zip",
+                "name": "PortMaster.mlp1.pak.zip",
+                "archive": "zip",
+                "size": 58224259,
+                "installed_size": 128325801,
+                "sha256": "a46f8f56a9cb01bb9c5888d88cd0e4efdba05e8c495d2b7c9228d7eb004a710a"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

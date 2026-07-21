@@ -31,8 +31,11 @@ ports_dir="${1:-${ROMS_PATH:-$sdcard_path/Roms}/PORTS}"
 leaf_dir="$data_dir/.leaf"
 report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
+latest_report_tsv="${LEAF_PM_ARMHF_SCAN_LATEST_TSV:-}"
+latest_report_json="${LEAF_PM_ARMHF_SCAN_LATEST_JSON:-}"
 RULESET_VERSION=17
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
+latest_manifest_path="${LEAF_PM_ARMHF_SCAN_LATEST_MANIFEST:-}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
 full_port_scan="${LEAF_PM_FULL_PORT_SCAN:-0}"
 scan_no_cache="${LEAF_PM_SCAN_NO_CACHE:-0}"
@@ -1616,7 +1619,7 @@ runtime_compat_gothic_machismo_vulkan_rotate_script() {
       print "# LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_VULKAN_ROTATE=1"
       print "# LEAF_PM_RUNTIME_COMPAT_GOTHIC_MACHISMO_VULKAN_ROTATE_VERSION=1"
       print "# MLP1 stock Vulkan direct-display needs the Leaf DRM rotate shim and a display-stack handoff."
-      print "# Leaf/Jawaka sets JAWAKA_DIRECT_DRM=1 for this handoff; otherwise fall back to GLES."
+      print "# The Leaf launcher sets JAWAKA_DIRECT_DRM=1 for this handoff; otherwise fall back to GLES."
       print "if declare -f leaf_pm_enable_gothic_machismo_vulkan_rotate >/dev/null 2>&1 &&"
       print "   leaf_pm_enable_gothic_machismo_vulkan_rotate; then"
       print "  :"
@@ -3394,6 +3397,12 @@ manifest_tmp=""
 cleanup_scan_tmp() {
   rm -rf "$scan_tmp_dir"
   rm -f "$tmp_records" "$tmp_json"
+  [ -z "$latest_report_tsv" ] ||
+    rm -f "$latest_report_tsv.tmp.$$"
+  [ -z "$latest_report_json" ] ||
+    rm -f "$latest_report_json.tmp.$$"
+  [ -z "$latest_manifest_path" ] ||
+    rm -f "$latest_manifest_path.tmp.$$"
   if [ -n "$manifest_tmp" ]; then
     rm -f "$manifest_tmp"
   fi
@@ -3787,6 +3796,23 @@ mv "$tmp_json" "$report_json"
 
 if [ "$manifest_write_enabled" -eq 1 ]; then
   mv "$manifest_tmp" "$manifest_path"
+fi
+
+mirror_latest_artifact() {
+  local source_path="$1"
+  local latest_path="$2"
+  local latest_tmp
+  [ -n "$latest_path" ] || return 0
+  [ "$source_path" != "$latest_path" ] || return 0
+  latest_tmp="$latest_path.tmp.$$"
+  cp "$source_path" "$latest_tmp"
+  mv "$latest_tmp" "$latest_path"
+}
+
+mirror_latest_artifact "$report_tsv" "$latest_report_tsv"
+mirror_latest_artifact "$report_json" "$latest_report_json"
+if [ "$manifest_write_enabled" -eq 1 ]; then
+  mirror_latest_artifact "$manifest_path" "$latest_manifest_path"
 fi
 
 scan_finished_ms="$(scan_now_ms)"

@@ -1,0 +1,386 @@
+--- pylibs/harbourmaster/harbour.py
++++ pylibs/harbourmaster/harbour.py
+@@ -30,6 +30,12 @@
+ from .source import *
+ from .platform import *
+ from .captain import *
++from .leaf_sources import (
++    configure as leaf_configure,
++    load_ports as leaf_load_ports,
++    prepare_install as leaf_prepare_install,
++    prepare_uninstall as leaf_prepare_uninstall,
++)
+ 
+ ################################################################################
+ ## Config loading
+@@ -93,6 +99,7 @@
+         self.themes_dir = tools_dir / "PortMaster" / "themes"
+         self.ports_dir  = ports_dir
+         self.scripts_dir   = scripts_dir
++        leaf_configure(self)
+         self.cfg_file      = self.cfg_dir / "config.json"
+         self.runtimes_file = self.cfg_dir / "runtimes.json"
+         self.need_restart  = False
+@@ -689,7 +696,7 @@
+         return (self.ports_dir / file_name)
+ 
+     @timeit
+-    def load_ports(self):
++    def _leaf_load_ports_one_source(self):
+         """
+         Find all installed ports, because ports can be installed by zips we need to recheck every time.
+         """
+@@ -1070,6 +1077,9 @@
+                 else:
+                     logger.warning(f"Unable to dump {str(ports_files[port_name])}: {port_info}")
+ 
++    def load_ports(self):
++        return leaf_load_ports(self)
++
+     def port_info_attrs(self, port_info):
+         runtime_fix = {
+             'godot': 'godot',
+@@ -1823,6 +1833,11 @@
+ 
+         We collect a list of top level scripts/directories, this is added to the port.json file.
+         """
++        if not leaf_prepare_install(self, download_info['name']):
++            if do_delete and download_info['zip_file'].is_file():
++                download_info['zip_file'].unlink()
++            return 255
++
+         undo_data = []
+         is_successs = False
+ 
+@@ -2336,7 +2351,9 @@
+         cprint(f"Unable to find a source for <b>{port_name}</b>")
+         return 255
+ 
+-    def uninstall_port(self, port_name):
++    def uninstall_port(self, port_name, source_id=None):
++        if not leaf_prepare_uninstall(self, port_name, source_id):
++            return 255
+         port_info = self.installed_ports.get(port_name.casefold(), None)
+         port_loc = self.installed_ports
+ 
+--- /dev/null
++++ pylibs/harbourmaster/leaf_sources.py
+@@ -0,0 +1,306 @@
++# SPDX-License-Identifier: MIT
++"""Leaf multi-SD inventory and source-owned mutation guard."""
++
++import json
++import os
++from pathlib import Path
++
++from loguru import logger
++
++from .util import name_cleaner
++
++
++def _split(name):
++    return os.environ.get(name, "").split(":") if os.environ.get(name) else []
++
++
++def _mounts():
++    path = os.environ.get("LEAF_PM_TEST_MOUNTINFO", "/proc/self/mountinfo")
++    result = {}
++    try:
++        with open(path, "rt") as stream:
++            for line in stream:
++                fields = line.rstrip().split(" ")
++                if "-" not in fields or len(fields) < 10:
++                    continue
++                split = fields.index("-")
++                mountpoint = fields[4]
++                for encoded, decoded in (
++                        ("\\040", " "), ("\\011", "\t"),
++                        ("\\012", "\n"), ("\\134", "\\")):
++                    mountpoint = mountpoint.replace(encoded, decoded)
++                result[mountpoint] = {
++                    "mount_id": fields[0],
++                    "device": fields[2],
++                    "filesystem": fields[split + 1],
++                    "source": fields[split + 2],
++                }
++    except OSError:
++        pass
++    return result
++
++
++def _message(hm, text):
++    logger.error(text)
++    try:
++        hm.callback.message_box(text)
++    except Exception:
++        pass
++
++
++def configure(hm):
++    ids = _split("HM_PORTS_READ_SOURCE_IDS")
++    ports = _split("HM_PORTS_READ_DIRS")
++    scripts = _split("HM_SCRIPTS_READ_DIRS")
++    roots = _split("LEAF_PM_SOURCE_ROOTS")
++    mount_ids = _split("LEAF_PM_SOURCE_MOUNT_IDS")
++    devices = _split("LEAF_PM_SOURCE_DEVICES")
++    st_devs = _split("LEAF_PM_SOURCE_ST_DEVS")
++    ports_st_devs = _split("LEAF_PM_SOURCE_PORTS_ST_DEVS")
++    fingerprints = _split("LEAF_PM_SOURCE_FINGERPRINTS")
++    fields = (
++        ports, scripts, roots, mount_ids, devices, st_devs,
++        ports_st_devs, fingerprints)
++    if not ids or any(len(values) != len(ids) for values in fields):
++        raise ValueError("Leaf multi-source environment is missing or misaligned")
++    if len(set(ids)) != len(ids) or len(set(ports)) != len(ports):
++        raise ValueError("Leaf multi-source environment contains duplicates")
++
++    hm.leaf_sources = {}
++    for index, source_id in enumerate(ids):
++        hm.leaf_sources[source_id] = {
++            "id": source_id,
++            "ports": Path(ports[index]),
++            "scripts": Path(scripts[index]),
++            "root": Path(roots[index]),
++            "mount_id": mount_ids[index],
++            "device": "" if devices[index] == "-" else devices[index],
++            "st_dev": st_devs[index],
++            "ports_st_dev": ports_st_devs[index],
++            "fingerprint": (
++                "" if fingerprints[index] == "-"
++                else fingerprints[index].replace(",", ":")),
++        }
++    hm.leaf_selected_source_id = os.environ.get(
++        "LEAF_PM_SELECTED_SOURCE_ID", "primary")
++    if hm.leaf_selected_source_id not in hm.leaf_sources:
++        raise ValueError("Selected Leaf install source is unavailable")
++    selected = hm.leaf_sources[hm.leaf_selected_source_id]
++    if hm.ports_dir != selected["ports"] or hm.scripts_dir != selected["scripts"]:
++        raise ValueError("Selected Leaf install roots do not match HarbourMaster roots")
++    hm.leaf_inventory_file = Path(os.environ.get(
++        "LEAF_PM_LAST_KNOWN_INVENTORY",
++        str(hm.tools_dir / "PortMaster" / "config" /
++            "leaf-installed-inventory.json")))
++    hm.leaf_duplicate_ports = {}
++    hm.leaf_last_known = _read_inventory(hm)
++
++
++def _fingerprint(source, mount):
++    fixture = os.environ.get("PORTMASTER_SOURCE_TEST_FINGERPRINT")
++    if fixture:
++        return f"fixture:{source['id']}:{fixture}"
++    try:
++        expected_major, expected_minor = (
++            int(value) for value in mount["device"].split(":", 1))
++        uuid_dir = Path("/dev/disk/by-uuid")
++        for item in uuid_dir.iterdir():
++            device = item.stat().st_rdev
++            if (os.major(device), os.minor(device)) == (
++                    expected_major, expected_minor):
++                return f"uuid:{item.name}"
++    except (OSError, ValueError):
++        pass
++    if mount["filesystem"] in ("vfat", "msdos", "fat"):
++        try:
++            with open(mount["source"], "rb") as stream:
++                sector = stream.read(512)
++            if len(sector) == 512 and sector[510:512] == b"\x55\xaa":
++                fat32 = (
++                    sector[17:19] == b"\0\0" and
++                    sector[22:24] == b"\0\0")
++                offset = 67 if fat32 else 39
++                serial = int.from_bytes(sector[offset:offset + 4], "little")
++                if serial:
++                    return f"fat:{serial:08x}"
++        except OSError:
++            pass
++    return ""
++
++
++def _guard(hm, source, action):
++    mount = _mounts().get(str(source["root"]))
++    try:
++        actual_st_dev = str(source["root"].stat().st_dev)
++    except OSError:
++        actual_st_dev = ""
++    try:
++        ports_path = (
++            source["ports"] if source["ports"].exists()
++            else source["ports"].parent)
++        actual_ports_st_dev = str(ports_path.stat().st_dev)
++    except OSError:
++        actual_ports_st_dev = ""
++    actual_fingerprint = _fingerprint(source, mount) if mount else ""
++    valid = (
++        mount is not None and
++        (not source["mount_id"] or source["mount_id"] == "0" or
++         mount["mount_id"] == source["mount_id"]) and
++        (not source["device"] or
++         mount["device"].replace(":", ",") == source["device"]) and
++        (not source["st_dev"] or actual_st_dev == source["st_dev"])
++        and (not source["ports_st_dev"] or
++             actual_ports_st_dev == source["ports_st_dev"])
++        and (not source["fingerprint"] or
++             actual_fingerprint == source["fingerprint"])
++    )
++    if not valid:
++        _message(
++            hm,
++            f"{action} stopped: {source['id']} is no longer the mounted "
++            "card selected at launch. Reinsert the original card and reopen "
++            "PortMaster. No fallback path was written.")
++    return valid
++
++
++def _read_inventory(hm):
++    try:
++        with hm.leaf_inventory_file.open("rt") as stream:
++            data = json.load(stream)
++        if data.get("version") != 1 or not isinstance(data.get("sources"), dict):
++            return {"version": 1, "sources": {}}
++        return data
++    except (OSError, ValueError, TypeError):
++        return {"version": 1, "sources": {}}
++
++
++def _write_inventory(hm, scanned):
++    data = _read_inventory(hm)
++    sources = data.setdefault("sources", {})
++    for source_id, port_names in scanned.items():
++        sources[source_id] = {"ports": sorted(port_names)}
++    hm.leaf_inventory_file.parent.mkdir(0o755, parents=True, exist_ok=True)
++    temporary = hm.leaf_inventory_file.with_name(
++        hm.leaf_inventory_file.name + f".tmp.{os.getpid()}")
++    with temporary.open("wt") as stream:
++        json.dump(data, stream, indent=2, sort_keys=True)
++        stream.flush()
++        os.fsync(stream.fileno())
++    temporary.replace(hm.leaf_inventory_file)
++    hm.leaf_last_known = data
++
++
++def _tag(record, source):
++    record["leaf_source_id"] = source["id"]
++    record["leaf_ports_dir"] = str(source["ports"])
++    record["leaf_scripts_dir"] = str(source["scripts"])
++    return record
++
++
++def load_ports(hm):
++    selected = hm.leaf_sources[hm.leaf_selected_source_id]
++    installed = {}
++    broken = {}
++    unknown = []
++    owners = {}
++    scanned = {}
++
++    try:
++        for source_id, source in hm.leaf_sources.items():
++            if not _guard(hm, source, "Inventory scan"):
++                continue
++            hm.ports_dir = source["ports"]
++            hm.scripts_dir = source["scripts"]
++            try:
++                hm._leaf_load_ports_one_source()
++            except OSError as error:
++                logger.error(f"Unable to scan {source_id}: {error}")
++                continue
++            scanned[source_id] = set(hm.installed_ports) | set(hm.broken_ports)
++            unknown.extend(
++                {"leaf_source_id": source_id, "item": item}
++                for item in hm.unknown_ports)
++            for collection_name, source_records in (
++                    ("installed", hm.installed_ports),
++                    ("broken", hm.broken_ports)):
++                target = installed if collection_name == "installed" else broken
++                for port_name, record in source_records.items():
++                    tagged = _tag(record, source)
++                    owners.setdefault(port_name, {})[source_id] = tagged
++                    if port_name not in installed and port_name not in broken:
++                        target[port_name] = tagged
++    finally:
++        hm.ports_dir = selected["ports"]
++        hm.scripts_dir = selected["scripts"]
++
++    hm.leaf_duplicate_ports = {
++        name: records for name, records in owners.items() if len(records) > 1}
++    for port_name, records in hm.leaf_duplicate_ports.items():
++        record = installed.get(port_name) or broken.get(port_name)
++        record["leaf_conflict"] = True
++        record["leaf_source_ids"] = sorted(records)
++
++    hm.installed_ports = installed
++    hm.broken_ports = broken
++    hm.unknown_ports = unknown
++    _write_inventory(hm, scanned)
++
++
++def _bind(hm, source_id, action):
++    source = hm.leaf_sources.get(source_id)
++    if source is None:
++        _message(hm, f"{action} stopped: source {source_id} is not mounted.")
++        return False
++    if not _guard(hm, source, action):
++        return False
++    hm.ports_dir = source["ports"]
++    hm.scripts_dir = source["scripts"]
++    return True
++
++
++def prepare_install(hm, port_name):
++    clean_name = name_cleaner(port_name)
++    if clean_name in hm.leaf_duplicate_ports:
++        _message(
++            hm,
++            f"{clean_name} exists on more than one card. Install/update is "
++            "blocked until one copy is removed explicitly from its source.")
++        return False
++
++    record = hm.installed_ports.get(clean_name) or hm.broken_ports.get(clean_name)
++    if record is not None:
++        return _bind(hm, record["leaf_source_id"], f"Update of {clean_name}")
++
++    current_sources = set(hm.leaf_sources)
++    for source_id, source_data in hm.leaf_last_known.get("sources", {}).items():
++        if source_id in current_sources:
++            continue
++        if clean_name in source_data.get("ports", []):
++            _message(
++                hm,
++                f"{clean_name} was last seen on unavailable source {source_id}. "
++                "Insert that card to rescan, or clear the advisory inventory "
++                "before installing another copy.")
++            return False
++    return _bind(
++        hm, hm.leaf_selected_source_id, f"Install of {clean_name}")
++
++
++def prepare_uninstall(hm, port_name, source_id=None):
++    clean_name = name_cleaner(port_name)
++    if clean_name in hm.leaf_duplicate_ports:
++        if source_id not in hm.leaf_duplicate_ports[clean_name]:
++            _message(
++                hm,
++                f"{clean_name} exists on more than one card. Choose an explicit "
++                "source before uninstalling.")
++            return False
++        record = hm.leaf_duplicate_ports[clean_name][source_id]
++        hm.installed_ports[clean_name] = record
++        hm.broken_ports.pop(clean_name, None)
++    else:
++        record = hm.installed_ports.get(clean_name) or hm.broken_ports.get(clean_name)
++        if record is None:
++            return True
++        source_id = record["leaf_source_id"]
++    return _bind(hm, source_id, f"Uninstall of {clean_name}")
+--- pugwash
++++ pugwash
+@@ -1027,7 +1027,8 @@
+ 
+             self.port_size_files[port_name] = {}
+ 
+-            ports_dir = harbourmaster.HM_PORTS_DIR
++            ports_dir = Path(port_info.get(
++                'leaf_ports_dir', str(harbourmaster.HM_PORTS_DIR)))
+             for file_name in port_info['files']:
+                 if file_name == 'port.json':
+                     continue

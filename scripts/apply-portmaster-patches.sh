@@ -12,6 +12,11 @@ fi
 
 test -d "$TREE" || { echo "missing tree: $TREE" >&2; exit 1; }
 
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/portmaster-patch-check.XXXXXX")"
+trap 'rm -rf "$scratch"' EXIT HUP INT TERM
+cp -R "$TREE/." "$scratch/"
+TREE="$scratch"
+
 if [ -f "$TREE/pylibs.zip" ]; then
   echo "prepare: extracting pylibs.zip"
   rm -rf "$TREE/pylibs"
@@ -59,6 +64,21 @@ for patch in "${patches[@]}"; do
         continue
       fi
       ;;
+    0009-leaf-multi-source-inventory.patch)
+      if [ -f "$TREE/pylibs/harbourmaster/leaf_sources.py" ] &&
+        grep -q 'LEAF_PM_SELECTED_SOURCE_ID' \
+          "$TREE/pylibs/harbourmaster/leaf_sources.py"; then
+        echo "already applied"
+        continue
+      fi
+      ;;
+    0010-leaf-ignore-move-staging.patch)
+      if grep -q 'leaf_reserved' \
+        "$TREE/pylibs/harbourmaster/harbour.py"; then
+        echo "already applied"
+        continue
+      fi
+      ;;
   esac
-  (cd "$TREE" && patch --dry-run -p0 -i "$patch" >/dev/null)
+  (cd "$TREE" && patch -p0 -i "$patch" >/dev/null)
 done
