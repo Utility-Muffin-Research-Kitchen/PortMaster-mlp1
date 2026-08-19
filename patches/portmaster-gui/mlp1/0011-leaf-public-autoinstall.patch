@@ -1,0 +1,34 @@
+--- PortMaster.sh
++++ PortMaster.sh
+@@ -42,0 +43 @@
++# LEAF_PM_PUBLIC_AUTOINSTALL: use the manager-validated selected install source.
+@@ -44 +45 @@
+-AUTOINSTALL_DIR_2="/$directory/ports/autoinstall"
++AUTOINSTALL_DIR_2="${HM_PORTS_DIR:-/$directory/ports}/autoinstall"
+@@ -49,0 +51,12 @@
++AUTOINSTALL_README="$AUTOINSTALL_DIR_2/README.txt"
++if [ ! -e "$AUTOINSTALL_README" ]; then
++  cat > "$AUTOINSTALL_README" <<'EOF'
++Copy PortMaster-format port ZIP files here without extracting them.
++Open PortMaster to install them.
++Successful ZIPs disappear; failed ZIPs remain here so you can retry.
++Third-party ports are supported by their authors, may require legally owned
++game data, and are not guaranteed to work on Leaf.
++With two cards, choose this card under Default Install Card in PortMaster.
++EOF
++fi
++
+@@ -65 +78,3 @@
+-      if [ "$(PortMasterDialogResult "install" "$autoinstall_dir/PortMaster.zip")" = "OKAY" ]; then
++      if [ "$autoinstall_dir" = "$AUTOINSTALL_DIR_2" ]; then
++        PortMasterDialog "message" "- SKIPPED: PortMaster.zip is managed by Leaf. Use Leaf's Update PortMaster action."
++      elif [ "$(PortMasterDialogResult "install" "$autoinstall_dir/PortMaster.zip")" = "OKAY" ]; then
+@@ -143,0 +159,8 @@
++        if [ "$autoinstall_dir" = "$AUTOINSTALL_DIR_2" ]; then
++          case "$base_file" in
++            [Pp][Oo][Rr][Tt][Mm][Aa][Ss][Tt][Ee][Rr].[Zz][Ii][Pp])
++              PortMasterDialog "message" "- SKIPPED: $base_file is managed by Leaf. Use Leaf's Update PortMaster action."
++              continue
++              ;;
++          esac
++        fi

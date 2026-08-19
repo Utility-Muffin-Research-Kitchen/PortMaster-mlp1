@@ -82,9 +82,11 @@ Update attempts are appended to:
 $USERDATA_PATH/portmaster/.leaf/logs/update.log
 ```
 
-The staged candidate validator checks that `PortMaster.sh`, `pugwash`,
-`control.txt`, `device_info.txt`, and HarbourMaster `hardware.py` contain the
-expected Leaf markers before the live tree is touched.
+The staged candidate validator checks that `PortMaster.sh` retains the
+`HM_PORTS_DIR` public-autoinstall behavior and public `PortMaster.zip` guard,
+and that `pugwash`, `control.txt`, `device_info.txt`, and HarbourMaster
+`hardware.py` contain the expected Leaf markers before the live tree is
+touched.
 
 When opening upstream support or review threads, attach a current support bundle
 instead of asking maintainers to infer device state from screenshots:
@@ -108,12 +110,15 @@ Native failure fixtures are available with:
 
 ```sh
 make update-failure-fixtures
+make autoinstall-fixtures
 ```
 
-Known deferred bypass: upstream `PortMaster.sh` can still process a manually
-dropped `PortMaster.zip` from an autoinstall directory before `pugwash` starts.
-This phase does not intercept that path. The post-exit repair pass is kept so
-accidental tree changes are repaired when the current patch set still applies.
+`make autoinstall-fixtures` installs the lock-pinned upstream tree into a
+temporary root, verifies repeated repair, and exercises the patched
+autoinstaller with its dialog/HarbourMaster boundary stubbed. The public inbox
+rejects `PortMaster.zip`; the hidden internal autoinstall directory keeps its
+upstream/developer behavior. The post-exit repair pass remains in place for
+accidental tree changes when the current patch set still applies.
 
 Runtime note: upstream PortMaster currently requires `python3`; stock MLP1 does
 not provide it. `--install-ui-runtime` downloads the lock-pinned generated

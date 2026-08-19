@@ -23,6 +23,7 @@ make preference-fixtures
 make multi-source-fixtures
 make artwork-fixtures
 make move-fixtures
+make autoinstall-fixtures
 make package-platform PLATFORM=mlp1
 make dist-pakrat
 ```
@@ -125,6 +126,14 @@ manager launch and each artwork action.
 
 The wrapper exports the selected source as `HM_PORTS_DIR`/`HM_SCRIPTS_DIR` and
 all available sources as `HM_PORTS_READ_DIRS`/`HM_SCRIPTS_READ_DIRS`.
+PortMaster exposes its existing autoinstaller at
+`$HM_PORTS_DIR/autoinstall`, which is the selected card's visible
+`Roms/PORTS/autoinstall` directory. Copy PortMaster-format port ZIPs there
+without extracting them, choose the same card under **Default Install Card**,
+and open PortMaster. Successful ZIPs are removed and failed ZIPs remain for
+retry. A public `PortMaster.zip` is left untouched because GUI updates must use
+the manager-owned **Update PortMaster** action.
+
 The pinned HarbourMaster overlay merges that inventory and tags each installed
 record with its owning logical source. New installs use the selected source;
 updates and uninstalls rebind to the existing package's owner. Duplicate
