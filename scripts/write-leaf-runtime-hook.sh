@@ -245,15 +245,91 @@ leaf_pm_enable_java8_weston_runtime() {
 
 export LEAF_PM_EGL_SHIM_DIR="\${LEAF_PM_EGL_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/egl/aarch64}"
 export LEAF_PM_MALI_AARCH64_DIR="\${LEAF_PM_MALI_AARCH64_DIR:-\$LEAF_PM_DATA_DIR/compat/mali/aarch64}"
+# Godot 3.x runs through FRT builds (frt_*.squashfs, "frt" in the binary name);
+# everything else on the Godot path here is Godot 4.x. Err towards Godot 4 when
+# the command name says nothing, since that is where the draw-loss bug lives.
+# The former per-draw glFinish default serialised the GPU, so simple_ondemand
+# measured a mostly-idle GPU and parked it at the 200MHz floor. Historical
+# Slime 3K title-screen measurements under that mode were (GPU load, lower =
+# more headroom):
+#   200MHz 28%   300MHz 20%   400MHz 15%   600MHz 11%   800MHz 11%
+# With the fence:2 default, a live gameplay run measured 20-22% at 600MHz. The
+# lower-frequency sweep has not been repeated under fence:2, so retain 600MHz
+# as a conservative floor while the broader game matrix catches up.
+# Set LEAF_PM_GODOT_GPU_MIN_FREQ=0 to leave DVFS alone.
+leaf_pm_godot_gpu_dir() {
+  for _d in /sys/class/devfreq/*.gpu; do
+    [ -f "\$_d/min_freq" ] && { echo "\$_d"; return 0; }
+  done
+  return 1
+}
+
+leaf_pm_restore_godot_gpu_floor() {
+  [ "\${LEAF_PM_GODOT_GPU_FLOOR_APPLIED:-0}" = "1" ] || return 0
+  export LEAF_PM_GODOT_GPU_FLOOR_APPLIED=0
+  _leaf_pm_gpu_dir="\$(leaf_pm_godot_gpu_dir)" || return 0
+  # Restore to the hardware floor rather than a remembered value: if a previous
+  # port was SIGKILLed its trap never ran, and a remembered value would be wrong.
+  _leaf_pm_gpu_lowest="\$(tr ' ' '\n' < "\$_leaf_pm_gpu_dir/available_frequencies" 2>/dev/null | grep -E '^[0-9]+\$' | sort -n | head -1)"
+  [ -n "\$_leaf_pm_gpu_lowest" ] && echo "\$_leaf_pm_gpu_lowest" > "\$_leaf_pm_gpu_dir/min_freq" 2>/dev/null
+  unset _leaf_pm_gpu_dir _leaf_pm_gpu_lowest
+}
+
+leaf_pm_apply_godot_gpu_floor() {
+  [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
+  _leaf_pm_gpu_target="\${LEAF_PM_GODOT_GPU_MIN_FREQ:-600000000}"
+  case "\$_leaf_pm_gpu_target" in
+    0|""|no|NO|false|FALSE) unset _leaf_pm_gpu_target; return 0 ;;
+  esac
+  _leaf_pm_gpu_dir="\$(leaf_pm_godot_gpu_dir)" || { unset _leaf_pm_gpu_target; return 0; }
+  [ -w "\$_leaf_pm_gpu_dir/min_freq" ] || { unset _leaf_pm_gpu_target _leaf_pm_gpu_dir; return 0; }
+  # Only accept a frequency the hardware actually advertises.
+  if ! tr ' ' '\n' < "\$_leaf_pm_gpu_dir/available_frequencies" 2>/dev/null | grep -qx "\$_leaf_pm_gpu_target"; then
+    unset _leaf_pm_gpu_target _leaf_pm_gpu_dir
+    return 0
+  fi
+  if echo "\$_leaf_pm_gpu_target" > "\$_leaf_pm_gpu_dir/min_freq" 2>/dev/null; then
+    export LEAF_PM_GODOT_GPU_FLOOR_APPLIED=1
+  fi
+  unset _leaf_pm_gpu_target _leaf_pm_gpu_dir
+}
+
+leaf_pm_godot_cmd_is_godot4() {
+  case "\${1##*/}" in
+    *frt*|*FRT*) return 1 ;;
+    *godot_3*|*godot3*|*godot-3*) return 1 ;;
+  esac
+  case "\${LEAF_PM_GODOT_FORCE_GODOT4:-}" in
+    0|false|no|FALSE|NO) return 1 ;;
+  esac
+  return 0
+}
+
 leaf_pm_prepare_godot_runtime_env() {
   [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
   export LEAF_PM_SKIP_WESTONPACK_CLEANUP="\${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}"
-  # The stock Mali blob mis-tracks in-flight GPU jobs against Godot 4's
-  # streamed canvas buffers: the kernel logs "Unhandled Page fault" / job
-  # TERMINATED every frame and the screen stays black after the boot splash.
-  # The Leaf EGL shim serializes draws to work around it (1 = glFinish after
-  # each draw). Override with LEAF_PM_GODOT_DRAW_FINISH=0 to disable.
-  export LEAF_EGL_DRAW_FINISH="\${LEAF_PM_GODOT_DRAW_FINISH:-\${LEAF_EGL_DRAW_FINISH:-1}}"
+  # Godot 4 loses draws on the stock Mali stack with no barrier or with the
+  # weaker flush/sync/upload, instanced-only, and every-Nth-draw experiments.
+  # fence:2 fences and flushes every draw, then waits two draws behind, keeping
+  # bounded CPU/GPU overlap without dropping the ordering workaround. A managed
+  # Slime 3K run produced a pixel-identical title, survived about nine minutes of
+  # real gameplay and multiple inputs with complete snapshots, and logged no new
+  # Mali fault line. Its median was 49.2 fps versus 27.8 for per-draw glFinish.
+  # The context-safe implementation then passed another 90-second managed input
+  # soak at a 50.3 fps median, plus alternating- and parallel-context stress,
+  # again without a new Mali fault.
+  # LEAF_PM_GODOT_DRAW_FINISH=1 is the safe fully-serialised rollback;
+  # LEAF_PM_GODOT_DRAW_FINISH=0 disables the workaround only for diagnosis.
+  #
+  # Godot 3.x / FRT is unaffected -- it has no fence path and orphans its
+  # canvas buffers with glBufferData(..., NULL, ...), which is inherently safe --
+  # so it gets no barrier. It had been paying for one anyway, which cost roughly
+  # 2.5x frame time in Bananaguy 2 (25 fps -> 60 fps locked once disabled).
+  if leaf_pm_godot_cmd_is_godot4 "\${1:-}"; then
+    export LEAF_EGL_DRAW_FINISH="\${LEAF_PM_GODOT_DRAW_FINISH:-\${LEAF_EGL_DRAW_FINISH:-fence:2}}"
+  else
+    export LEAF_EGL_DRAW_FINISH="\${LEAF_PM_GODOT_DRAW_FINISH:-\${LEAF_EGL_DRAW_FINISH:-0}}"
+  fi
   _leaf_pm_godot_cmd="\${1:-}"
   _leaf_pm_godot_use_mali_default=0
   _leaf_pm_godot_use_mali="\${LEAF_PM_GODOT_USE_MALI_COMPAT:-\$_leaf_pm_godot_use_mali_default}"
@@ -262,6 +338,9 @@ leaf_pm_prepare_godot_runtime_env() {
   _leaf_pm_egl_shim="\${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1"
   case "\$_leaf_pm_godot_use_mali" in
     1|true|yes|TRUE|YES)
+      # Diagnostic override: the Vulkan g29p1 bundle. It has no wayland winsys,
+      # so this will fail to get an EGL display on the Weston path -- kept only
+      # for deliberate bisection.
       if [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ]; then
         export LEAF_PM_MALI_LIB="\$LEAF_PM_MALI_AARCH64_DIR/libmali.so.1"
         case ":\${LD_LIBRARY_PATH:-}:" in
@@ -304,27 +383,48 @@ leaf_pm_args_have_window_mode() {
 
 leaf_pm_run_godot_wayland_runtime() {
   [ "\$#" -gt 0 ] || return 127
-  _leaf_pm_godot_cmd="\$1"
-  shift
-  leaf_pm_prepare_godot_runtime_env "\$_leaf_pm_godot_cmd"
-  if leaf_pm_args_have_display_driver "\$@"; then
-    "\$_leaf_pm_godot_cmd" "\$@"
-    return \$?
-  fi
-  "\$_leaf_pm_godot_cmd" --display-driver wayland "\$@"
+  # The launcher's post-run Weston cleanup guard must remain set in its shell.
+  export LEAF_PM_SKIP_WESTONPACK_CLEANUP="\${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}"
+  (
+    # Keep GPU cleanup traps inside this runner's subshell. Port launchers often
+    # own EXIT and signal traps themselves, and the runtime hook must not replace
+    # them. Signal handlers retain normal terminating exit statuses; EXIT does
+    # the one cleanup operation this subshell owns.
+    trap 'leaf_pm_restore_godot_gpu_floor' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    _leaf_pm_godot_cmd="\$1"
+    shift
+    leaf_pm_prepare_godot_runtime_env "\$_leaf_pm_godot_cmd"
+    leaf_pm_apply_godot_gpu_floor
+    if leaf_pm_args_have_display_driver "\$@"; then
+      "\$_leaf_pm_godot_cmd" "\$@"
+      return \$?
+    fi
+    "\$_leaf_pm_godot_cmd" --display-driver wayland "\$@"
+  )
 }
 
 leaf_pm_run_godot_sdl2_runtime() {
   [ "\$#" -gt 0 ] || return 127
-  _leaf_pm_godot_cmd="\$1"
-  shift
-  leaf_pm_prepare_godot_runtime_env "\$_leaf_pm_godot_cmd"
-  _leaf_pm_direct_resolution="\${LEAF_PM_GODOT_DIRECT_RESOLUTION:-960x720}"
-  if [ -n "\$_leaf_pm_direct_resolution" ] && ! leaf_pm_args_have_window_mode "\$@"; then
-    "\$_leaf_pm_godot_cmd" --resolution "\$_leaf_pm_direct_resolution" "\$@"
-    return \$?
-  fi
-  "\$_leaf_pm_godot_cmd" "\$@"
+  export LEAF_PM_SKIP_WESTONPACK_CLEANUP="\${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}"
+  (
+    trap 'leaf_pm_restore_godot_gpu_floor' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    _leaf_pm_godot_cmd="\$1"
+    shift
+    leaf_pm_prepare_godot_runtime_env "\$_leaf_pm_godot_cmd"
+    leaf_pm_apply_godot_gpu_floor
+    _leaf_pm_direct_resolution="\${LEAF_PM_GODOT_DIRECT_RESOLUTION:-960x720}"
+    if [ -n "\$_leaf_pm_direct_resolution" ] && ! leaf_pm_args_have_window_mode "\$@"; then
+      "\$_leaf_pm_godot_cmd" --resolution "\$_leaf_pm_direct_resolution" "\$@"
+      return \$?
+    fi
+    "\$_leaf_pm_godot_cmd" "\$@"
+  )
 }
 
 leaf_pm_enable_godot_wayland_runtime() {

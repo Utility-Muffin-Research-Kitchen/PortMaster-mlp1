@@ -57,7 +57,7 @@ ifeq ($(shell uname -s),Darwin)
 LDLIBS_COMMON += -lobjc
 endif
 
-.PHONY: all native run-native artwork-fixtures source-fixtures scan-source-fixtures multi-source-fixtures preference-fixtures move-fixtures mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke self-heal-smoke armhf-install-fixtures update-failure-fixtures smoke-matrix fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
+.PHONY: all native run-native artwork-fixtures source-fixtures scan-source-fixtures multi-source-fixtures preference-fixtures move-fixtures godot-hook-fixtures mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke self-heal-smoke armhf-install-fixtures update-failure-fixtures smoke-matrix fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
 
 all: native
 
@@ -91,6 +91,9 @@ preference-fixtures: native
 
 move-fixtures: native
 	@MOVE_TEST_BINARY="$(abspath $(APP_BIN))" bash ./tools/move-fixtures.sh
+
+godot-hook-fixtures:
+	@bash ./tools/godot-hook-fixtures.sh
 
 mlp1:
 	@VERSION="$(VERSION)" ./scripts/build-mlp1.sh
