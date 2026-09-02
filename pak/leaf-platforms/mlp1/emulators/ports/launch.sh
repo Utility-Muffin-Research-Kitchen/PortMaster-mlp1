@@ -46,6 +46,15 @@ fi
 
 resolve_mlp1_virtual_gamepad() {
     awk '
+        # Each device record starts with "I:". Without clearing the flags here
+        # they leak across records, and the print rule fires on the "S:" line
+        # of the gamepad while "event" still holds the node of the PREVIOUS
+        # device.
+        /^I:/ {
+            name = 0
+            virtual = 0
+            event = ""
+        }
         /^N: Name="Loong Gamepad"/ {
             name = 1
         }
@@ -53,9 +62,15 @@ resolve_mlp1_virtual_gamepad() {
             virtual = 1
         }
         /^H: Handlers=/ {
+            # "H: Handlers=event6 dmcfreq" glues the first handler to the key,
+            # so the field is "Handlers=event6" and a bare /^event[0-9]+$/ test
+            # silently misses any device whose event node happens to come
+            # first. Strip the key before matching.
             for (i = 1; i <= NF; i++) {
-                if ($i ~ /^event[0-9]+$/) {
-                    event = $i
+                handler = $i
+                sub(/^Handlers=/, "", handler)
+                if (handler ~ /^event[0-9]+$/) {
+                    event = handler
                 }
             }
         }
