@@ -1,5 +1,27 @@
 #!/bin/sh
 set -eu
+# LOG-SAFE-1. The session log lives on a FAT card and can go unwritable (a bad
+# cluster chain, a full card, or the FAT32 4 GiB per-file ceiling). stdout and
+# stderr here are inherited from the launcher and point at that file. Under
+# set -e a failed echo would abort this script and the game would never start,
+# so probe both once and fall back to /dev/null, then never let a log write
+# decide whether a game launches.
+leaf_log_probe() {
+    # A real byte, not a zero-length write: a 0-byte write can succeed without
+    # touching the device and would not detect EIO/EFBIG. The subshell ignores
+    # SIGXFSZ: past a file-size rlimit the kernel raises it, and its default
+    # action would kill this shell before the write could fail with EFBIG.
+    ( trap '' XFSZ; printf '\n' ) 2>/dev/null
+}
+leaf_log_probe >/dev/null 2>&1 || true
+if ! leaf_log_probe; then
+    exec >/dev/null
+fi
+if ! leaf_log_probe >&2; then
+    exec 2>/dev/null
+fi
+
+log() { ( trap '' XFSZ; printf '%s\n' "$*" ) 2>/dev/null || true; }
 
 SCRIPT_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 PLATFORM_ROOT="$(CDPATH= cd "$SCRIPT_DIR/../.." && pwd)"
@@ -46,6 +68,17 @@ fi
 
 resolve_mlp1_virtual_gamepad() {
     awk '
+        # Reset on the record header, not on the blank line between records.
+        # Every record starts with "I:", so this cannot be skipped; a
+        # separator-based reset leaks state into the next record if the blank
+        # line is ever absent, and the leak is silent -- it yields a real,
+        # existing event node belonging to the previous device, which passes
+        # the [ -e ] guard below.
+        /^I:/ {
+            name = 0
+            virtual = 0
+            event = ""
+        }
         /^N: Name="Loong Gamepad"/ {
             name = 1
         }
@@ -53,9 +86,15 @@ resolve_mlp1_virtual_gamepad() {
             virtual = 1
         }
         /^H: Handlers=/ {
+            # "H: Handlers=event6 dmcfreq" glues the first handler to the key,
+            # so the field is "Handlers=event6" and a bare /^event[0-9]+$/ test
+            # silently misses any device whose event node happens to come
+            # first. Strip the key before matching.
             for (i = 1; i <= NF; i++) {
-                if ($i ~ /^event[0-9]+$/) {
-                    event = $i
+                handler = $i
+                sub(/^Handlers=/, "", handler)
+                if (handler ~ /^event[0-9]+$/) {
+                    event = handler
                 }
             }
         }
@@ -68,7 +107,9 @@ resolve_mlp1_virtual_gamepad() {
 
 find_optional_portmaster_runtime_prepare() {
     if [ -n "${PORTMASTER_RUNTIME_PREPARE:-}" ]; then
-        [ -x "$PORTMASTER_RUNTIME_PREPARE" ] && printf '%s\n' "$PORTMASTER_RUNTIME_PREPARE"
+        if [ -x "$PORTMASTER_RUNTIME_PREPARE" ]; then
+            printf '%s\n' "$PORTMASTER_RUNTIME_PREPARE" 2>/dev/null || true
+        fi
         return 0
     fi
 
@@ -89,7 +130,7 @@ find_optional_portmaster_runtime_prepare() {
             "shared/PortMaster.pak/scripts/prepare-port-runtime.sh"; do
             candidate="$app_root/$rel"
             if [ -x "$candidate" ]; then
-                printf '%s\n' "$candidate"
+                printf '%s\n' "$candidate" 2>/dev/null || true
                 return 0
             fi
         done
@@ -104,16 +145,16 @@ run_optional_portmaster_runtime_prepare() {
     prepare_script="$(find_optional_portmaster_runtime_prepare | head -n 1)"
     [ -n "$prepare_script" ] || return 0
 
-    echo "[ports] preparing optional PortMaster runtime"
+    log "[ports] preparing optional PortMaster runtime"
     PORTMASTER_PORT_SCRIPT="$port_script" \
     PORTMASTER_PORTS_DIR="$ports_dir" \
     PORTMASTER_MLP1_DATA_DIR="$pm_data" \
-    "$prepare_script" || echo "[ports] optional PortMaster runtime prep failed: $prepare_script"
+    "$prepare_script" || log "[ports] optional PortMaster runtime prep failed: $prepare_script"
 }
 
 port_script="${1:-${JAWAKA_GAME_ROM_ABS:-}}"
 if [ -z "$port_script" ]; then
-    echo "ports launcher: missing port script path" >&2
+    log "ports launcher: missing port script path"
     exit 64
 fi
 
@@ -123,7 +164,7 @@ case "$port_script" in
 esac
 
 if [ ! -f "$port_script" ]; then
-    echo "ports launcher: script not found: $port_script" >&2
+    log "ports launcher: script not found: $port_script"
     exit 66
 fi
 
@@ -135,14 +176,14 @@ if [ -z "$port_shell" ]; then
     port_shell="/usr/bin/bash"
 fi
 if [ ! -x "$port_shell" ]; then
-    echo "ports launcher: bash not found: $port_shell" >&2
+    log "ports launcher: bash not found: $port_shell"
     exit 69
 fi
 
 case "$port_script" in
     */Roms/PORTS/*.sh|*/Roms/Ports/*.sh|*/Roms/ports/*.sh) ;;
     *)
-        echo "ports launcher: refusing non-PortMaster script: $port_script" >&2
+        log "ports launcher: refusing non-PortMaster script: $port_script"
         exit 65
         ;;
 esac
@@ -197,9 +238,9 @@ if [ "${PLATFORM:-mlp1}" = "mlp1" ] && [ -z "${SDL_JOYSTICK_DEVICE:-}" ]; then
 
     if [ -n "$MLP1_VIRTUAL_GAMEPAD" ] && [ -e "$MLP1_VIRTUAL_GAMEPAD" ]; then
         export SDL_JOYSTICK_DEVICE="$MLP1_VIRTUAL_GAMEPAD"
-        echo "[ports] using calibrated Leaf virtual gamepad: $SDL_JOYSTICK_DEVICE"
+        log "[ports] using calibrated Leaf virtual gamepad: $SDL_JOYSTICK_DEVICE"
     else
-        echo "[ports] calibrated Leaf virtual gamepad not found; using SDL default joystick scan"
+        log "[ports] calibrated Leaf virtual gamepad not found; using SDL default joystick scan"
     fi
 fi
 
@@ -274,7 +315,7 @@ SH
 }
 
 if [ ! -x "$UMRK_RETROARCH_BIN" ]; then
-    echo "ports launcher: RetroArch missing: $UMRK_RETROARCH_BIN" >&2
+    log "ports launcher: RetroArch missing: $UMRK_RETROARCH_BIN"
     exit 69
 fi
 
@@ -302,15 +343,27 @@ if [ -d "$ports_dir" ] && [ -d /roms/ports ] &&
         ports_bind_mounted=1
     fi
 elif [ -d "$ports_dir" ] && [ ! -d /roms/ports ]; then
-    echo "ports launcher: /roms/ports mountpoint absent; not creating rootfs paths" >&2
+    log "ports launcher: /roms/ports mountpoint absent; not creating rootfs paths"
 fi
 
 cd "$ports_dir"
+# LOG-SAFE-1. A port's own output no longer lands in the session log: it is the
+# main reason that file ever grew large enough for one bad cluster to matter.
+# Each launch gets a per-port log on the card, with /dev/null as the fallback
+# when the card will not take it.
+port_log="${LOGS_PATH:-/tmp}/ports/$(basename "$port_script" .sh).log"
+if mkdir -p "${port_log%/*}" 2>/dev/null &&
+   printf '\n' >>"$port_log" 2>/dev/null; then
+    log "[ports] port output: $port_log"
+else
+    port_log=/dev/null
+    log "[ports] port log unavailable; port output discarded"
+fi
 if command -v setsid >/dev/null 2>&1; then
-    setsid "$port_shell" "$port_script" &
+    setsid "$port_shell" "$port_script" >>"$port_log" 2>&1 &
     port_uses_setsid=1
 else
-    "$port_shell" "$port_script" &
+    "$port_shell" "$port_script" >>"$port_log" 2>&1 &
 fi
 port_pid="$!"
 set +e
