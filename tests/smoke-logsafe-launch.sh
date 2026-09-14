@@ -11,7 +11,7 @@
 # every file write including the config seeding the wrapper legitimately
 # needs, which is stricter than the field condition. The SIGXFSZ/EFBIG class
 # is covered at the probe level inside the preamble (ignored in a subshell) so
-# the 4 GiB-ceiling case fails the probe instead of killing the shell.
+# a file-size rlimit fails the probe instead of killing the shell.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
