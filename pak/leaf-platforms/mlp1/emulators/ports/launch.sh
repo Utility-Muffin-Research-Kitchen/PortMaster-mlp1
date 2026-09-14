@@ -128,7 +128,7 @@ find_optional_portmaster_runtime_prepare() {
             "shared/PortMaster.pak/scripts/prepare-port-runtime.sh"; do
             candidate="$app_root/$rel"
             if [ -x "$candidate" ]; then
-                printf '%s\n' "$candidate"
+                printf '%s\n' "$candidate" 2>/dev/null || true
                 return 0
             fi
         done
