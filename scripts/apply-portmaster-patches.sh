@@ -58,6 +58,25 @@ for patch in "${patches[@]}"; do
         continue
       fi
       ;;
+    0005-leaf-armhf-hook.patch)
+      if grep -q 'leaf-armhf-env.sh' "$TREE/control.txt"; then
+        echo "already applied"
+        continue
+      fi
+      ;;
+    0006-leaf-armhf-gui-capability.patch)
+      if grep -q 'LEAF_PM_ARMHF_ROOT' \
+        "$TREE/pylibs/harbourmaster/hardware.py"; then
+        echo "already applied"
+        continue
+      fi
+      ;;
+    0007-leaf-disable-self-update.patch)
+      if grep -q 'LEAF_PM_DISABLE_SELF_UPDATE' "$TREE/pugwash"; then
+        echo "already applied"
+        continue
+      fi
+      ;;
     0008-leaf-quote-esudo-check.patch)
       if grep -q 'ESUDO:-' "$TREE/control.txt"; then
         echo "already applied"
@@ -75,6 +94,13 @@ for patch in "${patches[@]}"; do
     0010-leaf-ignore-move-staging.patch)
       if grep -q 'leaf_reserved' \
         "$TREE/pylibs/harbourmaster/harbour.py"; then
+        echo "already applied"
+        continue
+      fi
+      ;;
+    0011-leaf-public-autoinstall.patch)
+      if grep -Fq 'AUTOINSTALL_DIR_2="${HM_PORTS_DIR:-/$directory/ports}/autoinstall"' \
+        "$TREE/PortMaster.sh"; then
         echo "already applied"
         continue
       fi

@@ -467,6 +467,21 @@ static int apply_patch_records(const char *tree, const pm_patch_record *records,
                 continue;
             }
             free(content);
+        } else if (strcmp(records[i].name, "0011-leaf-public-autoinstall.patch") == 0) {
+            char target[PM_PATH_MAX];
+            if (pm_join(target, sizeof(target), tree, "PortMaster.sh") != 0) {
+                snprintf(err, err_size, "PortMaster.sh path too long");
+                return -1;
+            }
+            char marker_err[128];
+            char *content = pm_read_text_file(target, 256 * 1024,
+                                              marker_err, sizeof(marker_err));
+            if (content && strstr(content,
+                    "AUTOINSTALL_DIR_2=\"${HM_PORTS_DIR:-/$directory/ports}/autoinstall\"")) {
+                free(content);
+                continue;
+            }
+            free(content);
         }
 
         char patch_path[PM_PATH_MAX];
@@ -563,7 +578,12 @@ static int validate_patched_portmaster_tree(const char *tree, char *err, size_t 
         return -1;
     }
 
-    if (file_contains_required(portmaster_sh, "./pugwash $PORTMASTER_CMDS",
+    if (file_contains_required(portmaster_sh,
+                               "AUTOINSTALL_DIR_2=\"${HM_PORTS_DIR:-/$directory/ports}/autoinstall\"",
+                               "PortMaster.sh", err, err_size) != 0 ||
+        file_contains_required(portmaster_sh, "Use Leaf's Update PortMaster action.",
+                               "PortMaster.sh", err, err_size) != 0 ||
+        file_contains_required(portmaster_sh, "./pugwash $PORTMASTER_CMDS",
                                "PortMaster.sh", err, err_size) != 0 ||
         file_contains_required(pugwash, "LEAF_PM_DISABLE_SELF_UPDATE",
                                "pugwash", err, err_size) != 0 ||
