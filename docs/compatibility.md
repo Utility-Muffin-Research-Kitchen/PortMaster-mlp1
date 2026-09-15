@@ -212,24 +212,180 @@ from removing runtime files that belong to Leaf's real compositor. Older
 `LEAF_PM_EGL_GLES_SHIM=1` script patches are still recognized through a hook
 alias.
 
-The stock MLP1 Mali blob (`libmali.so.1.9.0`, bifrost g13p0, legacy `t6xx`
-kernel driver) mis-tracks in-flight GPU jobs against Godot 4's streamed 2D
-canvas buffers. Symptom: the boot splash shows, then the screen stays pure
-black while the game keeps running; the kernel logs
-`mali ... Unhandled Page fault in AS2` / `job status ... TERMINATED` every
-frame and the blob raises `GL_OUT_OF_MEMORY`. Slime 3K Demake reproduced this
-on every scene after the splash. The generated hook therefore exports
-`LEAF_EGL_DRAW_FINISH=1` for Godot runtime launches, which makes the Leaf EGL
-shim issue `glFinish` after every draw call, serializing GPU jobs and
-eliminating the faults (measured ~40 fps in the Slime 3K menu, ~20 fps in
-gameplay scenes, versus a black screen otherwise). Set
-`LEAF_PM_GODOT_DRAW_FINISH=0` to disable the workaround, or pass the shim's
-other modes (`flush`, `sync`, `upload`) for diagnosis — during bisection none
-of the weaker barriers (per-draw `glFlush`, forced `glClientWaitSync`,
-finish-before-upload/map/delete) prevented the faults; only per-draw
-`glFinish` did. The shim also honors `LEAF_EGL_DEBUG=1` to log the chosen EGL
-config, per-frame backbuffer readbacks, and framebuffer-related GL calls to
-stderr.
+Godot 4 silently loses draw calls on the MLP1 Mali stack with no workaround or
+with several cheaper barriers that do not constrain completion tightly enough.
+The shipping workaround is now a two-draw fence queue, selected with
+`LEAF_EGL_DRAW_FINISH=fence:2`. It creates and flushes a fence after every draw,
+then waits for the oldest fence once two newer draws are outstanding. This keeps
+limited CPU/GPU overlap without allowing the command stream to run away from the
+GPU.
+
+The Slime 3K title screen remains a sensitive rendered-frame check:
+
+| blob | barrier | kernel faults | result |
+| --- | --- | --- | --- |
+| stock g13p0 | per-draw glFinish | 0 | correct (reference) |
+| stock g13p0 | `fence:2` | 0 new | pixel-identical to the reference; correct through about 9 minutes of gameplay |
+| stock g13p0 | none | 697 | pure black |
+| g24p0 | none | 0 | **selection highlight missing**, then hangs on the next loading screen |
+| g24p0 | per-frame glFinish at swap | 0 | selection highlight missing |
+| g24p0 | forced `glGetSynciv` status `GL_UNSIGNALED` | 0 | selection highlight missing |
+| g24p0 | per-draw glFinish | 0 | byte-identical to reference |
+
+The stock GL userspace is g13p0 while the kernel reports DDK g21p0. That
+mismatch is observable when the barrier is disabled: the stock blob logged 697
+page-fault/terminated-job lines while g24p0 logged none. It is not a separate
+shipping fix, because g24p0 still drops draws and hangs without a working
+barrier. With per-draw `glFinish`, an earlier jawakad-managed comparison
+confirmed that both blobs rendered the correct title, entered gameplay, stayed
+live, and logged no Mali faults. The g24p0 blob therefore added 56 MB without a
+demonstrated benefit and is not packaged; Godot keeps the stock blob.
+
+The final stock-blob `fence:2` validation was also jawakad-managed. Its title was
+pixel-identical to the `glFinish` reference, and the game then ran for about nine
+minutes of actual play with multiple inputs and complete captured snapshots.
+The process stayed live and emitted no new Mali fault line. Across 519
+one-second gameplay samples, median frame rate was **49.2 fps with `fence:2`**
+versus **27.8 fps with per-draw `glFinish`**, a 77% uplift.
+
+The context-lifecycle-hardened implementation was then rebuilt, packaged, and
+staged as the installed default. A dedicated probe passed 100 cycles alternating
+two non-sharing contexts plus two concurrent render threads with 50 independent
+context cycles each. The original Slime launcher subsequently passed another
+90-second managed gameplay/input soak: the last 90 samples had a **50.3 fps
+median** (50.36 mean), live GPU load was 21-23% at 600MHz, captured title and
+gameplay frames were complete, and the kernel's last Mali fault remained the old
+pre-test line.
+
+Godot 4 therefore defaults to `LEAF_EGL_DRAW_FINISH=fence:2`.
+`LEAF_PM_GODOT_DRAW_FINISH=1` is the safe, fully serialised rollback, while
+`LEAF_PM_GODOT_DRAW_FINISH=0` disables the workaround only for diagnosis. The
+older per-frame-finish and forced-sync-status tests were one-off experiments.
+The shim retains `flush`, `sync`, `upload`, `before`, instanced-only, and
+every-Nth-draw diagnostic modes; none is a shipping substitute.
+
+Compare rendered frames, not just "is it black".
+Capture with `weston-screenshooter` and diff against the known-correct
+per-draw-`glFinish` reference; the Slime 3K title screen's selection highlight
+behind `PLAY` is the most sensitive indicator found so far. `LEAF_EGL_FPS=1`
+logs a frame-rate line per second from `eglSwapBuffers`. The title is
+vsync-locked at 60 fps even for some broken modes, so only sustained gameplay
+samples are useful for performance comparisons.
+
+**GPU clock floor while Godot ports run.** The former per-draw-`glFinish`
+default serialised the GPU, so `simple_ondemand` measured a mostly-idle GPU and
+parked it at the 200MHz floor. The hook raises `min_freq` for the duration of a
+Godot launch and restores it on exit (`leaf_pm_apply_godot_gpu_floor` /
+`leaf_pm_restore_godot_gpu_floor`).
+
+The original Slime 3K sweep used per-draw `glFinish` on the vsync-locked title
+screen. These are historical measurements for that mode, not a frequency sweep
+of `fence:2` (lower load means more headroom):
+
+| GPU floor | GPU load @ 60fps |
+| --- | --- |
+| 200MHz (stock) | 28% |
+| 300MHz | 20% |
+| 400MHz | 15% |
+| **600MHz (default)** | **11%** |
+| 800MHz | 11% |
+
+That sweep placed the `glFinish` knee at 600MHz. During the live `fence:2`
+gameplay validation, GPU load measured 20-22% at 600MHz; the 200/300/400MHz
+points have not been remeasured under the new mode. The 600MHz *floor* is
+therefore retained conservatively while the broader game matrix catches up,
+rather than claiming it is already proven optimal for `fence:2`. The governor
+remains free to boost to 800MHz when a scene needs it.
+`LEAF_PM_GODOT_GPU_MIN_FREQ=0` disables the floor; any other value must appear in
+the device's `available_frequencies` or it is ignored. Restore targets the
+lowest advertised frequency rather than a remembered value, so a port that gets
+SIGKILLed (its trap never runs) cannot leave the floor raised permanently.
+
+**Barrier modes: bounded queue succeeds; skipped draws do not.** The shim also
+accepts `LEAF_EGL_DRAW_FINISH=instanced` (finish only after
+`glDraw*Instanced`) and `nth:N` (finish every Nth draw). Both are disproven:
+
+| mode | title screen | real gameplay |
+| --- | --- | --- |
+| `fence:2` | pixel-identical to reference | correct for about 9 minutes; shipped default |
+| `1` (finish every draw) | correct | correct; safe rollback, 27.8 fps median |
+| `instanced` | black screen | -- |
+| `nth:2`, `nth:4`, `nth:8` | *looked* correct | **graphical glitches** |
+| `0` | black | page faults and terminated jobs |
+
+The title screen passed every `nth:N` value and was wrong to. Hand-testing in
+actual gameplay shows corruption at every N greater than 1. `fence:2` succeeds
+for a different reason: it still places a fence and flush after every draw, but
+waits two draws behind instead of fully draining the GPU after each call. The
+failed modes are left in the shim so the results can be re-checked cheaply,
+never as defaults.
+
+That episode is worth remembering as a method lesson. Three separate signals
+said "fine" and all three were measuring nothing: the title screen was too light
+to run the race, vsync pinned every mode to 60fps so the cost was invisible, and
+a single screenshot cannot catch an intermittent dropped draw. Only hands-on
+gameplay settled it.
+
+`tools/canvasrace.c` is a performance microbenchmark, not a correctness oracle.
+It mirrors Godot's ring of fence-guarded instance buffers, renders a grid whose
+colours encode the frame number, and checks the result **on the GPU**,
+accumulating one pass/fail pixel per frame into a strip the CPU reads once at the
+end. A per-frame `glReadPixels` would itself fully synchronise the pipeline and
+suppress the race.
+
+The Godot 4.3-faithful path uses a 2 MiB `GL_ARRAY_BUFFER`, 16,384 128-byte
+`InstanceData` records, an unsynchronised `glMapBufferRange` upload, eight
+16-byte instanced attributes, and indexed instanced draws. Despite internal
+"Batch UBO" labels, canvas instance data is an array buffer in Godot 4.3.
+`CR_BUFFER=ubo` is only an optional uniform-buffer stress path.
+
+With no vsync, the comparable 300-frame, 16-batch, fragment-cost-96 runs measured
+**41.6 fps with no barrier, 40.1 fps with `fence:2`, and 16.6 fps with per-draw
+`glFinish`**. All three reported zero bad frames. Longer unbarriered runs also
+completed 2,000 frames / 32,000 draws with no bad frame and no new Mali fault;
+the pool stayed at three recycled buffers. The tool therefore quantifies the
+barrier cost but does not reproduce the real Godot defect. Only the managed-game
+validation establishes that `fence:2` is correct.
+
+Godot 3.x / FRT is unaffected — it has no fence path and orphans its
+canvas buffers with `glBufferData(..., NULL, ...)`, which is inherently safe — so
+it gets no barrier. It had been getting one anyway, which cost roughly 2.5x frame
+time in Bananaguy 2 (25 fps -> 60 fps locked once disabled). The hook decides via
+`leaf_pm_godot_cmd_is_godot4`, which treats `frt*` / `godot_3*` runtime names as
+Godot 3; override with `LEAF_PM_GODOT_FORCE_GODOT4=0`.
+
+Two traps when vetting another replacement blob:
+
+- **A standalone EGL probe is not sufficient.** Passing `XDG_RUNTIME_DIR` /
+  `WAYLAND_DISPLAY` does not force a wayland display; a gbm-only blob will
+  return a working EGL 1.5 display and GLES3 context, render triangles, and
+  still be unable to serve a wayland window surface. Validate with a real
+  windowed port launch.
+- **`egl_winsys_get_implementation_*` does not discriminate.** The working g13p0
+  lists only `gbm`. The reliable marker is the count of `wl_egl_window_resize` /
+  `wl_egl_window_create`: 2 in both blobs that work, 0 in the Vulkan g29p1
+  bundle, which fails at
+  `frt: SDL_CreateWindow failed: Could not get EGL display.`
+
+The existing Vulkan bundle at `compat/mali/aarch64` (g29p1,
+`rk_vk_g29.json`) remains for the Gothic Machismo kmsdrm path, which needs no
+Wayland winsys. `LEAF_PM_GODOT_USE_MALI_COMPAT=1` can still force it onto the
+Godot path for deliberate bisection, where it fails for the reason above.
+
+Installing or updating any port through PortMaster regenerates both
+`leaf-armhf-env.sh` and `compat/egl/aarch64/libEGL.so.1` from the Pak, silently
+reverting hand-patched copies on the device. Shim and hook changes have to land
+in the Pak build to survive.
+
+The shim honours `LEAF_EGL_DEBUG=1` to log the chosen EGL config, per-frame
+backbuffer readbacks, and framebuffer-related GL calls to stderr; those tracing
+wrappers are installed *only* under that flag. They previously bound whenever
+`LEAF_EGL_DRAW_FINISH` was non-zero, which put `leaf_glClear` and
+`leaf_glTexStorage2D` (two `glGetError` round-trips per call) plus
+`leaf_glBindFramebuffer`, `leaf_glScissor` and `leaf_glCheckFramebufferStatus` on
+the hot path of every Godot port; the latter two log *unboundedly*, on every
+zero-area scissor and every non-complete framebuffer, into a log that port
+launchers `tee` onto the SD card.
 
 Some installed Godot launchers request the `godot_4.2.2` PortMaster runtime,
 whose aarch64 binary only supports X11/headless display drivers. For those
@@ -246,8 +402,8 @@ Some ports, such as Songo #5, launch a custom Godot/SDL2 runtime directly
 instead of using Westonpack. The scanner wraps those direct
 `"$GAMEDIR/runtime/$runtime" --main-pack ...` commands with
 `leaf_pm_run_godot_sdl2_runtime`, while keeping the original command as a
-fallback. That helper applies the SD-managed EGL/Wayland environment and, for
-non-FRT runtimes, the bundled Mali compatibility path. When the port did not
+fallback. That helper applies the SD-managed EGL/Wayland environment and the
+same Godot 3/4 barrier policy. When the port did not
 provide its own window sizing flags, it adds
 `--resolution 960x720`. It intentionally does not add Godot fullscreen (`-f`),
 because that path fills the MLP1's native portrait `720x960` KMS framebuffer and
