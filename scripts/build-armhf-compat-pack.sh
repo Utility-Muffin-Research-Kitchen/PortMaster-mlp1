@@ -10,12 +10,20 @@ MALI_REPO="https://github.com/tsukumijima/libmali-rockchip"
 MALI_RELEASE_TAG="${PM_ARMHF_MALI_RELEASE_TAG:-v1.9-1+debian1}"
 MALI_VARIANT="bifrost-g52-g13p0-wayland-gbm"
 MALI_PACKAGE="libmali-$MALI_VARIANT"
+# The armhf g13p0 deb exists only in this OBS repository (upstream GitHub
+# releases are arm64-only). OBS rebuilds it in place under the same file name
+# whenever Debian Testing moves, which rebuilds the open-source hook and GL
+# wrapper libraries, so MALI_DEB_SHA256 and MALI_HOOK_SHA256 can stop matching
+# while the Arm driver is unchanged. Re-pin them only after the blob and
+# copyright pins still match: they identify the g13p0-01eac0 driver that Leaf's
+# kernel GPU driver needs and its EULA. README.md "Armhf Compatibility Pack"
+# has the procedure. Re-pinned 2026-10-12 for the 2026-10-11 OBS rebuild.
 MALI_DEB_URL="${PM_ARMHF_MALI_DEB_URL:-https://download.opensuse.org/repositories/home:/amazingfate:/libmali-rockchip/Debian_Testing/armhf/${MALI_PACKAGE}_1.9-1%2Bdebian1_armhf.deb}"
-MALI_DEB_SHA256="109f707eb40e64f374cddeccb3f53f1921799f5d6450ffc5f8a2e4580d77bfff"
-MALI_DEB_SIZE="14615064"
+MALI_DEB_SHA256="945584e25f676aaed0da93279dbdb0973161d386c5c0cf58b775056e607ccd68"
+MALI_DEB_SIZE="14614732"
 MALI_BLOB_SHA256="3461a2aa9961df8cd5ad6804e8acb0bb805396790c15b7963e3e569c2d473375"
 MALI_BLOB_SIZE="42534288"
-MALI_HOOK_SHA256="1eed0607b024ce4a18db3bd88fe71b3c424aab66524de940cb446ef8e951d389"
+MALI_HOOK_SHA256="47c2723677f333092cb670ab40c3636957608cc762a68ee9d80b829b39b23f66"
 MALI_COPYRIGHT_PATH="usr/share/doc/$MALI_PACKAGE/copyright"
 MALI_COPYRIGHT_SHA256="a254205ab051a9a6cf952bf73d9f40715eb3bd2963d82ac462762e4dda1e8c77"
 
