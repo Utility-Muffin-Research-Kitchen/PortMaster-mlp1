@@ -470,6 +470,11 @@ Devices compare only the version string to decide whether their pack is
 current, so a rebuilt pack under the old version never reaches devices that
 already have one.
 
+The build keeps each verified deb at `.cache/mali/<sha256>.deb` and uses it
+before downloading, so a checkout that has built once keeps building after OBS
+rebuilds the package. `make clean` leaves the cache alone. To check that OBS
+still serves the pinned deb, delete the cached file and build again.
+
 Before PortMaster launch, the manager runs the scanner for each available SD
 source whose port-tree stamp or scan artifacts are stale. After the upstream
 GUI exits, it scans only the source or sources whose port tree changed:

@@ -26,6 +26,8 @@ MALI_BLOB_SIZE="42534288"
 MALI_HOOK_SHA256="47c2723677f333092cb670ab40c3636957608cc762a68ee9d80b829b39b23f66"
 MALI_COPYRIGHT_PATH="usr/share/doc/$MALI_PACKAGE/copyright"
 MALI_COPYRIGHT_SHA256="a254205ab051a9a6cf952bf73d9f40715eb3bd2963d82ac462762e4dda1e8c77"
+# A verified deb is kept here by hash so later rebuilds survive OBS drift.
+MALI_DEB_CACHE="$ROOT/.cache/mali/$MALI_DEB_SHA256.deb"
 
 BOX86_REPO="https://github.com/ptitSeb/box86"
 BOX86_COMMIT="${PM_ARMHF_BOX86_COMMIT:-0579f8b9c47d87d700724f4cce559b06cbd2b0f5}"
@@ -248,17 +250,27 @@ mkdir -p "$MALI_WORK" "$MALI_VENDOR_DIR" "$MALI_LIB_DIR/pkgconfig" \
          "$ROOTFS/etc/OpenCL/vendors" "$ROOTFS/etc/ld.so.conf.d" \
          "$ROOTFS/etc/profile.d"
 
-curl -fL "$MALI_DEB_URL" -o "$MALI_DEB"
+if [[ -f "$MALI_DEB_CACHE" ]]; then
+  mali_deb_source="$MALI_DEB_CACHE"
+  cp -f "$MALI_DEB_CACHE" "$MALI_DEB"
+else
+  mali_deb_source="$MALI_DEB_URL"
+  curl -fL "$MALI_DEB_URL" -o "$MALI_DEB"
+fi
 
 mali_deb_sha="$(sha256sum "$MALI_DEB" | awk '{print $1}')"
 mali_deb_size="$(wc -c <"$MALI_DEB" | tr -d ' ')"
-if [[ "$mali_deb_sha" != "$MALI_DEB_SHA256" ]]; then
-  echo "Mali deb sha256 mismatch: $mali_deb_sha != $MALI_DEB_SHA256" >&2
+if [[ "$mali_deb_sha" != "$MALI_DEB_SHA256" || "$mali_deb_size" != "$MALI_DEB_SIZE" ]]; then
+  echo "Mali deb mismatch from $mali_deb_source:" >&2
+  echo "  sha256 $mali_deb_sha != $MALI_DEB_SHA256" >&2
+  echo "  size $mali_deb_size != $MALI_DEB_SIZE" >&2
+  echo "OBS rebuilds this deb in place; see README.md \"Armhf Compatibility Pack\" before re-pinning." >&2
   exit 1
 fi
-if [[ "$mali_deb_size" != "$MALI_DEB_SIZE" ]]; then
-  echo "Mali deb size mismatch: $mali_deb_size != $MALI_DEB_SIZE" >&2
-  exit 1
+if [[ ! -f "$MALI_DEB_CACHE" ]]; then
+  mkdir -p "$(dirname "$MALI_DEB_CACHE")"
+  cp -f "$MALI_DEB" "$MALI_DEB_CACHE.tmp"
+  mv -f "$MALI_DEB_CACHE.tmp" "$MALI_DEB_CACHE"
 fi
 
 mkdir -p "$MALI_EXTRACT"
