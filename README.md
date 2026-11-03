@@ -439,6 +439,42 @@ pack includes the upstream Debian copyright file under `licenses/mali/`; that
 file contains the Arm Mali userspace driver EULA and redistribution notice
 requirements.
 
+That OBS repository is the only source of this armhf package. Upstream
+`tsukumijima/libmali-rockchip` GitHub releases ship only arm64 debs, and the
+raw armhf blobs in its older tags are not byte-identical to the packaged
+`libmali.so.1.9.0`. OBS rebuilds the package in place, under the same version
+and file name, whenever Debian Testing moves. A rebuild recompiles the
+open-source `libmali-hook.so.1.9.0` and the GL wrapper libraries under `mali/`,
+so the deb and hook hashes change while the proprietary Arm driver does not,
+and the build stops at the deb hash check. To re-pin after that:
+
+1. Download the deb from `MALI_DEB_URL` and extract it with `dpkg-deb -x`.
+2. Check that `usr/lib/arm-linux-gnueabihf/libmali.so.1.9.0` still matches
+   `MALI_BLOB_SHA256` and `MALI_BLOB_SIZE`, and that the copyright file still
+   matches `MALI_COPYRIGHT_SHA256`. They identify the `g13p0-01eac0` driver
+   that Leaf's kernel GPU driver needs, and its EULA. If either one changed,
+   stop: that is a different driver or license, not a rebuild.
+3. Check that the hook and the `mali/` wrappers export the same dynamic symbols
+   as the previous deb (`readelf --dyn-syms`), and that none needs a `GLIBC_`
+   version newer than Bookworm's 2.36 (`readelf -V`). Debian Testing is ahead
+   of Bookworm, so a later rebuild can raise that floor.
+4. Update `MALI_DEB_SHA256`, `MALI_DEB_SIZE`, `MALI_HOOK_SHA256`, and the
+   re-pin date in the script comment.
+
+Re-pinning changes the build, not what devices install. Clean installs and
+repairs download the release asset named in `locks/armhf-compat.lock.json`,
+and that lock's `mali` block keeps the deb and hook hashes the published asset
+was built from. Before you publish a pack built from a re-pinned deb, give it a
+new `VERSION`, repeat the tier 2 GLES device smoke, and update the lock.
+Devices compare only the version string to decide whether their pack is
+current, so a rebuilt pack under the old version never reaches devices that
+already have one.
+
+The build keeps each verified deb at `.cache/mali/<sha256>.deb` and uses it
+before downloading, so a checkout that has built once keeps building after OBS
+rebuilds the package. `make clean` leaves the cache alone. To check that OBS
+still serves the pinned deb, delete the cached file and build again.
+
 Before PortMaster launch, the manager runs the scanner for each available SD
 source whose port-tree stamp or scan artifacts are stale. After the upstream
 GUI exits, it scans only the source or sources whose port tree changed:
