@@ -372,6 +372,27 @@ specific display state to maintain. Fast scan covers common one-level,
 `bin/`, `lib/`, and `libs/` binaries; use `LEAF_PM_FULL_PORT_SCAN=1` for a
 diagnostic scan when a port's main binary sits deeper in its tree.
 
+Leaf's launcher exports `SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1` to every game.
+The volume and brightness toast is a fullscreen Wayland toplevel, so it takes
+keyboard focus for about two seconds, and SDL drops controller input from an
+unfocused window unless that hint is on. SDL also lets an environment variable
+outrank `SDL_SetHint`, so a port that sets the same hint itself is refused, and
+SDL3 ports built on aurora (Dusklight) stop at window creation with "An
+environment variable is taking priority". The generated hook therefore preloads
+`compat/sdl2/$PLATFORM/leaf-sdl-hints.so` for every port, with `$PLATFORM` left
+for the dynamic loader to expand: `aarch64` for 64-bit programs and `v8l` for
+32-bit ones on MLP1's arm64 kernel, so each process loads a build of its own
+class and armhf launches log no preload errors. The shim only acts on
+`SDL_SetHint` and `SDL_SetHintWithPriority` calls for the hints listed in
+`LEAF_PM_SDL_YIELD_HINTS` (comma-separated, default
+`SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS`) while that hint is in the environment:
+it applies the game's value at override priority, as on a system without Leaf's
+variable. Ports that never set the hint keep Leaf's value, every other hint
+keeps SDL's normal environment-wins behavior, and SDL2 and SDL3 are both
+covered. Set `LEAF_PM_SDL_YIELD_HINTS=` (empty) before launch to turn it off.
+Calls through `dlsym` on an SDL handle (Mono/FNA, box86-wrapped SDL, Python
+`ctypes`) bypass the preload and behave as before.
+
 Pyxel source launchers are patched through a source-level compatibility rule
 instead of the generic SDL2 preload. The scanner adds a helper that computes the
 largest integer `display_scale` that fits `DISPLAY_WIDTH`/`DISPLAY_HEIGHT`, then

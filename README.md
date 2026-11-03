@@ -647,6 +647,13 @@ shim links only libc and resolves `librga.so.2` dynamically inside the target
 process, so it does not add a persistent system dependency or modify stock
 graphics files.
 
+It also builds `compat/sdl2/aarch64/leaf-sdl-hints.so` and, through a Debian
+armhf cross compiler (`make build-armhf-sdl-hints`),
+`compat/sdl2/v8l/leaf-sdl-hints.so`. The hook preloads both through one
+`compat/sdl2/$PLATFORM/leaf-sdl-hints.so` path so ports that set
+`SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS` themselves are not refused because
+Leaf's launcher already exports it; see `docs/compatibility.md`.
+
 After the post-exit scan, the manager sends the Leaf launcher a non-fatal
 `scan-library` IPC request through `jawaka-platformctl` so newly installed
 PortMaster `.sh` launchers appear in the Ports list without restarting the
