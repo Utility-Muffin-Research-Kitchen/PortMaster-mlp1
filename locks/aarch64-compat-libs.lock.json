@@ -18,9 +18,9 @@
       "distro": "Debian 11 bullseye",
       "architecture": "arm64",
       "repos": [
-        "http://deb.debian.org/debian bullseye main",
-        "http://deb.debian.org/debian bullseye-updates main",
-        "http://security.debian.org/debian-security bullseye-security main"
+        "http://archive.debian.org/debian bullseye main",
+        "http://archive.debian.org/debian bullseye-updates main",
+        "http://archive.debian.org/debian-security bullseye-security main"
       ],
       "reason": "Provides the PortMaster CFW spec's older FFmpeg-era media SONAMEs such as libavcodec.so.58, libwebp.so.6, libx264.so.160, and libx265.so.192."
     },
