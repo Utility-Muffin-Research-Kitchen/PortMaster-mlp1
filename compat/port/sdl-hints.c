@@ -6,6 +6,8 @@
 #include <string.h>
 
 /*
+ * Part of leaf-port-shim.so (see pwm-guard.c for the other part).
+ *
  * Leaf's launcher exports SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1 to every game
  * so a game keeps its controller while Leaf's volume and brightness toast holds
  * keyboard focus. SDL lets an environment variable outrank SDL_SetHint, so a
@@ -89,7 +91,7 @@ static int leaf_yields(const char *name)
 
 static void leaf_log_yield(const char *name, const char *value)
 {
-    fprintf(stderr, "[leaf-sdl-hints] %s=%s set by the game takes priority over the environment\n",
+    fprintf(stderr, "[leaf-port-shim] %s=%s set by the game takes priority over the environment\n",
             name, value ? value : "(reset)");
 }
 

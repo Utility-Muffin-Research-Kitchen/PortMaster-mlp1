@@ -372,18 +372,21 @@ specific display state to maintain. Fast scan covers common one-level,
 `bin/`, `lib/`, and `libs/` binaries; use `LEAF_PM_FULL_PORT_SCAN=1` for a
 diagnostic scan when a port's main binary sits deeper in its tree.
 
-Leaf's launcher exports `SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1` to every game.
-The volume and brightness toast is a fullscreen Wayland toplevel, so it takes
-keyboard focus for about two seconds, and SDL drops controller input from an
-unfocused window unless that hint is on. SDL also lets an environment variable
-outrank `SDL_SetHint`, so a port that sets the same hint itself is refused, and
-SDL3 ports built on aurora (Dusklight) stop at window creation with "An
-environment variable is taking priority". The generated hook therefore preloads
-`compat/sdl2/$PLATFORM/leaf-sdl-hints.so` for every port, with `$PLATFORM` left
-for the dynamic loader to expand: `aarch64` for 64-bit programs and `v8l` for
-32-bit ones on MLP1's arm64 kernel, so each process loads a build of its own
-class and armhf launches log no preload errors. The shim only acts on
-`SDL_SetHint` and `SDL_SetHintWithPriority` calls for the hints listed in
+The generated hook preloads `compat/port/$PLATFORM/leaf-port-shim.so` for every
+port, with `$PLATFORM` left for the dynamic loader to expand: `aarch64` for
+64-bit programs and `v8l` for 32-bit ones on MLP1's arm64 kernel, so each
+process loads a build of its own class and armhf launches log no preload
+errors. The shim does two things.
+
+SDL hints (`compat/port/sdl-hints.c`). Leaf's launcher exports
+`SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1` to every game. The volume and
+brightness toast is a fullscreen Wayland toplevel, so it takes keyboard focus
+for about two seconds, and SDL drops controller input from an unfocused window
+unless that hint is on. SDL also lets an environment variable outrank
+`SDL_SetHint`, so a port that sets the same hint itself is refused, and SDL3
+ports built on aurora (Dusklight) stop at window creation with "An environment
+variable is taking priority". The shim only acts on `SDL_SetHint` and
+`SDL_SetHintWithPriority` calls for the hints listed in
 `LEAF_PM_SDL_YIELD_HINTS` (comma-separated, default
 `SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS`) while that hint is in the environment:
 it applies the game's value at override priority, as on a system without Leaf's
@@ -392,6 +395,22 @@ keeps SDL's normal environment-wins behavior, and SDL2 and SDL3 are both
 covered. Set `LEAF_PM_SDL_YIELD_HINTS=` (empty) before launch to turn it off.
 Calls through `dlsym` on an SDL handle (Mono/FNA, box86-wrapped SDL, Python
 `ctypes`) bypass the preload and behave as before.
+
+PWM guard (`compat/port/pwm-guard.c`). The rumble motor is a PWM channel
+(`/sys/class/pwm/pwmchip0/pwm0`) that jawakad owns: it reads the channel's
+polarity, which stock firmware sets to normal, and hands the motor to games
+through force feedback on its virtual gamepad, applying Leaf's Game Rumble
+switch and strength. Ports built for other handhelds sometimes write a PWM
+motor directly with that device's values. Apotris's PortMaster build writes the
+full period as "off" every frame, which is full power on the MLP1, so the motor
+ran until the game exited and neither Leaf's switch nor the game's own setting
+stopped it. The shim makes opening any PWM sysfs file for writing fail with
+`EACCES` (`open`, `openat`, their 64-bit and fortified variants, and `fopen`,
+which C++ file streams use), matched before and after resolving symlinks. Reads
+still work. A port that also rumbles through SDL, as Apotris does, then reaches
+the motor through Leaf. Relative paths, raw syscalls, statically linked
+programs and box86/box64 guest code are not covered. Set `LEAF_PM_PWM_GUARD=0`
+before launch to turn it off.
 
 Pyxel source launchers are patched through a source-level compatibility rule
 instead of the generic SDL2 preload. The scanner adds a helper that computes the
