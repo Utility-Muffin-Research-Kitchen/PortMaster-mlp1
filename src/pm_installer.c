@@ -655,6 +655,7 @@ static int write_manifest(const pm_context *ctx, const pm_portmaster_source *sou
             "  \"compat\": {\n"
             "    \"egl_gles_shim\": \"compat/egl/aarch64/libEGL.so.1\",\n"
             "    \"aarch64_sdl2_fullscreen_shim\": \"compat/sdl2/aarch64/leaf-sdl2-fullscreen.so\",\n"
+            "    \"sdl_hints_shim\": \"compat/sdl2/$PLATFORM/leaf-sdl-hints.so\",\n"
             "    \"aarch64_drm_rotate_shim\": \"compat/drm/aarch64/leaf-drm-rotate.so\",\n"
             "    \"aarch64_compat_libs\": \"compat/libs/aarch64\",\n"
             "    \"armhf\": { \"version\": \"%s\", \"sha256\": \"%s\", \"installed\": %s },\n"
@@ -1075,7 +1076,10 @@ static int pm_install_compat_assets(const pm_context *ctx,
         "rk_vk_g29.json",
         "manifest.json"
     };
-    const char *sdl2_files[] = { "leaf-sdl2-fullscreen.so", "manifest.json" };
+    const char *sdl2_files[] = { "leaf-sdl2-fullscreen.so", "leaf-sdl-hints.so", "manifest.json" };
+    /* The 32-bit hint shim lives under the name the dynamic loader expands
+       $PLATFORM to for armhf programs on MLP1's arm64 kernel. */
+    const char *sdl2_armhf_files[] = { "leaf-sdl-hints.so", "manifest.json" };
     const char *drm_files[] = { "leaf-drm-rotate.so", "manifest.json" };
     const char *aarch64_compat_lib_files[] = {
         "libFLAC.so.8",
@@ -1173,6 +1177,19 @@ static int pm_install_compat_assets(const pm_context *ctx,
                               "aarch64",
                               sdl2_files,
                               sizeof(sdl2_files) / sizeof(sdl2_files[0]),
+                              force_copy,
+                              err,
+                              err_size) != 0) {
+        return -1;
+    }
+
+    if (copy_compat_asset_set(ctx,
+                              "compat/sdl2",
+                              "v8l",
+                              "compat/sdl2",
+                              "v8l",
+                              sdl2_armhf_files,
+                              sizeof(sdl2_armhf_files) / sizeof(sdl2_armhf_files[0]),
                               force_copy,
                               err,
                               err_size) != 0) {

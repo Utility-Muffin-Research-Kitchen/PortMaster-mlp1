@@ -27,16 +27,26 @@ aarch64-buildroot-linux-gnu-gcc -shared -fPIC -O2 -Wall -Wextra -Wpedantic -Wl,-
   -ldl
 aarch64-buildroot-linux-gnu-strip "$OUT_DIR/leaf-sdl2-fullscreen.so"
 
+aarch64-buildroot-linux-gnu-gcc -shared -fPIC -O2 -Wall -Wextra -Wpedantic -Wl,--as-needed \
+  -o "$OUT_DIR/leaf-sdl-hints.so" "$ROOT/compat/sdl2/leaf-sdl-hints.c" \
+  -ldl
+aarch64-buildroot-linux-gnu-strip "$OUT_DIR/leaf-sdl-hints.so"
+
 cat >"$OUT_DIR/manifest.json" <<'JSON'
 {
   "schema": 1,
   "name": "leaf-sdl2-fullscreen",
   "arch": "aarch64",
   "source": "compat/sdl2/leaf-sdl2-fullscreen.c",
+  "sources": [
+    "compat/sdl2/leaf-sdl2-fullscreen.c",
+    "compat/sdl2/leaf-sdl-hints.c"
+  ],
   "files": [
-    "leaf-sdl2-fullscreen.so"
+    "leaf-sdl2-fullscreen.so",
+    "leaf-sdl-hints.so"
   ]
 }
 JSON
 
-echo "aarch64 SDL2 fullscreen shim ready: $OUT_DIR"
+echo "aarch64 SDL2 fullscreen and hint shims ready: $OUT_DIR"

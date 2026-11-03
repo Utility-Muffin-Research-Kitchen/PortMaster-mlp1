@@ -774,6 +774,30 @@ leaf_pm_begin_gothic_machismo_vulkan_rotate() {
 
 export LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM="\${LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM:-\$LEAF_PM_DATA_DIR/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so}"
 
+# jawakad exports SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1 so games keep their
+# controller while Leaf's volume and brightness toast holds keyboard focus. SDL
+# lets that variable outrank a game's own SDL_SetHint, and some games treat the
+# refusal as fatal. leaf-sdl-hints.so gives a game's own setting of the hints in
+# LEAF_PM_SDL_YIELD_HINTS priority; games that never set them keep Leaf's value.
+# The preload path keeps a literal \$PLATFORM for the dynamic loader, which
+# expands it to aarch64 for 64-bit programs and v8l for 32-bit ones, so every
+# process loads the build for its own architecture.
+export LEAF_PM_SDL_HINTS_SHIM_DIR="\${LEAF_PM_SDL_HINTS_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/sdl2}"
+export LEAF_PM_SDL_YIELD_HINTS="\${LEAF_PM_SDL_YIELD_HINTS-SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS}"
+
+leaf_pm_enable_sdl_hint_yield() {
+  [ -n "\${LEAF_PM_SDL_YIELD_HINTS:-}" ] || return 0
+  [ -f "\$LEAF_PM_SDL_HINTS_SHIM_DIR/aarch64/leaf-sdl-hints.so" ] || return 0
+  [ -f "\$LEAF_PM_SDL_HINTS_SHIM_DIR/v8l/leaf-sdl-hints.so" ] || return 0
+  _leaf_pm_sdl_hints_preload="\$LEAF_PM_SDL_HINTS_SHIM_DIR/\\\$PLATFORM/leaf-sdl-hints.so"
+  case ":\${LD_PRELOAD:-}:" in
+    *:"\$_leaf_pm_sdl_hints_preload":*) ;;
+    *) export LD_PRELOAD="\$_leaf_pm_sdl_hints_preload\${LD_PRELOAD:+:\$LD_PRELOAD}" ;;
+  esac
+}
+
+leaf_pm_enable_sdl_hint_yield
+
 leaf_pm_enable_sdl2_fullscreen_env() {
   _leaf_pm_sdl2_port="\${1:-}"
   _leaf_pm_sdl2_arches=",\${2:-},"
@@ -872,7 +896,7 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
   }
 fi
 
-unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_preload_path _leaf_pm_lib_path _leaf_pm_vk_dir _leaf_pm_sdl2_port _leaf_pm_sdl2_arches _leaf_pm_sdl2_optout _leaf_pm_aarch64_sdl2_cmd _leaf_pm_aarch64_sdl2_preload _leaf_pm_armhf_sdl2_cmd _leaf_pm_armhf_sdl2_preload
+unset _leaf_pm_sdl_hints_preload _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_preload_path _leaf_pm_lib_path _leaf_pm_vk_dir _leaf_pm_sdl2_port _leaf_pm_sdl2_arches _leaf_pm_sdl2_optout _leaf_pm_aarch64_sdl2_cmd _leaf_pm_aarch64_sdl2_preload _leaf_pm_armhf_sdl2_cmd _leaf_pm_armhf_sdl2_preload
 EOF
 
 if [ -f "$hook_path" ] && command -v cmp >/dev/null 2>&1 && cmp -s "$tmp" "$hook_path"; then
