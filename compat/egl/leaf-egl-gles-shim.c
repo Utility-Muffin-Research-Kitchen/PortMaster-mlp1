@@ -4,6 +4,39 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+typedef unsigned int LeafGLenum;
+typedef unsigned int LeafGLuint;
+typedef unsigned int LeafGLbitfield;
+typedef int LeafGLint;
+typedef int LeafGLsizei;
+
+#define LEAF_GL_FENCE_CAPACITY 17U
+
+typedef void *(*LeafGLFenceFn)(LeafGLenum, LeafGLbitfield);
+typedef LeafGLenum (*LeafGLWaitFn)(void *, LeafGLbitfield, unsigned long long);
+typedef void (*LeafGLDeleteSyncFn)(void *);
+typedef void (*LeafGLVoidFn)(void);
+
+typedef struct {
+    EGLContext owner;
+    EGLDisplay owner_display;
+    LeafGLFenceFn fence;
+    LeafGLWaitFn wait;
+    LeafGLDeleteSyncFn delete_sync;
+    LeafGLVoidFn flush;
+    LeafGLVoidFn finish;
+    void *items[LEAF_GL_FENCE_CAPACITY];
+    unsigned int head;
+    unsigned int count;
+    int resolved;
+} LeafGLFenceState;
+
+static _Thread_local LeafGLFenceState leaf_fence_state = {
+    .owner = EGL_NO_CONTEXT,
+    .owner_display = EGL_NO_DISPLAY,
+};
 
 static void *leaf_mali;
 
@@ -57,6 +90,10 @@ static int leaf_debug_enabled(void)
 }
 
 static unsigned long leaf_frame_counter;
+
+/* EGL lifecycle entry points drain a thread's queue while its owner context is
+ * still current. This keeps GLsync handles out of unrelated contexts. */
+static void leaf_gl_fence_drain_current(void);
 
 static void leaf_rewrite_context_attrs(const EGLint *in, EGLint *out, size_t out_count)
 {
@@ -121,7 +158,23 @@ EGLBoolean eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
     return fn(dpy, major, minor);
 }
 
-LEAF_EGL_FWD(EGLBoolean, eglTerminate, (EGLDisplay dpy), (dpy))
+EGLBoolean eglTerminate(EGLDisplay dpy)
+{
+    typedef EGLBoolean (*fn_t)(EGLDisplay);
+    static fn_t fn;
+    if (!fn) {
+        fn = (fn_t)leaf_sym("eglTerminate");
+    }
+    if (leaf_fence_state.owner != EGL_NO_CONTEXT && leaf_fence_state.owner_display == dpy) {
+        leaf_gl_fence_drain_current();
+    }
+    EGLBoolean ok = fn(dpy);
+    if (ok && leaf_fence_state.owner_display == dpy) {
+        leaf_fence_state.owner = eglGetCurrentContext();
+        leaf_fence_state.owner_display = eglGetCurrentDisplay();
+    }
+    return ok;
+}
 
 const char *eglQueryString(EGLDisplay dpy, EGLint name)
 {
@@ -207,7 +260,23 @@ EGLBoolean eglBindAPI(EGLenum api)
 
 LEAF_EGL_FWD(EGLenum, eglQueryAPI, (void), ())
 LEAF_EGL_FWD(EGLBoolean, eglWaitClient, (void), ())
-LEAF_EGL_FWD(EGLBoolean, eglReleaseThread, (void), ())
+EGLBoolean eglReleaseThread(void)
+{
+    typedef EGLBoolean (*fn_t)(void);
+    static fn_t fn;
+    if (!fn) {
+        fn = (fn_t)leaf_sym("eglReleaseThread");
+    }
+    if (leaf_fence_state.owner != EGL_NO_CONTEXT) {
+        leaf_gl_fence_drain_current();
+    }
+    EGLBoolean ok = fn();
+    if (ok) {
+        leaf_fence_state.owner = EGL_NO_CONTEXT;
+        leaf_fence_state.owner_display = EGL_NO_DISPLAY;
+    }
+    return ok;
+}
 LEAF_EGL_FWD(EGLSurface, eglCreatePbufferFromClientBuffer, (EGLDisplay dpy, EGLenum buftype, EGLClientBuffer buffer, EGLConfig config, const EGLint *attrib_list), (dpy, buftype, buffer, config, attrib_list))
 LEAF_EGL_FWD(EGLBoolean, eglSurfaceAttrib, (EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint value), (dpy, surface, attribute, value))
 LEAF_EGL_FWD(EGLBoolean, eglBindTexImage, (EGLDisplay dpy, EGLSurface surface, EGLint buffer), (dpy, surface, buffer))
@@ -230,8 +299,44 @@ EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext share_c
     return fn(dpy, config, share_context, attrib_list);
 }
 
-LEAF_EGL_FWD(EGLBoolean, eglDestroyContext, (EGLDisplay dpy, EGLContext ctx), (dpy, ctx))
-LEAF_EGL_FWD(EGLBoolean, eglMakeCurrent, (EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx), (dpy, draw, read, ctx))
+EGLBoolean eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
+{
+    typedef EGLBoolean (*fn_t)(EGLDisplay, EGLContext);
+    static fn_t fn;
+    if (!fn) {
+        fn = (fn_t)leaf_sym("eglDestroyContext");
+    }
+    if (ctx == leaf_fence_state.owner && dpy == leaf_fence_state.owner_display) {
+        leaf_gl_fence_drain_current();
+    }
+    EGLBoolean ok = fn(dpy, ctx);
+    if (ok && ctx == leaf_fence_state.owner && dpy == leaf_fence_state.owner_display) {
+        /* EGL defers deletion while a context is current. Query rather than
+         * assuming that a successful destroy unbound it. */
+        leaf_fence_state.owner = eglGetCurrentContext();
+        leaf_fence_state.owner_display = eglGetCurrentDisplay();
+    }
+    return ok;
+}
+
+EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx)
+{
+    typedef EGLBoolean (*fn_t)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
+    static fn_t fn;
+    if (!fn) {
+        fn = (fn_t)leaf_sym("eglMakeCurrent");
+    }
+    if (leaf_fence_state.owner != EGL_NO_CONTEXT &&
+        (leaf_fence_state.owner != ctx || leaf_fence_state.owner_display != dpy)) {
+        leaf_gl_fence_drain_current();
+    }
+    EGLBoolean ok = fn(dpy, draw, read, ctx);
+    if (ok) {
+        leaf_fence_state.owner = ctx;
+        leaf_fence_state.owner_display = ctx == EGL_NO_CONTEXT ? EGL_NO_DISPLAY : dpy;
+    }
+    return ok;
+}
 LEAF_EGL_FWD(EGLContext, eglGetCurrentContext, (void), ())
 LEAF_EGL_FWD(EGLSurface, eglGetCurrentSurface, (EGLint readdraw), (readdraw))
 LEAF_EGL_FWD(EGLDisplay, eglGetCurrentDisplay, (void), ())
@@ -285,6 +390,37 @@ static void leaf_debug_swap(EGLDisplay dpy, EGLSurface surface)
             pre_err, post_err);
 }
 
+/* LEAF_EGL_FPS=1 logs a frame-rate line once a second. One clock_gettime per
+ * swap, so it is cheap enough to leave available in shipping builds, and it is
+ * the only way to compare GL stacks on-device without instrumenting each port. */
+static void leaf_fps_tick(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("LEAF_EGL_FPS");
+        enabled = (e && e[0] && strcmp(e, "0") != 0) ? 1 : 0;
+    }
+    if (!enabled) {
+        return;
+    }
+
+    static struct timespec last;
+    static unsigned long frames;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (last.tv_sec == 0) {
+        last = now;
+        return;
+    }
+    frames++;
+    double dt = (double)(now.tv_sec - last.tv_sec) + (double)(now.tv_nsec - last.tv_nsec) / 1e9;
+    if (dt >= 1.0) {
+        fprintf(stderr, "[leaf-fps] %.1f fps (%.2f ms/frame)\n", frames / dt, (dt * 1000.0) / frames);
+        frames = 0;
+        last = now;
+    }
+}
+
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 {
     typedef EGLBoolean (*fn_t)(EGLDisplay, EGLSurface);
@@ -293,6 +429,7 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         fn = (fn_t)leaf_sym("eglSwapBuffers");
     }
     leaf_frame_counter++;
+    leaf_fps_tick();
     if (leaf_debug_enabled()) {
         leaf_debug_swap(dpy, surface);
     }
@@ -425,12 +562,6 @@ EGLBoolean eglDestroyImage(EGLDisplay dpy, EGLImage image)
  * Godot's glad loader resolves all GLES entry points via eglGetProcAddress
  * on this stack (it never dlopens libGLESv2), so debug wrappers for the
  * framebuffer-related calls are dispatched from eglGetProcAddress below. */
-
-typedef unsigned int LeafGLenum;
-typedef unsigned int LeafGLuint;
-typedef unsigned int LeafGLbitfield;
-typedef int LeafGLint;
-typedef int LeafGLsizei;
 
 static LeafGLenum leaf_gl_error(void)
 {
@@ -573,7 +704,11 @@ static LeafGLenum leaf_glCheckFramebufferStatus(LeafGLenum target)
 
 /* 0 = off, 1 = glFinish after each draw, 2 = glFlush after each draw,
  * 3 = strengthen glClientWaitSync to a real glFinish,
- * 4 = glFinish before buffer/texture uploads that follow pending draws */
+ * 4 = glFinish before buffer/texture uploads that follow pending draws,
+ * 5 = glFinish after instanced draws only, 6 = fence:N, 7 = before.
+ * Values above 100 retain the experimental nth:N modes. */
+static int leaf_draw_fence_lag;
+
 static int leaf_draw_finish_mode(void)
 {
     static int v = -1;
@@ -587,6 +722,28 @@ static int leaf_draw_finish_mode(void)
             v = 3;
         } else if (strcmp(e, "upload") == 0 || strcmp(e, "4") == 0) {
             v = 4;
+        } else if (strncmp(e, "fence:", 6) == 0) {
+            char *end = NULL;
+            long lag = strtol(e + 6, &end, 10);
+            if (end != e + 6 && *end == '\0' && lag >= 0 && lag <= 16) {
+                leaf_draw_fence_lag = (int)lag;
+                v = 6;
+            } else {
+                v = 1;
+            }
+        } else if (strcmp(e, "before") == 0) {
+            v = 7;
+        } else if (strcmp(e, "instanced") == 0 || strcmp(e, "5") == 0) {
+            /* DISPROVEN -- kept only so the result can be re-checked cheaply.
+             * Every barrier weaker than "after every draw" produces visible
+             * corruption in real Godot 4 gameplay: "instanced" renders a black
+             * screen outright, and nth:2 / nth:4 / nth:8 all show graphical
+             * glitches once you get past the title screen. Do not ship any of
+             * these; see docs/compatibility.md. */
+            v = 5;
+        } else if (strncmp(e, "nth:", 4) == 0) {
+            int n = atoi(e + 4);
+            v = (n > 1) ? (100 + n) : 1;
         } else {
             v = 1;
         }
@@ -597,7 +754,18 @@ static int leaf_draw_finish_mode(void)
 static int leaf_draw_finish_enabled(void)
 {
     int m = leaf_draw_finish_mode();
-    return m == 1 || m == 2 || m == 4;
+    return m == 1 || m == 2 || m == 4 || m == 5 || m == 6 || m == 7 || m >= 101;
+}
+
+/* Every Nth draw, for mode nth:N. */
+static int leaf_draw_nth_due(void)
+{
+    int m = leaf_draw_finish_mode();
+    if (m < 101) {
+        return 1;
+    }
+    static unsigned long n;
+    return (++n % (unsigned long)(m - 100)) == 0;
 }
 
 static int leaf_pending_draws;
@@ -730,34 +898,176 @@ static LeafGLenum leaf_glClientWaitSync(void *sync, LeafGLbitfield flags, unsign
     return fn(sync, flags, timeout);
 }
 
+static void leaf_gl_fence_resolve(LeafGLFenceState *state)
+{
+    if (state->resolved) {
+        return;
+    }
+    state->fence = (LeafGLFenceFn)leaf_sym("glFenceSync");
+    state->wait = (LeafGLWaitFn)leaf_sym("glClientWaitSync");
+    state->delete_sync = (LeafGLDeleteSyncFn)leaf_sym("glDeleteSync");
+    state->flush = (LeafGLVoidFn)leaf_sym("glFlush");
+    state->finish = (LeafGLVoidFn)leaf_sym("glFinish");
+    state->resolved = 1;
+    if (!state->finish) {
+        fprintf(stderr, "[leaf-gl] glFinish is unavailable; cannot enforce draw ordering\n");
+        abort();
+    }
+}
+
+static void leaf_gl_fence_delete_all(LeafGLFenceState *state)
+{
+    while (state->count) {
+        unsigned int tail =
+            (state->head + LEAF_GL_FENCE_CAPACITY - state->count) % LEAF_GL_FENCE_CAPACITY;
+        if (state->items[tail] && state->delete_sync) {
+            state->delete_sync(state->items[tail]);
+        }
+        state->items[tail] = NULL;
+        state->count--;
+    }
+    state->head = 0;
+}
+
+/* Finish first so every queued object can be deleted immediately. Every handle
+ * in this TLS queue was created while its owner context was current. */
+static void leaf_gl_fence_finish_and_clear(LeafGLFenceState *state)
+{
+    leaf_gl_fence_resolve(state);
+    state->finish();
+    leaf_gl_fence_delete_all(state);
+}
+
+static void leaf_gl_fence_drain_current(void)
+{
+    LeafGLFenceState *state = &leaf_fence_state;
+    if (!state->count) {
+        state->head = 0;
+        return;
+    }
+    leaf_gl_fence_finish_and_clear(state);
+}
+
+/* fence:N keeps N newer draw fences outstanding. N=0 waits for the fence
+ * created by the current draw; N=16 first waits on draw 1 after draw 17 has
+ * been submitted. The queue and its resolved entry points are thread-local;
+ * EGL lifecycle wrappers drain it before its owner context stops being current. */
+static void leaf_gl_fence_after_draw(void)
+{
+    LeafGLFenceState *state = &leaf_fence_state;
+    if (state->owner == EGL_NO_CONTEXT) {
+        state->owner = eglGetCurrentContext();
+        state->owner_display = eglGetCurrentDisplay();
+    }
+    leaf_gl_fence_resolve(state);
+    if (!state->fence || !state->wait || !state->delete_sync || !state->flush) {
+        leaf_gl_fence_finish_and_clear(state);
+        return;
+    }
+    if (state->count >= LEAF_GL_FENCE_CAPACITY) {
+        /* Impossible for the accepted lag range, but never overwrite an
+         * unsignaled handle if state is damaged. */
+        leaf_gl_fence_finish_and_clear(state);
+    }
+
+    void *sync = state->fence(0x9117 /* GL_SYNC_GPU_COMMANDS_COMPLETE */, 0);
+    if (!sync) {
+        if (leaf_debug_enabled()) {
+            LEAF_GL_LOG("fence creation failed lag=%d err=0x%x\n",
+                        leaf_draw_fence_lag, leaf_gl_error());
+        }
+        leaf_gl_fence_finish_and_clear(state);
+        return;
+    }
+    /* Keep the explicit per-draw submission used by the validated Mali path.
+     * The wait also requests the spec-guaranteed same-context flush below. */
+    state->flush();
+
+    state->items[state->head] = sync;
+    state->head = (state->head + 1U) % LEAF_GL_FENCE_CAPACITY;
+    state->count++;
+    if (state->count > (unsigned int)leaf_draw_fence_lag) {
+        unsigned int tail =
+            (state->head + LEAF_GL_FENCE_CAPACITY - state->count) % LEAF_GL_FENCE_CAPACITY;
+        LeafGLenum result = state->wait(
+            state->items[tail],
+            0x00000001 /* GL_SYNC_FLUSH_COMMANDS_BIT */,
+            ~0ULL /* approximately 584 years in nanoseconds */);
+        if (result == 0x911A /* GL_ALREADY_SIGNALED */ ||
+            result == 0x911C /* GL_CONDITION_SATISFIED */) {
+            state->delete_sync(state->items[tail]);
+            state->items[tail] = NULL;
+            state->count--;
+            return;
+        }
+
+        if (leaf_debug_enabled()) {
+            LeafGLenum err = result == 0x911D /* GL_WAIT_FAILED */ ? leaf_gl_error() : 0;
+            LEAF_GL_LOG("fence wait incomplete lag=%d result=0x%x err=0x%x\n",
+                        leaf_draw_fence_lag, result, err);
+        }
+        leaf_gl_fence_finish_and_clear(state);
+    }
+}
+
+static void leaf_gl_finish_before_draw(void)
+{
+    typedef void (*fn_t)(void);
+    static fn_t fn;
+    if (!fn) {
+        fn = (fn_t)leaf_sym("glFinish");
+    }
+    fn();
+}
+
 static void leaf_gl_draw_check(const char *what, LeafGLenum mode, LeafGLint count, LeafGLint instances)
 {
     typedef void (*finish_t)(void);
-    typedef void (*getintv_t)(LeafGLenum, LeafGLint *);
-    typedef void (*activetexture_t)(LeafGLenum);
     static finish_t p_finish, p_flush;
-    static getintv_t p_getintv;
-    static activetexture_t p_activetexture;
-    if (!p_finish) {
-        p_finish = (finish_t)leaf_sym("glFinish");
-        p_flush = (finish_t)leaf_sym("glFlush");
-        p_getintv = (getintv_t)leaf_sym("glGetIntegerv");
-        p_activetexture = (activetexture_t)leaf_sym("glActiveTexture");
-    }
     static unsigned long n;
     static int reported;
-    n++;
-    if (leaf_draw_finish_mode() == 4) {
+    int finish_mode = leaf_draw_finish_mode();
+    if (finish_mode == 4) {
         leaf_pending_draws = 1;
         return;
     }
-    if (leaf_draw_finish_mode() == 2) {
+    if (finish_mode == 5 && instances <= 1) {
+        return;
+    }
+    if (finish_mode == 6) {
+        leaf_gl_fence_after_draw();
+        return;
+    }
+    if (!leaf_draw_nth_due()) {
+        return;
+    }
+    if (finish_mode == 2) {
+        if (!p_flush) {
+            p_flush = (finish_t)leaf_sym("glFlush");
+        }
         p_flush();
     } else {
+        if (!p_finish) {
+            p_finish = (finish_t)leaf_sym("glFinish");
+        }
         p_finish();
     }
+
+    if (!leaf_debug_enabled()) {
+        return;
+    }
+
+    n++;
     LeafGLenum err = leaf_gl_error();
     if (err != 0 && reported < 16) {
+        typedef void (*getintv_t)(LeafGLenum, LeafGLint *);
+        typedef void (*activetexture_t)(LeafGLenum);
+        static getintv_t p_getintv;
+        static activetexture_t p_activetexture;
+        if (!p_getintv) {
+            p_getintv = (getintv_t)leaf_sym("glGetIntegerv");
+            p_activetexture = (activetexture_t)leaf_sym("glActiveTexture");
+        }
         reported++;
         LeafGLint prog = 0, vao = 0, active = 0, fbo = 0;
         LeafGLint tex[4] = {0, 0, 0, 0};
@@ -783,8 +1093,12 @@ static void leaf_glDrawArrays(LeafGLenum mode, LeafGLint first, LeafGLsizei coun
     if (!fn) {
         fn = (fn_t)leaf_sym("glDrawArrays");
     }
+    int finish_mode = leaf_draw_finish_mode();
+    if (finish_mode == 7) {
+        leaf_gl_finish_before_draw();
+    }
     fn(mode, first, count);
-    if (leaf_draw_finish_enabled()) {
+    if (finish_mode != 7) {
         leaf_gl_draw_check("glDrawArrays", mode, count, 1);
     }
 }
@@ -796,8 +1110,12 @@ static void leaf_glDrawElements(LeafGLenum mode, LeafGLsizei count, LeafGLenum t
     if (!fn) {
         fn = (fn_t)leaf_sym("glDrawElements");
     }
+    int finish_mode = leaf_draw_finish_mode();
+    if (finish_mode == 7) {
+        leaf_gl_finish_before_draw();
+    }
     fn(mode, count, type, indices);
-    if (leaf_draw_finish_enabled()) {
+    if (finish_mode != 7) {
         leaf_gl_draw_check("glDrawElements", mode, count, 1);
     }
 }
@@ -809,8 +1127,12 @@ static void leaf_glDrawArraysInstanced(LeafGLenum mode, LeafGLint first, LeafGLs
     if (!fn) {
         fn = (fn_t)leaf_sym("glDrawArraysInstanced");
     }
+    int finish_mode = leaf_draw_finish_mode();
+    if (finish_mode == 7) {
+        leaf_gl_finish_before_draw();
+    }
     fn(mode, first, count, instances);
-    if (leaf_draw_finish_enabled()) {
+    if (finish_mode != 7) {
         leaf_gl_draw_check("glDrawArraysInstanced", mode, count, instances);
     }
 }
@@ -822,8 +1144,12 @@ static void leaf_glDrawElementsInstanced(LeafGLenum mode, LeafGLsizei count, Lea
     if (!fn) {
         fn = (fn_t)leaf_sym("glDrawElementsInstanced");
     }
+    int finish_mode = leaf_draw_finish_mode();
+    if (finish_mode == 7) {
+        leaf_gl_finish_before_draw();
+    }
     fn(mode, count, type, indices, instances);
-    if (leaf_draw_finish_enabled()) {
+    if (finish_mode != 7) {
         leaf_gl_draw_check("glDrawElementsInstanced", mode, count, instances);
     }
 }
@@ -856,7 +1182,7 @@ static __eglMustCastToProperFunctionPointerType leaf_gl_debug_wrapper(const char
             return (__eglMustCastToProperFunctionPointerType)leaf_glDeleteVertexArrays;
         }
     }
-    if (strcmp(procname, "glBlitFramebuffer") == 0 && leaf_debug_enabled()) {
+    if (leaf_debug_enabled() && strcmp(procname, "glBlitFramebuffer") == 0) {
         return (__eglMustCastToProperFunctionPointerType)leaf_glBlitFramebuffer;
     }
     if (leaf_draw_finish_enabled()) {
@@ -872,6 +1198,9 @@ static __eglMustCastToProperFunctionPointerType leaf_gl_debug_wrapper(const char
         if (strcmp(procname, "glDrawElementsInstanced") == 0) {
             return (__eglMustCastToProperFunctionPointerType)leaf_glDrawElementsInstanced;
         }
+    }
+    if (!leaf_debug_enabled()) {
+        return NULL;
     }
     if (strcmp(procname, "glInvalidateFramebuffer") == 0) {
         return (__eglMustCastToProperFunctionPointerType)leaf_glInvalidateFramebuffer;
@@ -926,6 +1255,18 @@ __eglMustCastToProperFunctionPointerType eglGetProcAddress(const char *procname)
     }
     if (strcmp(procname, "eglCreatePlatformPixmapSurface") == 0) {
         return (__eglMustCastToProperFunctionPointerType)eglCreatePlatformPixmapSurface;
+    }
+    if (strcmp(procname, "eglMakeCurrent") == 0) {
+        return (__eglMustCastToProperFunctionPointerType)eglMakeCurrent;
+    }
+    if (strcmp(procname, "eglDestroyContext") == 0) {
+        return (__eglMustCastToProperFunctionPointerType)eglDestroyContext;
+    }
+    if (strcmp(procname, "eglReleaseThread") == 0) {
+        return (__eglMustCastToProperFunctionPointerType)eglReleaseThread;
+    }
+    if (strcmp(procname, "eglTerminate") == 0) {
+        return (__eglMustCastToProperFunctionPointerType)eglTerminate;
     }
     if (strcmp(procname, "eglCreateSync") == 0) {
         return (__eglMustCastToProperFunctionPointerType)eglCreateSync;
