@@ -405,6 +405,64 @@ LEAF_PM_PYTHON_SHIM
   fi
 fi
 
+# Ports that size themselves from fbset get the panel's native mode, which on
+# the MLP1 is portrait (720x960) while Leaf shows games at 960x720, so a port
+# that patches its own resolution from it renders shifted and cropped. This
+# fbset runs the real one and reports the mode name and visible geometry Leaf
+# displays (DISPLAY_WIDTH x DISPLAY_HEIGHT). Calls that set a mode print
+# nothing and pass through unchanged. LEAF_PM_FBSET_LOGICAL=0 turns it off.
+_leaf_pm_display_shim_dir="/tmp/leaf-portmaster-display"
+if mkdir -p "\$_leaf_pm_display_shim_dir" 2>/dev/null; then
+  cat >"\$_leaf_pm_display_shim_dir/fbset" <<'LEAF_PM_FBSET_SHIM'
+#!/bin/sh
+_shim_dir="\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)"
+_real=""
+_old_ifs="\$IFS"
+IFS=:
+set -f
+for _dir in \${PATH:-/usr/bin:/usr/sbin}; do
+  [ -n "\$_dir" ] && [ "\$_dir" != "\$_shim_dir" ] && [ -x "\$_dir/fbset" ] || continue
+  _real="\$_dir/fbset"
+  break
+done
+set +f
+IFS="\$_old_ifs"
+[ -n "\$_real" ] || _real=/usr/sbin/fbset
+_w="\${DISPLAY_WIDTH:-}"
+_h="\${DISPLAY_HEIGHT:-}"
+if [ "\${LEAF_PM_FBSET_LOGICAL:-1}" = "0" ]; then
+  exec "\$_real" "\$@"
+fi
+case "\$_w" in ''|*[!0-9]*) exec "\$_real" "\$@" ;; esac
+case "\$_h" in ''|*[!0-9]*) exec "\$_real" "\$@" ;; esac
+_out="\$("\$_real" "\$@")"
+_rc=\$?
+if [ -n "\$_out" ]; then
+  printf '%s\n' "\$_out" | awk -v w="\$_w" -v h="\$_h" '
+    /^mode "[0-9]+x[0-9]+/ { sub(/"[0-9]+x[0-9]+/, "\"" w "x" h) }
+    \$1 == "geometry" && NF >= 3 {
+      indent = \$0
+      sub(/geometry.*/, "", indent)
+      line = indent "geometry " w " " h
+      if (NF >= 5) {
+        if (\$4 == \$2 && \$5 == \$3) line = line " " w " " h
+        else line = line " " \$4 " " \$5
+      }
+      for (i = 6; i <= NF; i++) line = line " " \$i
+      print line
+      next
+    }
+    { print }'
+fi
+exit "\$_rc"
+LEAF_PM_FBSET_SHIM
+  chmod 755 "\$_leaf_pm_display_shim_dir/fbset" 2>/dev/null || true
+  case ":\${PATH:-}:" in
+    *:"\$_leaf_pm_display_shim_dir":*) ;;
+    *) export PATH="\$_leaf_pm_display_shim_dir:\${PATH:-/usr/bin:/usr/sbin}" ;;
+  esac
+fi
+
 leaf_pm_apply_controller_layout() {
   if [ "\${PORTMASTER_LEAF_PORT_LAYOUT_SCOPE:-ports}" = "gui" ]; then
     export PORTMASTER_LEAF_CONTROLLER_LAYOUT="gui"
@@ -903,7 +961,7 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
   }
 fi
 
-unset _leaf_pm_port_shim_preload _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_preload_path _leaf_pm_lib_path _leaf_pm_vk_dir _leaf_pm_sdl2_port _leaf_pm_sdl2_arches _leaf_pm_sdl2_optout _leaf_pm_aarch64_sdl2_cmd _leaf_pm_aarch64_sdl2_preload _leaf_pm_armhf_sdl2_cmd _leaf_pm_armhf_sdl2_preload
+unset _leaf_pm_display_shim_dir _leaf_pm_port_shim_preload _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_preload_path _leaf_pm_lib_path _leaf_pm_vk_dir _leaf_pm_sdl2_port _leaf_pm_sdl2_arches _leaf_pm_sdl2_optout _leaf_pm_aarch64_sdl2_cmd _leaf_pm_aarch64_sdl2_preload _leaf_pm_armhf_sdl2_cmd _leaf_pm_armhf_sdl2_preload
 EOF
 
 if [ -f "$hook_path" ] && command -v cmp >/dev/null 2>&1 && cmp -s "$tmp" "$hook_path"; then
