@@ -158,6 +158,20 @@ helper Python process, which lets port scripts run
 `harbourmaster runtime_check` without leaking Python runtime settings into the
 game executable.
 
+It also creates `/tmp/leaf-portmaster-display/fbset` and prepends that folder to
+`PATH`. The MLP1 panel is natively portrait, so the stock `fbset` reports
+`720x960` while Leaf shows games at `DISPLAY_WIDTH` x `DISPLAY_HEIGHT`
+(960x720), and `/proc/cmdline` has no `fbcon=rotate` for ports to detect it.
+Ports that size themselves from `fbset` then render portrait: Super Blood
+Hockey's `patch_sbh.py` patched the game to 720x960, which left it shifted
+with the menu cut off. The shim runs the real `fbset` and rewrites only the
+`mode "WxH..."` name and the visible `geometry` size (and the virtual size
+when it matched the visible one) to the logical display. Mode-setting calls
+print nothing and pass through unchanged, as do errors and exit codes. It
+falls back to the real output when `DISPLAY_WIDTH`/`DISPLAY_HEIGHT` are unset,
+and `LEAF_PM_FBSET_LOGICAL=0` turns it off. Ports that read
+`/sys/class/graphics/fb0/*` directly still see the panel's portrait size.
+
 The hook also wraps upstream `bind_directories` and `bind_files` after
 `control.txt` is sourced. The wrappers create only the parent path requested by
 the port at bind time, and strip a trailing slash from the destination before

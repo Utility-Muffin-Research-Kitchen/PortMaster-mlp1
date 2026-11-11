@@ -210,7 +210,11 @@ Installed port scripts also source the Leaf PortMaster hook from upstream
 `control.txt`. When the managed Python runtime exists, that hook creates a
 temporary `/tmp/leaf-portmaster-python/python3` shim so PortMaster helper calls
 such as `harbourmaster runtime_check` can download and verify game runtimes
-without exporting Python runtime variables into every launched game.
+without exporting Python runtime variables into every launched game. It also
+puts a `/tmp/leaf-portmaster-display/fbset` first on `PATH` that reports the
+display Leaf shows (`DISPLAY_WIDTH` x `DISPLAY_HEIGHT`) instead of the MLP1
+panel's portrait 720x960, for ports that size themselves from `fbset`; see
+`docs/compatibility.md`.
 
 The same hook prepends `$USERDATA_PATH/portmaster/compat/tools/aarch64/bin` to
 `PATH`. The MLP1 pak source-builds and bundles pinned aarch64 helpers there so
