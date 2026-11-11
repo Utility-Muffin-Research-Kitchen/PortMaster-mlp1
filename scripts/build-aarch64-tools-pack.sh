@@ -54,7 +54,13 @@ download_source() {
 
   if [ ! -f "$tarball" ] || [ "$(wc -c <"$tarball" | tr -d ' ')" != "$expected_size" ]; then
     local tmp="$tarball.tmp.$$"
-    curl -fL --retry 3 --connect-timeout 20 -o "$tmp" "$url"
+    # Callers run this inside $(...), where set -e doesn't stop at a failed
+    # curl, so check it here instead of reporting a sha256 mismatch later.
+    if ! curl -fL --retry 3 --connect-timeout 20 -o "$tmp" "$url"; then
+      rm -f "$tmp"
+      echo "download failed for $name: $url" >&2
+      exit 1
+    fi
     mv "$tmp" "$tarball"
   fi
 
