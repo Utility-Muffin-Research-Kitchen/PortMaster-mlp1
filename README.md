@@ -210,7 +210,11 @@ Installed port scripts also source the Leaf PortMaster hook from upstream
 `control.txt`. When the managed Python runtime exists, that hook creates a
 temporary `/tmp/leaf-portmaster-python/python3` shim so PortMaster helper calls
 such as `harbourmaster runtime_check` can download and verify game runtimes
-without exporting Python runtime variables into every launched game.
+without exporting Python runtime variables into every launched game. It also
+puts a `/tmp/leaf-portmaster-display/fbset` first on `PATH` that reports the
+display Leaf shows (`DISPLAY_WIDTH` x `DISPLAY_HEIGHT`) instead of the MLP1
+panel's portrait 720x960, for ports that size themselves from `fbset`; see
+`docs/compatibility.md`.
 
 The same hook prepends `$USERDATA_PATH/portmaster/compat/tools/aarch64/bin` to
 `PATH`. The MLP1 pak source-builds and bundles pinned aarch64 helpers there so
@@ -646,6 +650,14 @@ launches.
 shim links only libc and resolves `librga.so.2` dynamically inside the target
 process, so it does not add a persistent system dependency or modify stock
 graphics files.
+
+It also builds `compat/port/aarch64/leaf-port-shim.so` and, through a Debian
+armhf cross compiler (`make build-armhf-port-shim`),
+`compat/port/v8l/leaf-port-shim.so`. The hook preloads both through one
+`compat/port/$PLATFORM/leaf-port-shim.so` path. The shim lets ports set
+`SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS` themselves although Leaf's launcher
+already exports it, and keeps ports from writing the PWM rumble motor directly;
+see `docs/compatibility.md`.
 
 After the post-exit scan, the manager sends the Leaf launcher a non-fatal
 `scan-library` IPC request through `jawaka-platformctl` so newly installed

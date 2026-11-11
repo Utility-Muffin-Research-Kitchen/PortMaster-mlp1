@@ -9,6 +9,10 @@ DEB_DIR="$WORK_DIR/debs"
 ROOTFS="$WORK_DIR/root"
 OUT_DIR="$BUILD_DIR/compat/libs/aarch64"
 LICENSE_DIR="$BUILD_DIR/licenses/aarch64-compat-libs"
+# Build into the work dir and only replace the previous output once the whole
+# pack is complete, so a failed download keeps the last good build.
+STAGE_OUT_DIR="$WORK_DIR/out/libs"
+STAGE_LICENSE_DIR="$WORK_DIR/out/licenses"
 container=0
 
 if [[ "${1:-}" == "--container" ]]; then
@@ -24,8 +28,8 @@ if [[ "$container" == "0" ]]; then
     bash scripts/build-aarch64-compat-libs-pack.sh --container
 fi
 
-rm -rf "$WORK_DIR" "$OUT_DIR" "$LICENSE_DIR"
-mkdir -p "$DEB_DIR/partial" "$ROOTFS" "$OUT_DIR" "$LICENSE_DIR/debian"
+rm -rf "$WORK_DIR"
+mkdir -p "$DEB_DIR/partial" "$ROOTFS" "$STAGE_OUT_DIR" "$STAGE_LICENSE_DIR/debian"
 
 apt-get update
 apt-get install -y --no-install-recommends \
@@ -35,10 +39,14 @@ apt-get install -y --no-install-recommends \
   dpkg-dev \
   python3
 
+# Debian 11 left LTS, and its packages moved off deb.debian.org and
+# security.debian.org. archive.debian.org keeps the final bullseye indexes and
+# pools for good, so the pinned versions below stay resolvable. Its Release
+# files carry no Valid-Until, so apt needs no Check-Valid-Until override.
 cat >/tmp/leaf-bullseye-arm64.list <<'EOF'
-deb [arch=arm64] http://deb.debian.org/debian bullseye main
-deb [arch=arm64] http://deb.debian.org/debian bullseye-updates main
-deb [arch=arm64] http://security.debian.org/debian-security bullseye-security main
+deb [arch=arm64] http://archive.debian.org/debian bullseye main
+deb [arch=arm64] http://archive.debian.org/debian bullseye-updates main
+deb [arch=arm64] http://archive.debian.org/debian-security bullseye-security main
 EOF
 
 dpkg --add-architecture arm64
@@ -99,20 +107,22 @@ apt-get install -y --download-only --no-install-recommends \
   "${bullseye_packages[@]}"
 
 # These packages are already installed for the container's native architecture,
-# so ask apt for the exact arm64 artifacts explicitly.
-apt-get download \
-  -o Dir::Etc::sourcelist=/tmp/leaf-bullseye-arm64.list \
-  -o Dir::Etc::sourceparts=- \
-  -o Dir::Cache::archives="$DEB_DIR" \
-  "liblzma5:arm64=5.2.5-2.1~deb11u1" \
-  "libgcrypt20:arm64=1.8.7-6" \
-  "libgpg-error0:arm64=1.38-2" \
-  "libgssapi-krb5-2:arm64=1.18.3-6+deb11u8" \
-  "libkrb5-3:arm64=1.18.3-6+deb11u8" \
-  "libk5crypto3:arm64=1.18.3-6+deb11u8" \
-  "libkrb5support0:arm64=1.18.3-6+deb11u8" \
-  "libkeyutils1:arm64=1.6.1-2"
-mv ./*.deb "$DEB_DIR/" 2>/dev/null || true
+# so ask apt for the exact arm64 artifacts explicitly. apt-get download writes
+# to the current directory, so run it from the deb cache.
+(
+  cd "$DEB_DIR"
+  apt-get download \
+    -o Dir::Etc::sourcelist=/tmp/leaf-bullseye-arm64.list \
+    -o Dir::Etc::sourceparts=- \
+    "liblzma5:arm64=5.2.5-2.1~deb11u1" \
+    "libgcrypt20:arm64=1.8.7-6" \
+    "libgpg-error0:arm64=1.38-2" \
+    "libgssapi-krb5-2:arm64=1.18.3-6+deb11u8" \
+    "libkrb5-3:arm64=1.18.3-6+deb11u8" \
+    "libk5crypto3:arm64=1.18.3-6+deb11u8" \
+    "libkrb5support0:arm64=1.18.3-6+deb11u8" \
+    "libkeyutils1:arm64=1.6.1-2"
+)
 
 ubuntu_jpeg_deb="$DEB_DIR/libjpeg-turbo8_2.0.3-0ubuntu1.20.04.3_arm64.deb"
 ubuntu_jpeg_sha="9cd60a19f70399f4a828c7849bc7f18e53c059112100264e568486774eefcc17"
@@ -129,7 +139,7 @@ for deb in "$DEB_DIR"/*.deb; do
   dpkg-deb -x "$deb" "$ROOTFS"
 done
 
-python3 - "$ROOTFS" "$OUT_DIR" "$LICENSE_DIR/debian" "$DEB_DIR" <<'PY'
+python3 - "$ROOTFS" "$STAGE_OUT_DIR" "$STAGE_LICENSE_DIR/debian" "$DEB_DIR" <<'PY'
 import hashlib
 import json
 import os
@@ -248,8 +258,9 @@ for deb in sorted(deb_dir.glob("*.deb")):
     pkg = fields.get("package", "")
     if pkg:
         copyright_src = root / "usr" / "share" / "doc" / pkg / "copyright"
-        if copyright_src.exists():
-            shutil.copy2(copyright_src, license_dir / f"{pkg}.copyright")
+        if not copyright_src.exists():
+            raise SystemExit(f"{deb.name} has no /usr/share/doc/{pkg}/copyright")
+        shutil.copy2(copyright_src, license_dir / f"{pkg}.copyright")
     packages.append({
         "package": pkg,
         "version": fields.get("version", ""),
@@ -291,9 +302,9 @@ manifest = {
             "distro": "Debian 11 bullseye",
             "architectures": ["arm64", "all"],
             "repos": [
-                "http://deb.debian.org/debian bullseye main",
-                "http://deb.debian.org/debian bullseye-updates main",
-                "http://security.debian.org/debian-security bullseye-security main",
+                "http://archive.debian.org/debian bullseye main",
+                "http://archive.debian.org/debian bullseye-updates main",
+                "http://archive.debian.org/debian-security bullseye-security main",
             ],
         },
         {
@@ -313,5 +324,19 @@ manifest = {
 (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
-python3 -m json.tool "$OUT_DIR/manifest.json" >/dev/null
+python3 -m json.tool "$STAGE_OUT_DIR/manifest.json" >/dev/null
+
+replace_output() {
+  local staged="$1" dst="$2" old="$WORK_DIR/replaced-$3"
+  mkdir -p "$(dirname "$dst")"
+  rm -rf "$old"
+  if [ -e "$dst" ]; then
+    mv "$dst" "$old"
+  fi
+  mv "$staged" "$dst"
+  rm -rf "$old"
+}
+
+replace_output "$STAGE_OUT_DIR" "$OUT_DIR" libs
+replace_output "$STAGE_LICENSE_DIR" "$LICENSE_DIR" licenses
 echo "aarch64 compatibility libraries ready: $OUT_DIR"
