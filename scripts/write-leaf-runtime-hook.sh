@@ -245,15 +245,91 @@ leaf_pm_enable_java8_weston_runtime() {
 
 export LEAF_PM_EGL_SHIM_DIR="\${LEAF_PM_EGL_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/egl/aarch64}"
 export LEAF_PM_MALI_AARCH64_DIR="\${LEAF_PM_MALI_AARCH64_DIR:-\$LEAF_PM_DATA_DIR/compat/mali/aarch64}"
+# Godot 3.x runs through FRT builds (frt_*.squashfs, "frt" in the binary name);
+# everything else on the Godot path here is Godot 4.x. Err towards Godot 4 when
+# the command name says nothing, since that is where the draw-loss bug lives.
+# The former per-draw glFinish default serialised the GPU, so simple_ondemand
+# measured a mostly-idle GPU and parked it at the 200MHz floor. Historical
+# Slime 3K title-screen measurements under that mode were (GPU load, lower =
+# more headroom):
+#   200MHz 28%   300MHz 20%   400MHz 15%   600MHz 11%   800MHz 11%
+# With the fence:2 default, a live gameplay run measured 20-22% at 600MHz. The
+# lower-frequency sweep has not been repeated under fence:2, so retain 600MHz
+# as a conservative floor while the broader game matrix catches up.
+# Set LEAF_PM_GODOT_GPU_MIN_FREQ=0 to leave DVFS alone.
+leaf_pm_godot_gpu_dir() {
+  for _d in /sys/class/devfreq/*.gpu; do
+    [ -f "\$_d/min_freq" ] && { echo "\$_d"; return 0; }
+  done
+  return 1
+}
+
+leaf_pm_restore_godot_gpu_floor() {
+  [ "\${LEAF_PM_GODOT_GPU_FLOOR_APPLIED:-0}" = "1" ] || return 0
+  export LEAF_PM_GODOT_GPU_FLOOR_APPLIED=0
+  _leaf_pm_gpu_dir="\$(leaf_pm_godot_gpu_dir)" || return 0
+  # Restore to the hardware floor rather than a remembered value: if a previous
+  # port was SIGKILLed its trap never ran, and a remembered value would be wrong.
+  _leaf_pm_gpu_lowest="\$(tr ' ' '\n' < "\$_leaf_pm_gpu_dir/available_frequencies" 2>/dev/null | grep -E '^[0-9]+\$' | sort -n | head -1)"
+  [ -n "\$_leaf_pm_gpu_lowest" ] && echo "\$_leaf_pm_gpu_lowest" > "\$_leaf_pm_gpu_dir/min_freq" 2>/dev/null
+  unset _leaf_pm_gpu_dir _leaf_pm_gpu_lowest
+}
+
+leaf_pm_apply_godot_gpu_floor() {
+  [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
+  _leaf_pm_gpu_target="\${LEAF_PM_GODOT_GPU_MIN_FREQ:-600000000}"
+  case "\$_leaf_pm_gpu_target" in
+    0|""|no|NO|false|FALSE) unset _leaf_pm_gpu_target; return 0 ;;
+  esac
+  _leaf_pm_gpu_dir="\$(leaf_pm_godot_gpu_dir)" || { unset _leaf_pm_gpu_target; return 0; }
+  [ -w "\$_leaf_pm_gpu_dir/min_freq" ] || { unset _leaf_pm_gpu_target _leaf_pm_gpu_dir; return 0; }
+  # Only accept a frequency the hardware actually advertises.
+  if ! tr ' ' '\n' < "\$_leaf_pm_gpu_dir/available_frequencies" 2>/dev/null | grep -qx "\$_leaf_pm_gpu_target"; then
+    unset _leaf_pm_gpu_target _leaf_pm_gpu_dir
+    return 0
+  fi
+  if echo "\$_leaf_pm_gpu_target" > "\$_leaf_pm_gpu_dir/min_freq" 2>/dev/null; then
+    export LEAF_PM_GODOT_GPU_FLOOR_APPLIED=1
+  fi
+  unset _leaf_pm_gpu_target _leaf_pm_gpu_dir
+}
+
+leaf_pm_godot_cmd_is_godot4() {
+  case "\${1##*/}" in
+    *frt*|*FRT*) return 1 ;;
+    *godot_3*|*godot3*|*godot-3*) return 1 ;;
+  esac
+  case "\${LEAF_PM_GODOT_FORCE_GODOT4:-}" in
+    0|false|no|FALSE|NO) return 1 ;;
+  esac
+  return 0
+}
+
 leaf_pm_prepare_godot_runtime_env() {
   [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
   export LEAF_PM_SKIP_WESTONPACK_CLEANUP="\${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}"
-  # The stock Mali blob mis-tracks in-flight GPU jobs against Godot 4's
-  # streamed canvas buffers: the kernel logs "Unhandled Page fault" / job
-  # TERMINATED every frame and the screen stays black after the boot splash.
-  # The Leaf EGL shim serializes draws to work around it (1 = glFinish after
-  # each draw). Override with LEAF_PM_GODOT_DRAW_FINISH=0 to disable.
-  export LEAF_EGL_DRAW_FINISH="\${LEAF_PM_GODOT_DRAW_FINISH:-\${LEAF_EGL_DRAW_FINISH:-1}}"
+  # Godot 4 loses draws on the stock Mali stack with no barrier or with the
+  # weaker flush/sync/upload, instanced-only, and every-Nth-draw experiments.
+  # fence:2 fences and flushes every draw, then waits two draws behind, keeping
+  # bounded CPU/GPU overlap without dropping the ordering workaround. A managed
+  # Slime 3K run produced a pixel-identical title, survived about nine minutes of
+  # real gameplay and multiple inputs with complete snapshots, and logged no new
+  # Mali fault line. Its median was 49.2 fps versus 27.8 for per-draw glFinish.
+  # The context-safe implementation then passed another 90-second managed input
+  # soak at a 50.3 fps median, plus alternating- and parallel-context stress,
+  # again without a new Mali fault.
+  # LEAF_PM_GODOT_DRAW_FINISH=1 is the safe fully-serialised rollback;
+  # LEAF_PM_GODOT_DRAW_FINISH=0 disables the workaround only for diagnosis.
+  #
+  # Godot 3.x / FRT is unaffected -- it has no fence path and orphans its
+  # canvas buffers with glBufferData(..., NULL, ...), which is inherently safe --
+  # so it gets no barrier. It had been paying for one anyway, which cost roughly
+  # 2.5x frame time in Bananaguy 2 (25 fps -> 60 fps locked once disabled).
+  if leaf_pm_godot_cmd_is_godot4 "\${1:-}"; then
+    export LEAF_EGL_DRAW_FINISH="\${LEAF_PM_GODOT_DRAW_FINISH:-\${LEAF_EGL_DRAW_FINISH:-fence:2}}"
+  else
+    export LEAF_EGL_DRAW_FINISH="\${LEAF_PM_GODOT_DRAW_FINISH:-\${LEAF_EGL_DRAW_FINISH:-0}}"
+  fi
   _leaf_pm_godot_cmd="\${1:-}"
   _leaf_pm_godot_use_mali_default=0
   _leaf_pm_godot_use_mali="\${LEAF_PM_GODOT_USE_MALI_COMPAT:-\$_leaf_pm_godot_use_mali_default}"
@@ -262,6 +338,9 @@ leaf_pm_prepare_godot_runtime_env() {
   _leaf_pm_egl_shim="\${LEAF_PM_EGL_SHIM_DIR:-}/libEGL.so.1"
   case "\$_leaf_pm_godot_use_mali" in
     1|true|yes|TRUE|YES)
+      # Diagnostic override: the Vulkan g29p1 bundle. It has no wayland winsys,
+      # so this will fail to get an EGL display on the Weston path -- kept only
+      # for deliberate bisection.
       if [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ]; then
         export LEAF_PM_MALI_LIB="\$LEAF_PM_MALI_AARCH64_DIR/libmali.so.1"
         case ":\${LD_LIBRARY_PATH:-}:" in
@@ -304,27 +383,48 @@ leaf_pm_args_have_window_mode() {
 
 leaf_pm_run_godot_wayland_runtime() {
   [ "\$#" -gt 0 ] || return 127
-  _leaf_pm_godot_cmd="\$1"
-  shift
-  leaf_pm_prepare_godot_runtime_env "\$_leaf_pm_godot_cmd"
-  if leaf_pm_args_have_display_driver "\$@"; then
-    "\$_leaf_pm_godot_cmd" "\$@"
-    return \$?
-  fi
-  "\$_leaf_pm_godot_cmd" --display-driver wayland "\$@"
+  # The launcher's post-run Weston cleanup guard must remain set in its shell.
+  export LEAF_PM_SKIP_WESTONPACK_CLEANUP="\${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}"
+  (
+    # Keep GPU cleanup traps inside this runner's subshell. Port launchers often
+    # own EXIT and signal traps themselves, and the runtime hook must not replace
+    # them. Signal handlers retain normal terminating exit statuses; EXIT does
+    # the one cleanup operation this subshell owns.
+    trap 'leaf_pm_restore_godot_gpu_floor' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    _leaf_pm_godot_cmd="\$1"
+    shift
+    leaf_pm_prepare_godot_runtime_env "\$_leaf_pm_godot_cmd"
+    leaf_pm_apply_godot_gpu_floor
+    if leaf_pm_args_have_display_driver "\$@"; then
+      "\$_leaf_pm_godot_cmd" "\$@"
+      return \$?
+    fi
+    "\$_leaf_pm_godot_cmd" --display-driver wayland "\$@"
+  )
 }
 
 leaf_pm_run_godot_sdl2_runtime() {
   [ "\$#" -gt 0 ] || return 127
-  _leaf_pm_godot_cmd="\$1"
-  shift
-  leaf_pm_prepare_godot_runtime_env "\$_leaf_pm_godot_cmd"
-  _leaf_pm_direct_resolution="\${LEAF_PM_GODOT_DIRECT_RESOLUTION:-960x720}"
-  if [ -n "\$_leaf_pm_direct_resolution" ] && ! leaf_pm_args_have_window_mode "\$@"; then
-    "\$_leaf_pm_godot_cmd" --resolution "\$_leaf_pm_direct_resolution" "\$@"
-    return \$?
-  fi
-  "\$_leaf_pm_godot_cmd" "\$@"
+  export LEAF_PM_SKIP_WESTONPACK_CLEANUP="\${LEAF_PM_SKIP_WESTONPACK_CLEANUP:-1}"
+  (
+    trap 'leaf_pm_restore_godot_gpu_floor' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    _leaf_pm_godot_cmd="\$1"
+    shift
+    leaf_pm_prepare_godot_runtime_env "\$_leaf_pm_godot_cmd"
+    leaf_pm_apply_godot_gpu_floor
+    _leaf_pm_direct_resolution="\${LEAF_PM_GODOT_DIRECT_RESOLUTION:-960x720}"
+    if [ -n "\$_leaf_pm_direct_resolution" ] && ! leaf_pm_args_have_window_mode "\$@"; then
+      "\$_leaf_pm_godot_cmd" --resolution "\$_leaf_pm_direct_resolution" "\$@"
+      return \$?
+    fi
+    "\$_leaf_pm_godot_cmd" "\$@"
+  )
 }
 
 leaf_pm_enable_godot_wayland_runtime() {
@@ -403,6 +503,64 @@ LEAF_PM_PYTHON_SHIM
       *) export PATH="\$_leaf_pm_python_shim_dir:\${PATH:-/usr/bin:/usr/sbin}" ;;
     esac
   fi
+fi
+
+# Ports that size themselves from fbset get the panel's native mode, which on
+# the MLP1 is portrait (720x960) while Leaf shows games at 960x720, so a port
+# that patches its own resolution from it renders shifted and cropped. This
+# fbset runs the real one and reports the mode name and visible geometry Leaf
+# displays (DISPLAY_WIDTH x DISPLAY_HEIGHT). Calls that set a mode print
+# nothing and pass through unchanged. LEAF_PM_FBSET_LOGICAL=0 turns it off.
+_leaf_pm_display_shim_dir="/tmp/leaf-portmaster-display"
+if mkdir -p "\$_leaf_pm_display_shim_dir" 2>/dev/null; then
+  cat >"\$_leaf_pm_display_shim_dir/fbset" <<'LEAF_PM_FBSET_SHIM'
+#!/bin/sh
+_shim_dir="\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)"
+_real=""
+_old_ifs="\$IFS"
+IFS=:
+set -f
+for _dir in \${PATH:-/usr/bin:/usr/sbin}; do
+  [ -n "\$_dir" ] && [ "\$_dir" != "\$_shim_dir" ] && [ -x "\$_dir/fbset" ] || continue
+  _real="\$_dir/fbset"
+  break
+done
+set +f
+IFS="\$_old_ifs"
+[ -n "\$_real" ] || _real=/usr/sbin/fbset
+_w="\${DISPLAY_WIDTH:-}"
+_h="\${DISPLAY_HEIGHT:-}"
+if [ "\${LEAF_PM_FBSET_LOGICAL:-1}" = "0" ]; then
+  exec "\$_real" "\$@"
+fi
+case "\$_w" in ''|*[!0-9]*) exec "\$_real" "\$@" ;; esac
+case "\$_h" in ''|*[!0-9]*) exec "\$_real" "\$@" ;; esac
+_out="\$("\$_real" "\$@")"
+_rc=\$?
+if [ -n "\$_out" ]; then
+  printf '%s\n' "\$_out" | awk -v w="\$_w" -v h="\$_h" '
+    /^mode "[0-9]+x[0-9]+/ { sub(/"[0-9]+x[0-9]+/, "\"" w "x" h) }
+    \$1 == "geometry" && NF >= 3 {
+      indent = \$0
+      sub(/geometry.*/, "", indent)
+      line = indent "geometry " w " " h
+      if (NF >= 5) {
+        if (\$4 == \$2 && \$5 == \$3) line = line " " w " " h
+        else line = line " " \$4 " " \$5
+      }
+      for (i = 6; i <= NF; i++) line = line " " \$i
+      print line
+      next
+    }
+    { print }'
+fi
+exit "\$_rc"
+LEAF_PM_FBSET_SHIM
+  chmod 755 "\$_leaf_pm_display_shim_dir/fbset" 2>/dev/null || true
+  case ":\${PATH:-}:" in
+    *:"\$_leaf_pm_display_shim_dir":*) ;;
+    *) export PATH="\$_leaf_pm_display_shim_dir:\${PATH:-/usr/bin:/usr/sbin}" ;;
+  esac
 fi
 
 leaf_pm_apply_controller_layout() {
@@ -774,6 +932,37 @@ leaf_pm_begin_gothic_machismo_vulkan_rotate() {
 
 export LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM="\${LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM:-\$LEAF_PM_DATA_DIR/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so}"
 
+# leaf-port-shim.so is preloaded into every port. It does two things:
+# - jawakad exports SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1 so games keep their
+#   controller while Leaf's volume and brightness toast holds keyboard focus.
+#   SDL lets that variable outrank a game's own SDL_SetHint, and some games
+#   treat the refusal as fatal. The shim gives a game's own setting of the
+#   hints in LEAF_PM_SDL_YIELD_HINTS priority; games that never set them keep
+#   Leaf's value.
+# - The rumble motor is a PWM channel jawakad owns. Ports built for other
+#   handhelds sometimes write a PWM motor directly with that device's values,
+#   which can mean full power here and bypasses Leaf's rumble settings. The
+#   shim refuses write access to PWM sysfs files (LEAF_PM_PWM_GUARD=0 turns
+#   that off), so such ports fall back to SDL rumble through Leaf.
+# The preload path keeps a literal \$PLATFORM for the dynamic loader, which
+# expands it to aarch64 for 64-bit programs and v8l for 32-bit ones, so every
+# process loads the build for its own architecture.
+export LEAF_PM_PORT_SHIM_DIR="\${LEAF_PM_PORT_SHIM_DIR:-\$LEAF_PM_DATA_DIR/compat/port}"
+export LEAF_PM_SDL_YIELD_HINTS="\${LEAF_PM_SDL_YIELD_HINTS-SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS}"
+export LEAF_PM_PWM_GUARD="\${LEAF_PM_PWM_GUARD:-1}"
+
+leaf_pm_enable_port_shim() {
+  [ -f "\$LEAF_PM_PORT_SHIM_DIR/aarch64/leaf-port-shim.so" ] || return 0
+  [ -f "\$LEAF_PM_PORT_SHIM_DIR/v8l/leaf-port-shim.so" ] || return 0
+  _leaf_pm_port_shim_preload="\$LEAF_PM_PORT_SHIM_DIR/\\\$PLATFORM/leaf-port-shim.so"
+  case ":\${LD_PRELOAD:-}:" in
+    *:"\$_leaf_pm_port_shim_preload":*) ;;
+    *) export LD_PRELOAD="\$_leaf_pm_port_shim_preload\${LD_PRELOAD:+:\$LD_PRELOAD}" ;;
+  esac
+}
+
+leaf_pm_enable_port_shim
+
 leaf_pm_enable_sdl2_fullscreen_env() {
   _leaf_pm_sdl2_port="\${1:-}"
   _leaf_pm_sdl2_arches=",\${2:-},"
@@ -872,7 +1061,7 @@ if [ -f "\$LEAF_PM_ARMHF_ROOT/lib/ld-linux-armhf.so.3" ] && [ -f "\$LEAF_PM_ARMH
   }
 fi
 
-unset _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_preload_path _leaf_pm_lib_path _leaf_pm_vk_dir _leaf_pm_sdl2_port _leaf_pm_sdl2_arches _leaf_pm_sdl2_optout _leaf_pm_aarch64_sdl2_cmd _leaf_pm_aarch64_sdl2_preload _leaf_pm_armhf_sdl2_cmd _leaf_pm_armhf_sdl2_preload
+unset _leaf_pm_display_shim_dir _leaf_pm_port_shim_preload _leaf_pm_controlfolder _leaf_pm_data_dir _leaf_pm_roms_dir _leaf_pm_ports_dir _leaf_pm_system_dir _leaf_pm_internal_dir _leaf_pm_python_shim_dir _leaf_pm_preload_path _leaf_pm_lib_path _leaf_pm_vk_dir _leaf_pm_sdl2_port _leaf_pm_sdl2_arches _leaf_pm_sdl2_optout _leaf_pm_aarch64_sdl2_cmd _leaf_pm_aarch64_sdl2_preload _leaf_pm_armhf_sdl2_cmd _leaf_pm_armhf_sdl2_preload
 EOF
 
 if [ -f "$hook_path" ] && command -v cmp >/dev/null 2>&1 && cmp -s "$tmp" "$hook_path"; then

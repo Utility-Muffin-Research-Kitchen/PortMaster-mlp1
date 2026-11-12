@@ -1,5 +1,6 @@
 build/
 dist/
+.cache/
 ports/mlp1/pak/bin/
 *.dSYM/
 .DS_Store

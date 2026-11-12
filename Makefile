@@ -57,7 +57,7 @@ ifeq ($(shell uname -s),Darwin)
 LDLIBS_COMMON += -lobjc
 endif
 
-.PHONY: all native run-native artwork-fixtures source-fixtures scan-source-fixtures multi-source-fixtures preference-fixtures move-fixtures autoinstall-fixtures mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke self-heal-smoke armhf-install-fixtures update-failure-fixtures smoke-matrix fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
+.PHONY: all native run-native artwork-fixtures source-fixtures scan-source-fixtures multi-source-fixtures preference-fixtures move-fixtures autoinstall-fixtures godot-hook-fixtures mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke self-heal-smoke armhf-install-fixtures update-failure-fixtures smoke-matrix fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-port-shim build-armhf-port-shim build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
 
 all: native
 
@@ -95,6 +95,9 @@ move-fixtures: native
 autoinstall-fixtures: native
 	@AUTOINSTALL_TEST_BINARY="$(abspath $(APP_BIN))" bash ./tools/autoinstall-fixtures.sh
 
+godot-hook-fixtures:
+	@bash ./tools/godot-hook-fixtures.sh
+
 mlp1:
 	@VERSION="$(VERSION)" ./scripts/build-mlp1.sh
 
@@ -112,6 +115,8 @@ package-build:
 			"$(PACKAGE_DIR)/compat/armhf" "$(PACKAGE_DIR)/compat/egl/aarch64" \
 			"$(PACKAGE_DIR)/compat/mali/aarch64" \
 			"$(PACKAGE_DIR)/compat/sdl2/aarch64" \
+			"$(PACKAGE_DIR)/compat/port/aarch64" \
+			"$(PACKAGE_DIR)/compat/port/v8l" \
 			"$(PACKAGE_DIR)/compat/drm/aarch64" \
 			"$(PACKAGE_DIR)/compat/libs/aarch64" \
 			"$(PACKAGE_DIR)/compat/tools/aarch64/bin" \
@@ -128,6 +133,8 @@ package-build:
 	@if [ -d "$(BUILD)/compat/egl/aarch64" ]; then cp -f "$(BUILD)"/compat/egl/aarch64/* "$(PACKAGE_DIR)/compat/egl/aarch64/"; fi
 	@if [ -d "$(BUILD)/compat/mali/aarch64" ]; then cp -f "$(BUILD)"/compat/mali/aarch64/* "$(PACKAGE_DIR)/compat/mali/aarch64/"; fi
 	@if [ -d "$(BUILD)/compat/sdl2/aarch64" ]; then cp -f "$(BUILD)"/compat/sdl2/aarch64/* "$(PACKAGE_DIR)/compat/sdl2/aarch64/"; fi
+	@if [ -d "$(BUILD)/compat/port/aarch64" ]; then cp -f "$(BUILD)"/compat/port/aarch64/* "$(PACKAGE_DIR)/compat/port/aarch64/"; fi
+	@if [ -d "$(BUILD)/compat/port/v8l" ]; then cp -f "$(BUILD)"/compat/port/v8l/* "$(PACKAGE_DIR)/compat/port/v8l/"; fi
 	@if [ -d "$(BUILD)/compat/drm/aarch64" ]; then cp -f "$(BUILD)"/compat/drm/aarch64/* "$(PACKAGE_DIR)/compat/drm/aarch64/"; fi
 	@if [ -d "$(BUILD)/compat/libs/aarch64" ]; then cp -f "$(BUILD)"/compat/libs/aarch64/* "$(PACKAGE_DIR)/compat/libs/aarch64/"; fi
 	@if [ -d "$(BUILD)/compat/tools/aarch64" ]; then cp -Rf "$(BUILD)"/compat/tools/aarch64/. "$(PACKAGE_DIR)/compat/tools/aarch64/"; fi
@@ -139,11 +146,12 @@ package-build:
 	@if [ -f "$(PACKAGE_DIR)/compat/tools/aarch64/bin/rsync" ]; then chmod 755 "$(PACKAGE_DIR)/compat/tools/aarch64/bin/rsync"; fi
 	@if [ -f "$(PACKAGE_DIR)/compat/tools/aarch64/bin/strace" ]; then chmod 755 "$(PACKAGE_DIR)/compat/tools/aarch64/bin/strace"; fi
 	@if [ -f "$(PACKAGE_DIR)/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so" ]; then chmod 755 "$(PACKAGE_DIR)/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so"; fi
+	@for f in "$(PACKAGE_DIR)"/compat/port/aarch64/leaf-port-shim.so "$(PACKAGE_DIR)"/compat/port/v8l/leaf-port-shim.so; do if [ -f "$$f" ]; then chmod 755 "$$f"; fi; done
 	@if [ -f "$(PACKAGE_DIR)/compat/drm/aarch64/leaf-drm-rotate.so" ]; then chmod 755 "$(PACKAGE_DIR)/compat/drm/aarch64/leaf-drm-rotate.so"; fi
 	@find "$(PACKAGE_DIR)" -type f -name .DS_Store -delete
 	@find "$(PACKAGE_DIR)" -type f | sort
 
-package-mlp1: mlp1 build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs
+package-mlp1: mlp1 build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-port-shim build-armhf-port-shim build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs
 	@$(MAKE) BUILD="$(MLP1_BUILD)" PLATFORM=mlp1 BIN="$(MLP1_BIN)" package-build
 
 package-platform:
@@ -195,6 +203,12 @@ build-aarch64-mali-compat:
 
 build-aarch64-sdl2-fullscreen:
 	@MLP1_TOOLCHAIN_IMAGE="$(MLP1_TOOLCHAIN_IMAGE)" bash scripts/build-aarch64-sdl2-fullscreen-shim.sh
+
+build-aarch64-port-shim:
+	@MLP1_TOOLCHAIN_IMAGE="$(MLP1_TOOLCHAIN_IMAGE)" bash scripts/build-aarch64-port-shim.sh
+
+build-armhf-port-shim:
+	@bash scripts/build-armhf-port-shim.sh
 
 build-aarch64-drm-rotate:
 	@MLP1_TOOLCHAIN_IMAGE="$(MLP1_TOOLCHAIN_IMAGE)" bash scripts/build-aarch64-drm-rotate-shim.sh
