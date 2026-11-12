@@ -503,6 +503,78 @@ available with `LEAF_PM_JAVA_WESTON_DIRECT_DRM=0`,
 `LEAF_PM_JAVA_WESTON_FONT_DIR`. The older `LEAF_PM_JAVA8_*` names and installed
 `LEAF_PM_RUNTIME_COMPAT_JAVA8_WESTON=1` launcher blocks remain compatible.
 
+32-bit Westonpack apps (`westonwrap32.sh`, mostly box86 ports such as
+SteamWorld Dig, SteamWorld Heist and Braid) need no launcher patch. Leaf's armhf
+wrapper sources the generated hook again right before the app runs, after
+Westonpack has set up its environment, and the hook's
+`leaf_pm_enable_westonpack32_runtime` adjusts it when `WP_32BIT=1` and the
+graphics mode preloads Crusty:
+
+- Westonpack finds Crusty's 32-bit EGL and SDL with `tools/findlib32`, an armhf
+  program the stock firmware cannot run, so `CRUSTY_LIBEGL` and `CRUSTY_LIBSDL`
+  arrive empty. The hook fills them with Leaf's armhf Mali `libEGL.so.1` and
+  `libSDL2-2.0.so.0`.
+- Outside ROCKNIX, Crusty opens its output window with whatever SDL driver the
+  system SDL picks, which on handheld firmware is KMSDRM. Leaf's armhf SDL also
+  has X11 and Wayland, so the window would land on Westonpack's own Xwayland.
+  The hook sets `CRUSTY_WLMODE=1` and `CRUSTY_WLDISP` to Leaf's Weston socket
+  (recorded by the first hook source as `LEAF_PM_HOST_WAYLAND_SOCKET`), so the
+  window is a normal Weston client and Weston handles the portrait panel.
+  Direct DRM, as the Java path uses, is not an option here: the rotation shim
+  needs the stock `librga.so.2`, which only exists for aarch64.
+- The app draws to Westonpack's Xwayland, so a `SDL_VIDEODRIVER=wayland`
+  inherited from Leaf is cleared (old SDL builds then fail with `wayland not
+  available`).
+- box86 takes its GL library from `SDL_VIDEO_GL_DRIVER` unless `BOX86_LIBGL` is
+  set, and Leaf's armhf wrappers default that to `libGLESv2.so`. The hook sets
+  `BOX86_LIBGL=libGL.so.1` so box86 loads Westonpack's gl4es GLX library, while
+  Crusty's own SDL keeps the Mali GLES library.
+
+`LEAF_PM_WESTONPACK32_COMPAT=0` turns this off.
+
+The armhf wrapper's second hook source must not undo what the port set for its
+binary. Only the first source in a launch (control.txt) points `HOME` and
+`XDG_DATA_HOME` at Leaf's PortMaster folder and records the host Wayland socket;
+`LEAF_PM_HOOK_APPLIED` marks it. Ports that set `XDG_DATA_HOME=$GAMEDIR/conf` or
+their own `HOME` for an armhf binary therefore read and save there, as upstream
+intends. In the PortMaster-New catalog these are Barbarian, Bit.Trip Runner 2,
+Guacamelee, La-Mulana, Nox, SteamWorld Dig, SteamWorld Heist, Super Meat Boy,
+Waking Mars and Braid. Before this, their settings and saves were looked up in
+Leaf's PortMaster folder instead.
+
+### gptokeyb input inside Leaf's per-game input view
+
+Leaf starts every game in a private mount namespace whose `/dev/input` holds
+only the input devices present at launch (Jawaka's controller roster). The
+virtual keyboard and mouse gptokeyb creates afterwards are missing there. Ports
+whose window is a Leaf Weston client still get gptokeyb's keys through Weston,
+but anything that reads input devices directly, such as Westonpack's nested
+Weston (all Westonpack ports) or SDL on KMSDRM, gets no keyboard or mouse.
+
+The hook writer installs `mod_Leaf.txt` next to the hook. PortMaster ports
+source `mod_<CFW_NAME>.txt` right after `control.txt`, so it runs once
+`GPTOKEYB` and `GPTOKEYB2` exist, and it prefixes both with
+`leaf-gptokeyb-run`. That launcher records the current input devices, starts a
+background helper, and `exec`s gptokeyb, so `$!`, `pidof` and `pkill` behave as
+before. For about five seconds the helper looks for new uinput devices
+(`/devices/virtual/input/...`, so a Bluetooth controller stays with the roster)
+that are missing from `/dev/input`, mounts devtmpfs at
+`/tmp/leaf-portmaster-devtmpfs` inside the namespace, and bind-mounts each new
+node onto a placeholder in `/dev/input`, the way Jawaka builds the view.
+Jawaka's per-launch directory cleanup removes the placeholders. Where
+`/dev/input` already shows every device the helper does nothing.
+`LEAF_PM_GPTOKEYB_EXPOSE=0` turns it off.
+
+### Keeping the hook current
+
+The hook, `mod_Leaf.txt` and `leaf-gptokeyb-run` are rewritten whenever
+PortMaster is installed, repatched or opened, or the controller layout changes.
+They now also carry `# LEAF_PM_HOOK_WRITER=<cksum>` of the writer that produced
+them. `scripts/prepare-port-runtime.sh`, which runs before every port launch,
+rewrites them when that value differs from the shipped writer or a file is
+missing, so a Pak update reaches ports launched straight from Leaf.
+`LEAF_PM_HOOK_REFRESH=0` turns this off.
+
 The scanner also normalizes a generic unsafe shell pattern where launchers
 lowercase an entire absolute file path before `mv`. On case-sensitive paths such
 as `Roms/PORTS`, that can turn the directory component into a nonexistent
