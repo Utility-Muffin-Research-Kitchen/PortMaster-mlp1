@@ -192,12 +192,25 @@ Installed `.sh` port launchers also receive a small `LEAF_PM_PORT_ENV=1`
 normalization block before they source upstream `control.txt`. That block
 selects the active SD-managed PortMaster tree through `XDG_DATA_HOME` and
 `PORTMASTER_CONTROLFOLDER`, rather than letting upstream scripts fall back to
-`/roms/ports/PortMaster` on the stock rootfs. The scanner also rewrites common
-quoted or unquoted `GAMEDIR=/$directory/ports/<game>` and
-`PORTDIR=/$directory/ports` assignments to prefer `HM_PORTS_DIR`, and the
-generated hook only overrides `directory` from the active `ROMS_PATH`/`SDCARD_PATH`
-when the launcher's `/roms/ports` bind mount is not present. This keeps the runtime on
-SD and avoids writing compatibility state to eMMC/rootfs.
+`/roms/ports/PortMaster` on the stock rootfs. The generated hook only overrides
+`directory` from the active `ROMS_PATH`/`SDCARD_PATH` when the launcher's
+`/roms/ports` bind mount is not present. This keeps the runtime on SD and avoids
+writing compatibility state to eMMC/rootfs.
+
+MLP1 cards mount vfat with `iocharset=utf8`, which makes path lookups
+case-sensitive, so `/$directory/ports` (`/mnt/sdcard/Roms/ports`) misses
+`Roms/PORTS`. The scanner therefore rewrites every `/$directory/ports` or
+`/${directory}/ports` path that bash expands to `${HM_PORTS_DIR:-/$directory/ports}`:
+`GAMEDIR`/`PORTDIR` and other assignments, `LD_LIBRARY_PATH` and `XDG_*_HOME`
+values, `cd`, `cp`, `bind_directories` and `[ -f ]` arguments, command
+substitutions and backticks. Unquoted uses get the wrap in double quotes. Without
+`HM_PORTS_DIR` the value is the same as before. Comments, single-quoted and
+`$'...'` text, and heredoc bodies stay literal, and so do paths that only
+contain the pattern (`$HOME/$directory/ports`, `/$directory/ports.bak`). A
+script whose quoting the scanner cannot follow, or whose rewrite fails
+`bash -n`, keeps only the older `GAMEDIR`/`PORTDIR` assignment rewrite. A second
+scan changes nothing. `make ports-path-fixtures` checks this, and with
+`PORTS_CATALOG_DIR` set it also checks every PortMaster-New launch script.
 
 The generated hook also exposes `LEAF_PM_RETROARCH_BIN` and
 `LEAF_PM_RETROARCH_CONFIG` for libretro-style ports. Installed launchers with

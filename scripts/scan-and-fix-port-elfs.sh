@@ -33,7 +33,7 @@ report_tsv="${LEAF_PM_ARMHF_SCAN_TSV:-$leaf_dir/armhf-scan.tsv}"
 report_json="${LEAF_PM_ARMHF_SCAN_JSON:-$leaf_dir/armhf-scan.json}"
 latest_report_tsv="${LEAF_PM_ARMHF_SCAN_LATEST_TSV:-}"
 latest_report_json="${LEAF_PM_ARMHF_SCAN_LATEST_JSON:-}"
-RULESET_VERSION=17
+RULESET_VERSION=18
 manifest_path="${LEAF_PM_ARMHF_SCAN_MANIFEST:-$leaf_dir/armhf-scan.manifest}"
 latest_manifest_path="${LEAF_PM_ARMHF_SCAN_LATEST_MANIFEST:-}"
 hook_path="$controlfolder/leaf-armhf-env.sh"
@@ -1053,13 +1053,284 @@ normalize_port_env_script() {
   printf 'port-env-patched'
 }
 
+port_paths_has_unwrapped() {
+  sed 's/\${HM_PORTS_DIR:-\/\$directory\/ports}//g' "$1" 2>/dev/null |
+    grep -Eq '/\$(directory|[{]directory[}])/ports'
+}
+
+# Generic pass: wrap every remaining /$directory/ports (or /${directory}/ports)
+# that bash would expand, so ports reach Roms/PORTS on case-sensitive vfat.
+# A small shell lexer tracks quotes, $(...), backticks, comments and heredocs:
+# double-quoted and backtick uses get ${HM_PORTS_DIR:-/$directory/ports},
+# unquoted uses get it in double quotes, and comments, single quotes, $'...'
+# and heredoc bodies stay literal. A match must start a path (line start,
+# whitespace, = : ; | & ( < > :- or an opening quote) and end the "ports"
+# component, and an existing ${HM_PORTS_DIR:-...} is never wrapped again.
+# Exit status: 0 changed, 3 nothing to change, 4 lexer lost track (caller
+# keeps the input).
+rewrite_port_paths_generic() {
+  awk -v sq="'" '
+    function push(t, at) {
+      depth++
+      ctx[depth] = t
+      pd[depth] = 0
+      opened[depth] = NR ":" at
+    }
+    function pop() {
+      if (depth > 0) {
+        depth--
+      } else {
+        bad = 1
+      }
+    }
+    function word_start(pos, p) {
+      if (pos == 1) return 1
+      p = substr(line, pos - 1, 1)
+      return p == " " || p == "\t" || p == ";" || p == "|" || p == "&" || p == "(" || p == ")"
+    }
+    function boundary_before(pos, p) {
+      if (pos == 1) return 1
+      p = substr(line, pos - 1, 1)
+      if (p == " " || p == "\t" || p == "=" || p == ":" || p == ";" || p == "|" || p == "&" || p == "(" || p == "<" || p == ">") return 1
+      if (p == "-" && pos > 2 && substr(line, pos - 2, 1) == ":") return 1
+      if ((p == "\"" || p == "`") && opened[depth] == NR ":" (pos - 1)) return 1
+      return 0
+    }
+    function boundary_after(pos, a) {
+      a = substr(line, pos, 1)
+      if (a == "") return 1
+      return a == "/" || a == "\"" || a == sq || a == " " || a == "\t" || a == ":" || a == ";" || a == ")" || a == "}" || a == "|" || a == "&" || a == "<" || a == ">" || a == "`"
+    }
+    function read_heredoc(pos, j, n, strip, d, c2) {
+      n = length(line)
+      j = pos + 2
+      strip = 0
+      if (substr(line, j, 1) == "-") {
+        strip = 1
+        j++
+      }
+      while (j <= n && (substr(line, j, 1) == " " || substr(line, j, 1) == "\t")) j++
+      d = ""
+      while (j <= n) {
+        c2 = substr(line, j, 1)
+        if (c2 == " " || c2 == "\t" || c2 == ";" || c2 == "|" || c2 == "&" || c2 == "(" || c2 == ")" || c2 == "<" || c2 == ">") break
+        if (c2 == sq || c2 == "\"") {
+          j++
+          while (j <= n && substr(line, j, 1) != c2) {
+            d = d substr(line, j, 1)
+            j++
+          }
+          j++
+          continue
+        }
+        if (c2 == "\\") j++
+        d = d substr(line, j, 1)
+        j++
+      }
+      if (d == "") {
+        bad = 1
+      } else {
+        hd_delim[hd_n] = d
+        hd_strip[hd_n] = strip
+        hd_n++
+      }
+      return j
+    }
+    BEGIN {
+      wrap = "${HM_PORTS_DIR:-/$directory/ports}"
+      guard = "${HM_PORTS_DIR:-"
+      glen = length(guard)
+      depth = 0
+      ctx[0] = "N"
+      opened[0] = ""
+      hd_n = 0
+      hd_i = 0
+      in_body = 0
+      changed = 0
+      bad = 0
+    }
+    {
+      line = $0
+      if (in_body) {
+        t = line
+        if (hd_strip[hd_i]) {
+          while (substr(t, 1, 1) == "\t") t = substr(t, 2)
+        }
+        if (t == hd_delim[hd_i]) {
+          hd_i++
+          if (hd_i >= hd_n) {
+            in_body = 0
+            hd_n = 0
+            hd_i = 0
+          }
+        }
+        print line
+        next
+      }
+      n = length(line)
+      out = ""
+      esc = 0
+      i = 1
+      while (i <= n) {
+        c = substr(line, i, 1)
+        top = ctx[depth]
+        if (esc) {
+          out = out c
+          esc = 0
+          i++
+          continue
+        }
+        if (top == "S") {
+          out = out c
+          if (c == sq) pop()
+          i++
+          continue
+        }
+        if (top == "A") {
+          out = out c
+          if (c == "\\") {
+            esc = 1
+          } else if (c == sq) {
+            pop()
+          }
+          i++
+          continue
+        }
+        if (top == "M") {
+          out = out c
+          if (c == "(") {
+            pd[depth]++
+          } else if (c == ")") {
+            if (pd[depth] > 0) {
+              pd[depth]--
+            } else {
+              if (substr(line, i + 1, 1) == ")") {
+                out = out ")"
+                i++
+              }
+              pop()
+            }
+          }
+          i++
+          continue
+        }
+        if (c == "\\") {
+          out = out c
+          esc = 1
+          i++
+          continue
+        }
+        if (c == "/") {
+          mlen = 0
+          if (substr(line, i, 17) == "/$directory/ports") {
+            mlen = 17
+          } else if (substr(line, i, 19) == "/${directory}/ports") {
+            mlen = 19
+          }
+          if (mlen > 0 && boundary_after(i + mlen) && boundary_before(i) &&
+              !(i > glen && substr(line, i - glen, glen) == guard)) {
+            if (top == "D" || top == "B") {
+              out = out wrap
+            } else {
+              out = out "\"" wrap "\""
+            }
+            changed++
+            i += mlen
+            continue
+          }
+        }
+        if (top == "D") {
+          out = out c
+          if (c == "\"") {
+            pop()
+          } else if (c == "`") {
+            push("B", i)
+          } else if (c == "$" && substr(line, i + 1, 2) == "((") {
+            out = out "(("
+            push("M", i)
+            i += 2
+          } else if (c == "$" && substr(line, i + 1, 1) == "(") {
+            out = out "("
+            push("C", i)
+            i++
+          }
+          i++
+          continue
+        }
+        if (c == "#" && top != "B" && word_start(i)) {
+          out = out substr(line, i)
+          break
+        }
+        if (c == sq) {
+          out = out c
+          push("S", i)
+        } else if (c == "\"") {
+          out = out c
+          push("D", i)
+        } else if (c == "`") {
+          out = out c
+          if (top == "B") {
+            pop()
+          } else {
+            push("B", i)
+          }
+        } else if (c == "$" && substr(line, i + 1, 1) == sq) {
+          out = out c sq
+          push("A", i)
+          i++
+        } else if (c == "$" && substr(line, i + 1, 2) == "((") {
+          out = out "$(("
+          push("M", i)
+          i += 2
+        } else if (c == "$" && substr(line, i + 1, 1) == "(") {
+          out = out "$("
+          push("C", i)
+          i++
+        } else if (c == "(" && substr(line, i + 1, 1) == "(" && word_start(i)) {
+          out = out "(("
+          push("M", i)
+          i++
+        } else if (c == "(" && top == "C") {
+          out = out c
+          pd[depth]++
+        } else if (c == ")" && top == "C") {
+          out = out c
+          if (pd[depth] > 0) {
+            pd[depth]--
+          } else {
+            pop()
+          }
+        } else if (c == "<" && substr(line, i + 1, 2) == "<<") {
+          out = out "<<<"
+          i += 2
+        } else if (c == "<" && substr(line, i + 1, 1) == "<") {
+          j = read_heredoc(i)
+          out = out substr(line, i, j - i)
+          i = j
+          continue
+        } else {
+          out = out c
+        }
+        i++
+      }
+      print out
+      if (hd_n > 0) in_body = 1
+    }
+    END {
+      if (bad || depth != 0 || in_body || hd_n > 0) exit 4
+      if (changed) exit 0
+      exit 3
+    }
+  ' "$1" >"$2"
+}
+
 normalize_port_paths_script() {
   file="$1"
   case "$file" in
     *.sh) ;;
     *) printf 'not-shell'; return 0 ;;
   esac
-  if ! grep -Eq '([Gg][Aa][Mm][Ee][Dd][Ii][Rr]="?/\$directory/ports/|[Pp][Oo][Rr][Tt][Dd][Ii][Rr]="?/\$directory/ports([[:space:]"]|$))' "$file" 2>/dev/null; then
+  if ! port_paths_has_unwrapped "$file"; then
     printf 'port-paths-already'
     return 0
   fi
@@ -1092,6 +1363,18 @@ normalize_port_paths_script() {
     }
     { print }
   ' "$file" >"$tmp"
+  generic_tmp="$file.paths.$$"
+  if rewrite_port_paths_generic "$tmp" "$generic_tmp" &&
+     "${BASH:-bash}" -n "$generic_tmp" >/dev/null 2>&1; then
+    mv "$generic_tmp" "$tmp"
+  else
+    rm -f "$generic_tmp"
+  fi
+  if cmp -s "$tmp" "$file"; then
+    rm -f "$tmp"
+    printf 'port-paths-already'
+    return 0
+  fi
   mv "$tmp" "$file"
   chmod 755 "$file" 2>/dev/null || true
   printf 'port-paths-patched'

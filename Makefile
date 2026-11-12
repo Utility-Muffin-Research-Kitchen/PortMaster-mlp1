@@ -57,7 +57,7 @@ ifeq ($(shell uname -s),Darwin)
 LDLIBS_COMMON += -lobjc
 endif
 
-.PHONY: all native run-native artwork-fixtures source-fixtures scan-source-fixtures multi-source-fixtures preference-fixtures move-fixtures autoinstall-fixtures godot-hook-fixtures mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke self-heal-smoke armhf-install-fixtures update-failure-fixtures smoke-matrix fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-port-shim build-armhf-port-shim build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
+.PHONY: all native run-native artwork-fixtures source-fixtures scan-source-fixtures multi-source-fixtures preference-fixtures move-fixtures autoinstall-fixtures godot-hook-fixtures ports-path-fixtures mlp1 package package-build package-mlp1 package-platform dist-pakrat local-pakrat-feed pakrat-local-smoke self-heal-smoke armhf-install-fixtures update-failure-fixtures smoke-matrix fetch-ui-runtime-sources build-ui-runtime-reference build-ui-runtime-cpython build-armhf-compat build-aarch64-mali-compat build-aarch64-sdl2-fullscreen build-aarch64-port-shim build-armhf-port-shim build-aarch64-drm-rotate build-aarch64-tools build-aarch64-compat-libs spruce-bin-closure clean
 
 all: native
 
@@ -97,6 +97,11 @@ autoinstall-fixtures: native
 
 godot-hook-fixtures:
 	@bash ./tools/godot-hook-fixtures.sh
+
+# Set PORTS_CATALOG_DIR to a PortMaster-New checkout's ports/ folder to also
+# check every catalog launch script.
+ports-path-fixtures:
+	@bash ./tools/ports-path-fixtures.sh
 
 mlp1:
 	@VERSION="$(VERSION)" ./scripts/build-mlp1.sh
