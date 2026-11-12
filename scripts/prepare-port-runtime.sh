@@ -155,6 +155,38 @@ ensure_zram_swap() {
     fi
 }
 
+# A port copied into Roms/PORTS by hand never went through PortMaster's
+# post-install scan, so its launch script lacks Leaf's patches (control folder,
+# port paths, armhf wrappers) and usually fails to start. When the script about
+# to launch is a PortMaster script without Leaf's port-env marker, refresh the
+# stale port scans first. That patches newly copied ports on every card, and it
+# is a cheap no-op when nothing changed since the last scan.
+patch_unpatched_port() {
+    [ "${LEAF_PM_PATCH_ON_LAUNCH:-1}" = "0" ] && return 0
+    script="${PORTMASTER_PORT_SCRIPT:-}"
+    [ -n "$script" ] && [ -f "$script" ] || return 0
+    grep -q 'control\.txt' "$script" 2>/dev/null || return 0
+    grep -q 'LEAF_PM_PORT_ENV=1' "$script" 2>/dev/null && return 0
+
+    pak_dir="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+    [ -x "$pak_dir/launch.sh" ] || return 0
+    # launch.sh truncates its log; keep the manager's own log intact.
+    scan_log_dir="/tmp/leaf-portmaster-launch-scan"
+    mkdir -p "$scan_log_dir" 2>/dev/null || return 0
+
+    log "patching ${script##*/}: it has not been through Leaf's port scan"
+    if LOGS_PATH="$scan_log_dir" "$pak_dir/launch.sh" --refresh-stale-port-wrappers >/dev/null; then
+        if grep -q 'LEAF_PM_PORT_ENV=1' "$script" 2>/dev/null; then
+            log "patched ${script##*/}"
+        else
+            log "scan finished but ${script##*/} is still unpatched"
+        fi
+    else
+        log "port scan failed; see $scan_log_dir/portmaster-mlp1.log"
+    fi
+}
+
+patch_unpatched_port
 ensure_loop_nodes
 ensure_zram_swap
 exit 0

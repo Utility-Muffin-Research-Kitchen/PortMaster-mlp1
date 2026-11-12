@@ -1,11 +1,18 @@
 --- PortMaster.sh
 +++ PortMaster.sh
-@@ -42,0 +43 @@
+@@ -40,13 +40,26 @@
+ 
+ ## Autoinstallation Code
+ # This will automatically install zips found within the `PortMaster/autoinstall` / `ports/autoinstall` directory using harbourmaster
 +# LEAF_PM_PUBLIC_AUTOINSTALL: use the manager-validated selected install source.
-@@ -44 +45 @@
+ AUTOINSTALL_DIR_1="$controlfolder/autoinstall"
 -AUTOINSTALL_DIR_2="/$directory/ports/autoinstall"
 +AUTOINSTALL_DIR_2="${HM_PORTS_DIR:-/$directory/ports}/autoinstall"
-@@ -49,0 +51,12 @@
+ 
+ if [ ! -d "$AUTOINSTALL_DIR_2" ]; then
+   mkdir -p "$AUTOINSTALL_DIR_2"
+ fi
+ 
 +AUTOINSTALL_README="$AUTOINSTALL_DIR_2/README.txt"
 +if [ ! -e "$AUTOINSTALL_README" ]; then
 +  cat > "$AUTOINSTALL_README" <<'EOF'
@@ -18,12 +25,24 @@
 +EOF
 +fi
 +
-@@ -65 +78,3 @@
+ # Check if there are any files to process before starting the dialog
+ AUTOINSTALL_FILES=$(find "$AUTOINSTALL_DIR_1" "$AUTOINSTALL_DIR_2" -type f \( -name "*.zip" -o -name "*.squashfs" \) 2>/dev/null)
+ 
+@@ -62,7 +75,9 @@
+   # 1. Install PortMaster.zip first
+   for autoinstall_dir in "$AUTOINSTALL_DIR_1" "$AUTOINSTALL_DIR_2"; do
+     if [ -f "$autoinstall_dir/PortMaster.zip" ]; then
 -      if [ "$(PortMasterDialogResult "install" "$autoinstall_dir/PortMaster.zip")" = "OKAY" ]; then
 +      if [ "$autoinstall_dir" = "$AUTOINSTALL_DIR_2" ]; then
 +        PortMasterDialog "message" "- SKIPPED: PortMaster.zip is managed by Leaf. Use Leaf's Update PortMaster action."
 +      elif [ "$(PortMasterDialogResult "install" "$autoinstall_dir/PortMaster.zip")" = "OKAY" ]; then
-@@ -143,0 +159,8 @@
+         $ESUDO rm -f "$autoinstall_dir/PortMaster.zip"
+         PortMasterDialog "message" "- SUCCESS: PortMaster.zip"
+       else
+@@ -141,6 +156,14 @@
+         if [ "$base_file" = "PortMaster.zip" ]; then
+           continue
+         fi
 +        if [ "$autoinstall_dir" = "$AUTOINSTALL_DIR_2" ]; then
 +          case "$base_file" in
 +            [Pp][Oo][Rr][Tt][Mm][Aa][Ss][Tt][Ee][Rr].[Zz][Ii][Pp])
@@ -32,3 +51,6 @@
 +              ;;
 +          esac
 +        fi
+ 
+         if [ -f "$file_name" ]; then
+             if [ "$(PortMasterDialogResult "install" "$file_name")" = "OKAY" ]; then
