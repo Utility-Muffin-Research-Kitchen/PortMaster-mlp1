@@ -23,6 +23,7 @@ make preference-fixtures
 make multi-source-fixtures
 make artwork-fixtures
 make move-fixtures
+make autoinstall-fixtures
 make package-platform PLATFORM=mlp1
 make dist-pakrat
 ```
@@ -125,6 +126,25 @@ manager launch and each artwork action.
 
 The wrapper exports the selected source as `HM_PORTS_DIR`/`HM_SCRIPTS_DIR` and
 all available sources as `HM_PORTS_READ_DIRS`/`HM_SCRIPTS_READ_DIRS`.
+PortMaster exposes its existing autoinstaller at
+`$HM_PORTS_DIR/autoinstall`, which is the selected card's visible
+`Roms/PORTS/autoinstall` directory. Copy PortMaster-format port ZIPs there
+without extracting them, choose the same card under **Default Install Card**,
+and open PortMaster. Successful ZIPs are removed and failed ZIPs remain for
+retry. A public `PortMaster.zip` is left untouched because GUI updates must use
+the manager-owned **Update PortMaster** action.
+
+A port copied into `Roms/PORTS` as a plain folder and launch script, without
+going through PortMaster, is patched on its first launch instead. Before each
+port starts, `scripts/prepare-port-runtime.sh` checks whether the launch script
+sources `control.txt` but lacks Leaf's `LEAF_PM_PORT_ENV=1` marker. If so, it
+runs `launch.sh --refresh-stale-port-wrappers`, which applies the same Leaf
+compatibility pass as a PortMaster install to every card whose port tree
+changed since the last scan. Its log goes to
+`/tmp/leaf-portmaster-launch-scan/portmaster-mlp1.log` so the manager's own log
+is kept. `LEAF_PM_PATCH_ON_LAUNCH=0` turns this off. This patches the launch
+script and binaries for Leaf; it does not register the port with PortMaster.
+
 The pinned HarbourMaster overlay merges that inventory and tags each installed
 record with its owning logical source. New installs use the selected source;
 updates and uninstalls rebind to the existing package's owner. Duplicate
