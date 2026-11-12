@@ -186,6 +186,37 @@ patch_unpatched_port() {
     fi
 }
 
+# Ports pick up Leaf's runtime behavior from leaf-armhf-env.sh and the files
+# written next to it, which are otherwise only rewritten when PortMaster itself
+# is opened or installed. After a Pak update, rewrite them before the next
+# port starts so its fixes reach ports that are launched straight from Leaf.
+refresh_runtime_hook() {
+    [ "${LEAF_PM_HOOK_REFRESH:-1}" = "0" ] && return 0
+    data_dir="${PORTMASTER_MLP1_DATA_DIR:-}"
+    [ -n "$data_dir" ] || return 0
+    control_dir="${PORTMASTER_CONTROLFOLDER:-$data_dir/PortMaster}"
+    [ -f "$control_dir/control.txt" ] || return 0
+    pak_dir="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+    writer="$pak_dir/scripts/write-leaf-runtime-hook.sh"
+    [ -f "$writer" ] || return 0
+    hook="$control_dir/leaf-armhf-env.sh"
+    want="$(cksum <"$writer" | cut -d' ' -f1)"
+    if [ -f "$hook" ] &&
+       grep -qx "# LEAF_PM_HOOK_WRITER=$want" "$hook" 2>/dev/null &&
+       [ -f "$control_dir/mod_Leaf.txt" ] &&
+       [ -x "$control_dir/leaf-gptokeyb-run" ]; then
+        return 0
+    fi
+    if PORTMASTER_MLP1_DATA_DIR="$data_dir" \
+       PORTMASTER_CONTROLFOLDER="$control_dir" \
+       bash "$writer" "$hook" >/dev/null 2>&1; then
+        log "refreshed the Leaf runtime hook"
+    else
+        log "could not refresh the Leaf runtime hook"
+    fi
+}
+
+refresh_runtime_hook
 patch_unpatched_port
 ensure_loop_nodes
 ensure_zram_swap
