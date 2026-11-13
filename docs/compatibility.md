@@ -503,6 +503,61 @@ available with `LEAF_PM_JAVA_WESTON_DIRECT_DRM=0`,
 `LEAF_PM_JAVA_WESTON_FONT_DIR`. The older `LEAF_PM_JAVA8_*` names and installed
 `LEAF_PM_RUNTIME_COMPAT_JAVA8_WESTON=1` launcher blocks remain compatible.
 
+When the hook stops Weston (or Leaf, on the Gothic path) for a direct-DRM
+port, it restarts those services with a boot-like environment
+(`env -i PATH=... HOME=/root`), not the port's. A Weston started from the port
+shell inherited its `LD_PRELOAD` (the DRM rotate shim among them),
+`LD_LIBRARY_PATH` and `LEAF_DRM_ROTATE`; with a port's g29 Mali on that path it
+failed its page flips (`queueing pageflip failed: No space left on device`),
+served no EGL, and the launcher then crash-looped on `SDL_CreateWindow failed:
+EGL not initialized`. `LEAF_PM_INIT_DIR` points the hook at another init
+folder for tests.
+
+### SDL3 games on the firmware's SDL2 (Dusklight, Melee)
+
+Some aurora ports (Dusklight, Super Smash Bros. Melee) bundle an SDL3 whose
+`sdl2` video backend draws through the firmware's SDL2 (bmdhacks'
+`sdl2-backend` SDL fork; the launcher sets `SDL_VIDEODRIVER=sdl2`). They render
+with GLES. On the MLP1's stock `g13p0` Mali userspace, which runs on a `g21p0`
+kernel driver, their fragment jobs fault (`job status 0x58
+DATA_INVALID_FAULT`, about 3000 in 40 s of Dusklight's title sequence), and
+each faulted job leaves tiles of older frames on screen: blocky, overlapping
+squares. Measured over the same 40 s of Dusklight:
+
+| setup | Mali faults | fps |
+| --- | --- | --- |
+| stock `g13p0` on Weston | 2981 | 30.0 (the game's cap) |
+| `g13p0` with Leaf's EGL shim, `LEAF_EGL_DRAW_FINISH=fence:2` | 0 | 12.3 |
+| same, `fence:16` | 0 | 13.7 |
+| JeffyCN `g24p0` wayland-gbm on Weston | not counted | squares remain |
+| Leaf's `g29p1`, Weston stopped, SDL2 on kmsdrm | 0 | 30.0 |
+
+Leaf's `g29p1` blob has no Wayland window support (`Could not get EGL
+display` on Weston), so the hook runs these games on it with Weston stopped.
+`mod_Leaf.txt` wraps PortMaster's `pm_platform_helper`, which ports call with
+the game binary right before starting it, and runs
+`leaf_pm_before_game_start` first. When the port selected `SDL_VIDEODRIVER=sdl2`
+and its library path (or the binary's folder) holds a `libSDL3.so*` that
+contains `SDL3SHIM_SDL2_VIDEODRIVER`, the hook:
+
+- puts `compat/mali/aarch64` (g29p1) first on `LD_LIBRARY_PATH`;
+- preloads `leaf-drm-rotate.so` with `LEAF_DRM_ROTATE=270`, so the game sees a
+  `960x720` landscape panel;
+- sets `SDL3SHIM_SDL2_VIDEODRIVER=kmsdrm`;
+- stops Weston through the Java direct-DRM handoff and restarts it, with a
+  clean environment, when the port exits.
+
+It does nothing from a subshell (the restore trap would fire at once), while
+HDMI is connected (the rotate shim turns every connector landscape), or with
+`LEAF_PM_SDL3_ON_SDL2_DIRECT_DRM=0`. Because the hook runs at launch, already
+installed ports need no rescan. Leaf's overlays (volume, battery) do not show
+while Weston is stopped.
+
+Dusklight's intro video turns green after about a minute on every driver,
+Panfrost included; that is an upstream bug in that one video. An occasional
+vertical seam between two frames remains on all setups and is not caused by a
+fence wait (no `eglWaitSync*`/`glWaitSync` calls happen on g29).
+
 32-bit Westonpack apps (`westonwrap32.sh`, mostly box86 ports such as
 SteamWorld Dig, SteamWorld Heist and Braid) need no launcher patch. Leaf's armhf
 wrapper sources the generated hook again right before the app runs, after

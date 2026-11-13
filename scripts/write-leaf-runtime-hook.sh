@@ -886,13 +886,24 @@ leaf_pm_prepend_wrapped_preload() {
   esac
 }
 
+# Stops or starts a stock init service (S49weston, S50leaf) with a boot-like
+# environment. Services restarted after a port must not inherit the port's
+# LD_PRELOAD, LD_LIBRARY_PATH or display settings: a Weston started with the
+# DRM rotate shim preloaded and a port's Mali driver on its library path fails
+# its page flips and cannot serve EGL, and the launcher then crash-loops.
+leaf_pm_init_service() {
+  _leaf_pm_init_script="\${LEAF_PM_INIT_DIR:-/etc/init.d}/\${1:-}"
+  [ -x "\$_leaf_pm_init_script" ] || return 0
+  env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \\
+    "\$_leaf_pm_init_script" "\${2:-}" < /dev/null > /dev/null 2>&1 || true
+}
+
 leaf_pm_restore_java8_weston_direct_drm() {
   [ "\${LEAF_PM_JAVA8_WESTON_DIRECT_DRM_STACK_STOPPED:-0}" = "1" ] || return 0
   export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_STACK_STOPPED=0
   trap - EXIT HUP INT TERM
-  if [ "\${LEAF_PM_JAVA8_WESTON_DIRECT_DRM_WESTON_WAS_RUNNING:-0}" = "1" ] &&
-     [ -x /etc/init.d/S49weston ]; then
-    /etc/init.d/S49weston start < /dev/null > /dev/null 2>&1 || true
+  if [ "\${LEAF_PM_JAVA8_WESTON_DIRECT_DRM_WESTON_WAS_RUNNING:-0}" = "1" ]; then
+    leaf_pm_init_service S49weston start
     sleep "\${LEAF_PM_JAVA_WESTON_START_DELAY:-\${LEAF_PM_JAVA8_WESTON_START_DELAY:-1}}"
   fi
 }
@@ -919,9 +930,7 @@ leaf_pm_begin_java8_weston_direct_drm() {
   fi
 
   trap 'leaf_pm_restore_java8_weston_direct_drm' EXIT HUP INT TERM
-  if [ -x /etc/init.d/S49weston ]; then
-    /etc/init.d/S49weston stop < /dev/null > /dev/null 2>&1 || true
-  fi
+  leaf_pm_init_service S49weston stop
   sleep "\${LEAF_PM_JAVA_WESTON_STOP_DELAY:-\${LEAF_PM_JAVA8_WESTON_STOP_DELAY:-1}}"
   export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_STACK_STOPPED=1
 }
@@ -993,14 +1002,12 @@ leaf_pm_restore_gothic_machismo_vulkan_rotate() {
   [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STACK_STOPPED:-0}" = "1" ] || return 0
   export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STACK_STOPPED=0
   trap - EXIT HUP INT TERM
-  if [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_WESTON_WAS_RUNNING:-0}" = "1" ] &&
-     [ -x /etc/init.d/S49weston ]; then
-    /etc/init.d/S49weston start < /dev/null > /dev/null 2>&1 || true
+  if [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_WESTON_WAS_RUNNING:-0}" = "1" ]; then
+    leaf_pm_init_service S49weston start
     sleep 1
   fi
-  if [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_LEAF_WAS_RUNNING:-0}" = "1" ] &&
-     [ -x /etc/init.d/S50leaf ]; then
-    /etc/init.d/S50leaf start < /dev/null > /dev/null 2>&1 || true
+  if [ "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_LEAF_WAS_RUNNING:-0}" = "1" ]; then
+    leaf_pm_init_service S50leaf start
   fi
 }
 
@@ -1029,14 +1036,85 @@ leaf_pm_begin_gothic_machismo_vulkan_rotate() {
   fi
 
   trap 'leaf_pm_restore_gothic_machismo_vulkan_rotate' EXIT HUP INT TERM
-  if [ -x /etc/init.d/S50leaf ]; then
-    /etc/init.d/S50leaf stop < /dev/null > /dev/null 2>&1 || true
-  fi
-  if [ -x /etc/init.d/S49weston ]; then
-    /etc/init.d/S49weston stop < /dev/null > /dev/null 2>&1 || true
-  fi
+  leaf_pm_init_service S50leaf stop
+  leaf_pm_init_service S49weston stop
   sleep "\${LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STOP_DELAY:-2}"
   export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STACK_STOPPED=1
+}
+
+# SDL3 games that draw through the firmware's SDL2 (bmdhacks' SDL3 "sdl2"
+# video backend, used by the aurora ports Dusklight and Super Smash Bros.
+# Melee) render with GLES on stock Mali. The stock g13p0 userspace on MLP1's
+# g21p0 kernel driver faults on their fragment jobs (about 3000
+# DATA_INVALID_FAULT lines in 40 s); faulted jobs leave tiles of older frames
+# on screen. Leaf's g29 Mali has no Wayland window support, so these games run
+# on it with Weston stopped: SDL2 draws through kmsdrm and the DRM rotate shim
+# turns the portrait panel landscape. That gives zero faults at full speed.
+# Weston is restarted when the port exits. LEAF_PM_SDL3_ON_SDL2_DIRECT_DRM=0
+# keeps such a game on Weston with the stock driver.
+leaf_pm_hdmi_connected() {
+  for _leaf_pm_hdmi_status in "\${LEAF_PM_DRM_SYSFS:-/sys/class/drm}"/card*-HDMI-*/status; do
+    [ -r "\$_leaf_pm_hdmi_status" ] || continue
+    [ "\$(cat "\$_leaf_pm_hdmi_status" 2>/dev/null)" = "connected" ] && return 0
+  done
+  return 1
+}
+
+# True when the library path (or the game binary's folder) has an SDL3 with
+# bmdhacks' sdl2 backend; that backend reads SDL3SHIM_SDL2_VIDEODRIVER.
+leaf_pm_sdl3_on_sdl2_present() {
+  _leaf_pm_sdl3_dirs="\${LD_LIBRARY_PATH:-}"
+  if [ -n "\${1:-}" ]; then
+    _leaf_pm_sdl3_bin_dir="\$(dirname -- "\$1")"
+    _leaf_pm_sdl3_dirs="\$_leaf_pm_sdl3_dirs:\$_leaf_pm_sdl3_bin_dir:\$_leaf_pm_sdl3_bin_dir/libs:\$_leaf_pm_sdl3_bin_dir/libs.aarch64"
+  fi
+  _leaf_pm_sdl3_ifs="\$IFS"
+  IFS=:
+  for _leaf_pm_sdl3_dir in \$_leaf_pm_sdl3_dirs; do
+    [ -n "\$_leaf_pm_sdl3_dir" ] || continue
+    for _leaf_pm_sdl3_lib in "\$_leaf_pm_sdl3_dir"/libSDL3.so*; do
+      [ -f "\$_leaf_pm_sdl3_lib" ] || continue
+      if grep -q SDL3SHIM_SDL2_VIDEODRIVER "\$_leaf_pm_sdl3_lib" 2>/dev/null; then
+        IFS="\$_leaf_pm_sdl3_ifs"
+        return 0
+      fi
+    done
+  done
+  IFS="\$_leaf_pm_sdl3_ifs"
+  return 1
+}
+
+leaf_pm_enable_sdl3_on_sdl2_direct_drm() {
+  [ "\${DEVICE_ARCH:-aarch64}" = "aarch64" ] || return 0
+  case "\${LEAF_PM_SDL3_ON_SDL2_DIRECT_DRM:-1}" in
+    0|false|no|FALSE|NO) return 0 ;;
+  esac
+  [ "\${LEAF_PM_SDL3_ON_SDL2_DIRECT_DRM_ACTIVE:-0}" != "1" ] || return 0
+  [ "\${SDL_VIDEODRIVER:-}" = "sdl2" ] || return 0
+  [ -f "\${LEAF_PM_MALI_AARCH64_DIR:-}/libmali.so.1" ] || return 0
+  [ -f "\$LEAF_PM_AARCH64_DRM_ROTATE_SHIM" ] || return 0
+  leaf_pm_sdl3_on_sdl2_present "\${1:-}" || return 0
+  # The rotate shim turns every connector landscape; keep HDMI on Weston.
+  if leaf_pm_hdmi_connected; then
+    echo "[leaf-pm] SDL3 on SDL2: HDMI connected, staying on Weston" >&2
+    return 0
+  fi
+
+  leaf_pm_prepend_ld_library_path "\$LEAF_PM_MALI_AARCH64_DIR" || return 0
+  leaf_pm_prepend_ld_preload "\$LEAF_PM_AARCH64_DRM_ROTATE_SHIM" || return 0
+  export SDL3SHIM_SDL2_VIDEODRIVER=kmsdrm
+  export LEAF_DRM_ROTATE="\${LEAF_DRM_ROTATE:-270}"
+  export LEAF_PM_SDL3_ON_SDL2_DIRECT_DRM_ACTIVE=1
+  echo "[leaf-pm] SDL3 on SDL2: g29 Mali, direct DRM (LEAF_PM_SDL3_ON_SDL2_DIRECT_DRM=0 turns it off)" >&2
+  # Same Weston handoff as the Java path: stop it now, restart it on exit.
+  export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_ACTIVE=1
+  leaf_pm_begin_java8_weston_direct_drm
+}
+
+# mod_Leaf.txt runs this from PortMaster's pm_platform_helper, which ports call
+# with the game binary right before they start it.
+leaf_pm_before_game_start() {
+  leaf_pm_enable_sdl3_on_sdl2_direct_drm "\$@"
 }
 
 export LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM="\${LEAF_PM_AARCH64_SDL2_FULLSCREEN_SHIM:-\$LEAF_PM_DATA_DIR/compat/sdl2/aarch64/leaf-sdl2-fullscreen.so}"
@@ -1308,6 +1386,27 @@ if [ -n "${controlfolder:-}" ] && [ -x "$controlfolder/leaf-gptokeyb-run" ]; the
   case "${GPTOKEYB:-}" in
     ""|*leaf-gptokeyb-run*) ;;
     *) export GPTOKEYB="$controlfolder/leaf-gptokeyb-run $GPTOKEYB" ;;
+  esac
+fi
+
+# Ports call pm_platform_helper with the game binary right before they start
+# it; PortMaster leaves its body to each firmware. Run Leaf's launch-time
+# adjustments there (see leaf_pm_before_game_start in leaf-armhf-env.sh), then
+# PortMaster's own body. Only in the port's own shell: an adjustment that
+# stops Weston restores it from an EXIT trap, which a subshell would fire at
+# once.
+if declare -f pm_platform_helper >/dev/null 2>&1; then
+  case "$(declare -f pm_platform_helper)" in
+    *leaf_pm_platform_helper_upstream*) ;;
+    *)
+      eval "leaf_pm_platform_helper_upstream() $(declare -f pm_platform_helper | sed 1d)"
+      pm_platform_helper() {
+        if [ "${BASHPID:-$$}" = "$$" ] && declare -f leaf_pm_before_game_start >/dev/null 2>&1; then
+          leaf_pm_before_game_start "$@"
+        fi
+        leaf_pm_platform_helper_upstream "$@"
+      }
+      ;;
   esac
 fi
 EOF
