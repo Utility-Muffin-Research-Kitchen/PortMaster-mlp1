@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${PM_ARMHF_BUILD_IMAGE:-debian:bookworm-slim}"
-VERSION="${PM_ARMHF_COMPAT_VERSION:-bookworm-mali-g13p0-box86-sdl2gles-20261113}"
+VERSION="${PM_ARMHF_COMPAT_VERSION:-bookworm-mali-g13p0-box86-sdl2gl4es-20261113}"
 container=0
 
 MALI_REPO="https://github.com/tsukumijima/libmali-rockchip"
@@ -492,11 +492,14 @@ echo "=== Building GLES-only SDL2 ==="
 # way and replace Debian's library with it. These build dependencies are
 # installed only now: installing them earlier would mark their runtime
 # libraries as installed and keep the download above from fetching them.
+# compat/sdl2/patches adds workarounds for gl4es loaded as SDL's GL library
+# (see the patch header); LEAF_PM_GL4ES_SDL_FIXES=0 turns them off at runtime.
 SDL2_SRC_DIR="$WORK_DIR/sdl2-src"
 SDL2_BUILD_DIR="$WORK_DIR/sdl2-build"
 SDL2_TARBALL="$WORK_DIR/SDL2-$SDL2_VERSION.tar.gz"
 mkdir -p "$SDL2_SRC_DIR" "$ROOTFS/licenses/sdl2"
 apt-get install -y --no-install-recommends \
+  patch \
   libwayland-bin \
   wayland-protocols \
   libwayland-dev:armhf \
@@ -528,6 +531,16 @@ tar -xzf "$SDL2_TARBALL" -C "$SDL2_SRC_DIR" --strip-components=1
 sdl2_license_sha="$(sha256sum "$SDL2_SRC_DIR/LICENSE.txt" | awk '{print $1}')"
 if [[ "$sdl2_license_sha" != "$SDL2_LICENSE_SHA256" ]]; then
   echo "SDL2 license sha256 mismatch: $sdl2_license_sha != $SDL2_LICENSE_SHA256" >&2
+  exit 1
+fi
+sdl2_patches=()
+for sdl2_patch in "$ROOT"/compat/sdl2/patches/*.patch; do
+  [[ -f "$sdl2_patch" ]] || continue
+  patch -d "$SDL2_SRC_DIR" -p1 --forward --batch <"$sdl2_patch"
+  sdl2_patches+=("$(basename "$sdl2_patch"):$(sha256sum "$sdl2_patch" | awk '{print $1}')")
+done
+if ! grep -q 'Leaf_Gl4esInit(_this);' "$SDL2_SRC_DIR/src/video/SDL_egl.c"; then
+  echo "SDL2 gl4es patch did not apply" >&2
   exit 1
 fi
 cat >"$WORK_DIR/armhf-toolchain.cmake" <<'CMAKE'
@@ -592,19 +605,26 @@ sdl2_sha="$(sha256sum "$sdl2_target" | awk '{print $1}')"
 sdl2_size="$(wc -c <"$sdl2_target" | tr -d ' ')"
 python3 - "$SDL2_REPORT" "$SDL2_VERSION" "$SDL2_URL" "$SDL2_SHA256" \
   "$sdl2_sha" "$sdl2_size" "$SDL2_LICENSE_SHA256" "$SDL2_SOVERSION_MINOR" \
-  "${SDL2_CMAKE_OPTIONS[@]}" <<'PY'
+  "$(IFS=,; echo "${sdl2_patches[*]}")" "${SDL2_CMAKE_OPTIONS[@]}" <<'PY'
 import json
 import sys
 
 (report_path, version, url, source_sha, binary_sha, binary_size,
- license_sha, so_minor) = sys.argv[1:9]
-options = sys.argv[9:]
+ license_sha, so_minor, patches) = sys.argv[1:10]
+options = sys.argv[10:]
 report = {
     "version": version,
     "source": {"url": url, "sha256": source_sha},
     "architecture": "armhf",
     "replaces": "libsdl2-2.0-0 from Debian",
     "reason": "GLES-only build so SDL's default GL context is OpenGL ES 2.0",
+    "patches": [
+        {"name": item.split(":", 1)[0], "sha256": item.split(":", 1)[1]}
+        for item in patches.split(",") if item
+    ],
+    "runtime_switches": {
+        "LEAF_PM_GL4ES_SDL_FIXES": "0 turns off the gl4es workarounds",
+    },
     "cmake_options": options,
     "binary": {
         "installed_path": f"usr/lib/arm-linux-gnueabihf/libSDL2-2.0.so.0.{so_minor}",

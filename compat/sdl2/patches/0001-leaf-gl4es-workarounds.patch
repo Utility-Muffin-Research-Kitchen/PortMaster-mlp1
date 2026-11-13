@@ -1,0 +1,428 @@
+--- a/src/video/SDL_egl.c
++++ b/src/video/SDL_egl.c
+@@ -240,7 +240,335 @@
+ 
+     return SDL_FALSE;
+ }
++
++/* Leaf: workarounds for gl4es loaded as SDL_VIDEO_GL_DRIVER.
++ *
++ * gl4es is written around its own glX layer. When SDL owns the EGL context
++ * instead, three things go wrong in gl4es (seen with Super Meat Boy on the
++ * Miniloong Pocket 1):
++ *
++ * 1. gl4es reads the default framebuffer size once, at library load, before
++ *    any context exists, so it believes the window is 0x0. glBlitFramebuffer
++ *    onto framebuffer 0 then draws into a 0x0 viewport. gl4es exports
++ *    set_getmainfbsize() for this; we report the current EGL surface size.
++ * 2. gl4es keeps one cached copy of GL state for the whole process. If the
++ *    app deletes its only context and creates a new one, the cache no longer
++ *    matches the new context (vertex arrays stay disabled, nothing draws). We
++ *    keep that context alive and hand it back on the next create, as long as
++ *    the new request matches it.
++ * 3. gl4es only unbinds GL_ARRAY_BUFFER before its own client-memory draws
++ *    when an index buffer is bound too, so its blit quad is read from the
++ *    app's vertex buffer. We unbind it around glBlitFramebuffer and restore it.
++ *
++ * All of this is active only when the GL library exports
++ * set_getmainfbsize (gl4es). LEAF_PM_GL4ES_SDL_FIXES=0 turns it off.
++ */
++#if defined(__linux__)
++#include <dlfcn.h>
++#define LEAF_GL4ES_SUPPORTED 1
++#else
++#define LEAF_GL4ES_SUPPORTED 0
++#endif
++
++typedef void (*LeafGl4esSizeFunc)(int *width, int *height);
++typedef void (*LeafGl4esSetSizeFunc)(LeafGl4esSizeFunc func);
++typedef void (*LeafBlitFunc)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
++
++static struct
++{
++    SDL_bool active;
++    void *gl4es_handle;
++    LeafGl4esSetSizeFunc set_mainfb_size;
++    EGLDisplay (EGLAPIENTRY *eglGetCurrentDisplay)(void);
++    EGLSurface (EGLAPIENTRY *eglGetCurrentSurface)(EGLint readdraw);
++    EGLBoolean (EGLAPIENTRY *eglQuerySurface)(EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint *value);
++    void *gles_handle;
++    void (*glGetIntegerv)(unsigned int pname, int *params);
++    void (*glBindBuffer)(unsigned int target, unsigned int buffer);
++    LeafBlitFunc blit;
++    LeafBlitFunc blit_ext;
++    /* the app's only live context, and the settings it was made with */
++    int live_contexts;
++    EGLContext solo_context;
++    EGLConfig solo_config;
++    int solo_profile, solo_major, solo_minor, solo_flags, solo_no_error;
++    /* a deleted context kept for the next create */
++    EGLContext kept_context;
++    EGLConfig kept_config;
++    int kept_profile, kept_major, kept_minor, kept_flags, kept_no_error;
++} leaf_gl4es;
+ 
++static void
++Leaf_Gl4esMainFramebufferSize(int *width, int *height)
++{
++    if (!leaf_gl4es.active) {
++        return;
++    }
++    if (leaf_gl4es.eglGetCurrentDisplay && leaf_gl4es.eglGetCurrentSurface && leaf_gl4es.eglQuerySurface) {
++        EGLDisplay dpy = leaf_gl4es.eglGetCurrentDisplay();
++        EGLSurface surface = leaf_gl4es.eglGetCurrentSurface(EGL_DRAW);
++        EGLint w = 0, h = 0;
++        if (dpy != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE &&
++            leaf_gl4es.eglQuerySurface(dpy, surface, EGL_WIDTH, &w) &&
++            leaf_gl4es.eglQuerySurface(dpy, surface, EGL_HEIGHT, &h) &&
++            w > 0 && h > 0) {
++            *width = w;
++            *height = h;
++            return;
++        }
++    }
++    {
++        SDL_Window *window = SDL_GL_GetCurrentWindow();
++        if (window) {
++            int w = 0, h = 0;
++            SDL_GL_GetDrawableSize(window, &w, &h);
++            if (w > 0 && h > 0) {
++                *width = w;
++                *height = h;
++            }
++        }
++    }
++}
++
++static void
++Leaf_Gl4esBlit(LeafBlitFunc blit, int sx0, int sy0, int sx1, int sy1,
++               int dx0, int dy0, int dx1, int dy1, unsigned int mask, unsigned int filter)
++{
++    int array_buffer = 0;
++    if (leaf_gl4es.glGetIntegerv && leaf_gl4es.glBindBuffer) {
++        leaf_gl4es.glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &array_buffer);
++        if (array_buffer > 0) {
++            leaf_gl4es.glBindBuffer(0x8892 /* GL_ARRAY_BUFFER */, 0);
++        }
++    }
++    blit(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter);
++    if (array_buffer > 0) {
++        leaf_gl4es.glBindBuffer(0x8892 /* GL_ARRAY_BUFFER */, (unsigned int)array_buffer);
++    }
++}
++
++static void
++Leaf_Gl4esBlitFramebuffer(int sx0, int sy0, int sx1, int sy1, int dx0, int dy0,
++                          int dx1, int dy1, unsigned int mask, unsigned int filter)
++{
++    Leaf_Gl4esBlit(leaf_gl4es.blit, sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter);
++}
++
++static void
++Leaf_Gl4esBlitFramebufferEXT(int sx0, int sy0, int sx1, int sy1, int dx0, int dy0,
++                             int dx1, int dy1, unsigned int mask, unsigned int filter)
++{
++    Leaf_Gl4esBlit(leaf_gl4es.blit_ext, sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter);
++}
++
++static void *
++Leaf_Gl4esWrapProc(const char *proc, void *retval)
++{
++    if (!leaf_gl4es.active || !retval) {
++        return retval;
++    }
++    if (leaf_gl4es.blit && retval == (void *)leaf_gl4es.blit && SDL_strcmp(proc, "glBlitFramebuffer") == 0) {
++        return (void *)Leaf_Gl4esBlitFramebuffer;
++    }
++    if (leaf_gl4es.blit_ext && retval == (void *)leaf_gl4es.blit_ext && SDL_strcmp(proc, "glBlitFramebufferEXT") == 0) {
++        return (void *)Leaf_Gl4esBlitFramebufferEXT;
++    }
++    return retval;
++}
++
++static void
++Leaf_Gl4esDropKept(_THIS, const char *why)
++{
++    if (leaf_gl4es.kept_context != EGL_NO_CONTEXT) {
++        if (_this->egl_data && _this->egl_data->egl_display && _this->egl_data->eglDestroyContext) {
++            _this->egl_data->eglDestroyContext(_this->egl_data->egl_display, leaf_gl4es.kept_context);
++        }
++        SDL_Log("Leaf: dropped the kept gl4es GL context (%s)", why);
++    }
++    leaf_gl4es.kept_context = EGL_NO_CONTEXT;
++    leaf_gl4es.kept_config = NULL;
++}
++
++static void
++Leaf_Gl4esShutdown(_THIS)
++{
++    Leaf_Gl4esDropKept(_this, "EGL unloaded");
++    if (leaf_gl4es.set_mainfb_size) {
++        leaf_gl4es.set_mainfb_size(NULL);
++    }
++#if LEAF_GL4ES_SUPPORTED
++    if (leaf_gl4es.gles_handle) {
++        dlclose(leaf_gl4es.gles_handle);
++    }
++#endif
++    SDL_zero(leaf_gl4es);
++}
++
++static void
++Leaf_Gl4esInit(_THIS)
++{
++#if LEAF_GL4ES_SUPPORTED
++    const char *off = SDL_getenv("LEAF_PM_GL4ES_SDL_FIXES");
++    void *gl = _this->egl_data->opengl_dll_handle;
++    void *egl = _this->egl_data->egl_dll_handle;
++    LeafGl4esSetSizeFunc set_size;
++
++    SDL_zero(leaf_gl4es);
++    if (!gl) {
++        return;
++    }
++    set_size = (LeafGl4esSetSizeFunc)dlsym(gl, "set_getmainfbsize");
++    if (!set_size) {
++        return; /* not gl4es */
++    }
++    if (off && SDL_strcmp(off, "0") == 0) {
++        SDL_Log("Leaf: gl4es workarounds off (LEAF_PM_GL4ES_SDL_FIXES=0)");
++        return;
++    }
++
++    leaf_gl4es.gl4es_handle = gl;
++    leaf_gl4es.set_mainfb_size = set_size;
++    if (egl) {
++        leaf_gl4es.eglGetCurrentDisplay = (EGLDisplay (EGLAPIENTRY *)(void))dlsym(egl, "eglGetCurrentDisplay");
++        leaf_gl4es.eglGetCurrentSurface = (EGLSurface (EGLAPIENTRY *)(EGLint))dlsym(egl, "eglGetCurrentSurface");
++        leaf_gl4es.eglQuerySurface = (EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLSurface, EGLint, EGLint *))dlsym(egl, "eglQuerySurface");
++    }
++    /* The real GLES library, not gl4es: gl4es's soname is libGL.so.1. */
++    leaf_gl4es.gles_handle = dlopen("libGLESv2.so.2", RTLD_NOW | RTLD_LOCAL);
++    if (!leaf_gl4es.gles_handle) {
++        leaf_gl4es.gles_handle = dlopen("libGLESv2.so", RTLD_NOW | RTLD_LOCAL);
++    }
++    if (leaf_gl4es.gles_handle) {
++        leaf_gl4es.glGetIntegerv = (void (*)(unsigned int, int *))dlsym(leaf_gl4es.gles_handle, "glGetIntegerv");
++        leaf_gl4es.glBindBuffer = (void (*)(unsigned int, unsigned int))dlsym(leaf_gl4es.gles_handle, "glBindBuffer");
++    }
++    if (leaf_gl4es.glGetIntegerv && leaf_gl4es.glBindBuffer) {
++        leaf_gl4es.blit = (LeafBlitFunc)dlsym(gl, "glBlitFramebuffer");
++        leaf_gl4es.blit_ext = (LeafBlitFunc)dlsym(gl, "glBlitFramebufferEXT");
++    }
++    leaf_gl4es.active = SDL_TRUE;
++    set_size(Leaf_Gl4esMainFramebufferSize);
++    SDL_Log("Leaf: gl4es workarounds on (screen size, context reuse, blit buffer%s); LEAF_PM_GL4ES_SDL_FIXES=0 turns them off",
++            (leaf_gl4es.blit || leaf_gl4es.blit_ext) ? "" : " unavailable");
++#else
++    (void)_this;
++#endif
++}
++
++/* After SDL picks a config for a new surface: if a context is kept, use its
++   config when it serves the request just as well, otherwise drop it. */
++static void
++Leaf_Gl4esAdjustConfig(_THIS)
++{
++    EGLConfig chosen = _this->egl_data->egl_config;
++    EGLConfig kept = leaf_gl4es.kept_config;
++    static const EGLint same[] = { EGL_RED_SIZE, EGL_GREEN_SIZE, EGL_BLUE_SIZE, EGL_ALPHA_SIZE,
++                                   EGL_SAMPLE_BUFFERS, EGL_SAMPLES, EGL_NATIVE_VISUAL_ID };
++    static const EGLint at_least[] = { EGL_DEPTH_SIZE, EGL_STENCIL_SIZE };
++    EGLint a, b, surface_type = 0;
++    size_t i;
++
++    if (!leaf_gl4es.active || leaf_gl4es.kept_context == EGL_NO_CONTEXT || chosen == kept) {
++        return;
++    }
++    for (i = 0; i < SDL_arraysize(same); ++i) {
++        a = b = -1;
++        _this->egl_data->eglGetConfigAttrib(_this->egl_data->egl_display, chosen, same[i], &a);
++        _this->egl_data->eglGetConfigAttrib(_this->egl_data->egl_display, kept, same[i], &b);
++        if (a != b) {
++            Leaf_Gl4esDropKept(_this, "different config");
++            return;
++        }
++    }
++    for (i = 0; i < SDL_arraysize(at_least); ++i) {
++        a = b = -1;
++        _this->egl_data->eglGetConfigAttrib(_this->egl_data->egl_display, chosen, at_least[i], &a);
++        _this->egl_data->eglGetConfigAttrib(_this->egl_data->egl_display, kept, at_least[i], &b);
++        if (b < a) {
++            Leaf_Gl4esDropKept(_this, "different config");
++            return;
++        }
++    }
++    _this->egl_data->eglGetConfigAttrib(_this->egl_data->egl_display, kept, EGL_SURFACE_TYPE, &surface_type);
++    if ((surface_type & _this->egl_data->egl_surfacetype) != _this->egl_data->egl_surfacetype) {
++        Leaf_Gl4esDropKept(_this, "different config");
++        return;
++    }
++    _this->egl_data->egl_config = kept;
++}
++
++/* In SDL_EGL_CreateContext: hand back the kept context if it matches. */
++static EGLContext
++Leaf_Gl4esTakeKept(_THIS, EGLContext share_context)
++{
++    EGLContext context = leaf_gl4es.kept_context;
++
++    if (!leaf_gl4es.active || context == EGL_NO_CONTEXT) {
++        return EGL_NO_CONTEXT;
++    }
++    if (share_context != EGL_NO_CONTEXT || leaf_gl4es.live_contexts != 0 ||
++        _this->egl_data->egl_config != leaf_gl4es.kept_config ||
++        _this->gl_config.profile_mask != leaf_gl4es.kept_profile ||
++        _this->gl_config.major_version != leaf_gl4es.kept_major ||
++        _this->gl_config.minor_version != leaf_gl4es.kept_minor ||
++        _this->gl_config.flags != leaf_gl4es.kept_flags ||
++        _this->gl_config.no_error != leaf_gl4es.kept_no_error) {
++        Leaf_Gl4esDropKept(_this, "different context request");
++        return EGL_NO_CONTEXT;
++    }
++    leaf_gl4es.kept_context = EGL_NO_CONTEXT;
++    leaf_gl4es.kept_config = NULL;
++    SDL_Log("Leaf: reusing the previous GL context for gl4es");
++    return context;
++}
++
++static void
++Leaf_Gl4esContextCreated(_THIS, EGLContext context)
++{
++    if (!leaf_gl4es.active) {
++        return;
++    }
++    if (++leaf_gl4es.live_contexts == 1) {
++        leaf_gl4es.solo_context = context;
++        leaf_gl4es.solo_config = _this->egl_data->egl_config;
++        leaf_gl4es.solo_profile = _this->gl_config.profile_mask;
++        leaf_gl4es.solo_major = _this->gl_config.major_version;
++        leaf_gl4es.solo_minor = _this->gl_config.minor_version;
++        leaf_gl4es.solo_flags = _this->gl_config.flags;
++        leaf_gl4es.solo_no_error = _this->gl_config.no_error;
++    } else {
++        leaf_gl4es.solo_context = EGL_NO_CONTEXT;
++    }
++}
++
++/* In SDL_EGL_DeleteContext: SDL_TRUE when the context was kept, not destroyed. */
++static SDL_bool
++Leaf_Gl4esKeepOnDelete(_THIS, EGLContext context)
++{
++    SDL_bool keep;
++
++    if (!leaf_gl4es.active || context == EGL_NO_CONTEXT || leaf_gl4es.live_contexts <= 0) {
++        return SDL_FALSE;
++    }
++    keep = (leaf_gl4es.live_contexts == 1 && context == leaf_gl4es.solo_context &&
++            leaf_gl4es.kept_context == EGL_NO_CONTEXT) ? SDL_TRUE : SDL_FALSE;
++    leaf_gl4es.live_contexts--;
++    if (context == leaf_gl4es.solo_context) {
++        leaf_gl4es.solo_context = EGL_NO_CONTEXT;
++    }
++    if (!keep) {
++        return SDL_FALSE;
++    }
++    leaf_gl4es.kept_context = context;
++    leaf_gl4es.kept_config = leaf_gl4es.solo_config;
++    leaf_gl4es.kept_profile = leaf_gl4es.solo_profile;
++    leaf_gl4es.kept_major = leaf_gl4es.solo_major;
++    leaf_gl4es.kept_minor = leaf_gl4es.solo_minor;
++    leaf_gl4es.kept_flags = leaf_gl4es.solo_flags;
++    leaf_gl4es.kept_no_error = leaf_gl4es.solo_no_error;
++    return SDL_TRUE;
++}
++
+ void *
+ SDL_EGL_GetProcAddress(_THIS, const char *proc)
+ {
+@@ -265,6 +593,7 @@
+         if (!retval && !is_egl_15_or_later && _this->egl_data->eglGetProcAddress) {
+             retval = _this->egl_data->eglGetProcAddress(proc);
+         }
++        retval = Leaf_Gl4esWrapProc(proc, retval);
+     }
+     return retval;
+ }
+@@ -273,6 +602,7 @@
+ SDL_EGL_UnloadLibrary(_THIS)
+ {
+     if (_this->egl_data) {
++        Leaf_Gl4esShutdown(_this);
+         if (_this->egl_data->egl_display) {
+             _this->egl_data->eglTerminate(_this->egl_data->egl_display);
+             _this->egl_data->egl_display = NULL;
+@@ -455,6 +785,8 @@
+     LOAD_FUNC_EGLEXT(eglClientWaitSyncKHR);
+     /* Atomic functions end */
+ 
++    Leaf_Gl4esInit(_this);
++
+     if (path) {
+         SDL_strlcpy(_this->gl_config.driver_path, path, sizeof(_this->gl_config.driver_path) - 1);
+     } else {
+@@ -928,6 +1260,7 @@
+     /* Try with EGL_CONFIG_CAVEAT set to EGL_NONE, to avoid any EGL_SLOW_CONFIG or EGL_NON_CONFORMANT_CONFIG */
+     ret = SDL_EGL_PrivateChooseConfig(_this, SDL_TRUE);
+     if (ret == 0) {
++        Leaf_Gl4esAdjustConfig(_this);
+         return 0;
+     }
+ 
+@@ -935,6 +1268,7 @@
+     ret = SDL_EGL_PrivateChooseConfig(_this, SDL_FALSE);
+     if (ret == 0) {
+         SDL_Log("SDL_EGL_ChooseConfig: found a slow EGL config");
++        Leaf_Gl4esAdjustConfig(_this);
+         return 0;
+     }
+ 
+@@ -1044,6 +1378,21 @@
+     }
+     _this->egl_data->eglBindAPI(_this->egl_data->apitype);
+ 
++    egl_context = Leaf_Gl4esTakeKept(_this, share_context);
++    if (egl_context != EGL_NO_CONTEXT) {
++        Leaf_Gl4esContextCreated(_this, egl_context);
++        _this->egl_data->egl_swapinterval = 0;
++        if (SDL_EGL_MakeCurrent(_this, egl_surface, egl_context) == 0) {
++            goto leaf_context_current;
++        }
++        /* The reused context didn't take: destroy it and make a fresh one. */
++        leaf_gl4es.live_contexts--;
++        leaf_gl4es.solo_context = EGL_NO_CONTEXT;
++        _this->egl_data->eglDestroyContext(_this->egl_data->egl_display, egl_context);
++        SDL_Log("Leaf: the kept gl4es GL context didn't take, creating a new one");
++        SDL_ClearError();
++    }
++
+     egl_context = _this->egl_data->eglCreateContext(_this->egl_data->egl_display,
+                                       _this->egl_data->egl_config,
+                                       share_context, attribs);
+@@ -1052,6 +1401,7 @@
+         SDL_EGL_SetError("Could not create EGL context", "eglCreateContext");
+         return NULL;
+     }
++    Leaf_Gl4esContextCreated(_this, egl_context);
+ 
+     _this->egl_data->egl_swapinterval = 0;
+ 
+@@ -1061,6 +1411,8 @@
+         return NULL;
+     }
+ 
++leaf_context_current:
++
+     /* Check whether making contexts current without a surface is supported.
+      * First condition: EGL must support it. That's the case for EGL 1.5
+      * or later, or if the EGL_KHR_surfaceless_context extension is present. */
+@@ -1188,6 +1540,9 @@
+     }
+     
+     if (egl_context != NULL && egl_context != EGL_NO_CONTEXT) {
++        if (Leaf_Gl4esKeepOnDelete(_this, egl_context)) {
++            return;
++        }
+         _this->egl_data->eglDestroyContext(_this->egl_data->egl_display, egl_context);
+     }
+         

@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "status": "mali-g13p0-box86-sdl2-gles-builder",
+  "status": "mali-g13p0-box86-sdl2-gles-gl4es-builder",
   "install_dir": "$USERDATA_PATH/portmaster/compat/armhf",
   "builder": {
     "script": "scripts/build-armhf-compat-pack.sh",
     "make_target": "build-armhf-compat",
     "base_image": "debian:bookworm-slim",
-    "version": "bookworm-mali-g13p0-box86-sdl2gles-20261113"
+    "version": "bookworm-mali-g13p0-box86-sdl2gl4es-20261113"
   },
   "tiers": {
     "tier0": "static armhf helpers",
@@ -15,16 +15,16 @@
   },
   "artifacts": [
     {
-      "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.zip",
-      "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.2.1/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.zip",
+      "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gl4es-20261113.zip",
+      "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.2.1/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gl4es-20261113.zip",
       "manifest": {
-        "filename": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.json",
-        "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.2.1/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.json",
-        "size": 282537,
-        "sha256": "030b2a2aebb46d9b995db9c9a13c53473d2c01c6447668f093a5fd5e99342353"
+        "filename": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gl4es-20261113.json",
+        "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.2.1/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gl4es-20261113.json",
+        "size": 282819,
+        "sha256": "34f600d1e8106f484aa374f692a3a3202a9b478941f339c180bd422cff478443"
       },
-      "size": 62024239,
-      "sha256": "0f40b4635427ad94ce500196cf4bef23a65d0c53bc327c0415f7160ac6bc7d55",
+      "size": 62026843,
+      "sha256": "e5a6b9c2f2f3aa5684db4cd771cf8c243488801389c4a956609b2fd74eea678b",
       "package_count": 104,
       "package_architectures": {
         "all": 7,
@@ -50,7 +50,7 @@
         "repo": "https://github.com/ptitSeb/box86",
         "commit": "0579f8b9c47d87d700724f4cce559b06cbd2b0f5",
         "binary_size": 7302296,
-        "binary_sha256": "5787a3085dc0ed1f8c95700ec11ca8a1bcea972010ceef9ab07312e949d23a53",
+        "binary_sha256": "5b8f6de1cdfa315a200eb78eef6c089f68fa5d8516db6f83575d4535d27e4854",
         "license": "MIT",
         "license_sha256": "56215a2e982c1fde0f63afcdeff6c0f44826711f17e9c87a4c1d2cfb1694a789"
       },
@@ -58,12 +58,21 @@
         "version": "2.26.5",
         "source_url": "https://github.com/libsdl-org/SDL/releases/download/release-2.26.5/SDL2-2.26.5.tar.gz",
         "source_sha256": "ad8fea3da1be64c83c45b1d363a6b4ba8fd60f5bde3b23ec73855709ec5eabf7",
-        "build": "GLES-only (SDL_OPENGL=OFF): default GL context is OpenGL ES 2.0",
+        "build": "GLES-only (SDL_OPENGL=OFF): default GL context is OpenGL ES 2.0; patched with gl4es workarounds (compat/sdl2/patches)",
         "binary_path": "usr/lib/arm-linux-gnueabihf/libSDL2-2.0.so.0.2600.5",
-        "binary_size": 1256268,
-        "binary_sha256": "48b6c7da3efe53fd5bb125c1cf1807a2d2fbf0e9b44db97ed4f87b3628ebf818",
+        "binary_size": 1260364,
+        "binary_sha256": "001b803d63659c19ab1bf27bcc85498794270ef3849f799743e0b93886b697fa",
         "license": "Zlib",
-        "license_sha256": "9928507f684c1965d07f2b6ef4b4723d5efc2f6b4ab731f743a413c51c319927"
+        "license_sha256": "9928507f684c1965d07f2b6ef4b4723d5efc2f6b4ab731f743a413c51c319927",
+        "patches": [
+          {
+            "name": "0001-leaf-gl4es-workarounds.patch",
+            "sha256": "a336465022dd32a027edae6caf88028deb7faddd1204272beb0b7983dba8b6a6"
+          }
+        ],
+        "runtime_switches": {
+          "LEAF_PM_GL4ES_SDL_FIXES": "0 turns off the gl4es workarounds"
+        }
       },
       "leaf_helpers": {
         "leaf_armhf_run": {
@@ -81,10 +90,10 @@
         "date": "2026-11-13",
         "device": "MLP1",
         "install": "launch.sh --install-armhf-compat downloaded, verified and installed this artifact (served locally over adb reverse with LEAF_PM_ALLOW_HTTP_ARMHF_COMPAT=1)",
-        "sdl2_default_context": "armhf SDL GL probe on Wayland: default context is OpenGL ES 3.2 (was OpenGL ES-CM 1.1 with Debian's libsdl2), glCreateShader works, also with gl4es (LIBGL_FB=4) as SDL_VIDEO_GL_DRIVER; gl4es renders through SDL_GL_SwapWindow",
-        "tier2_gles": "Shovel Knight (box86 + gl4es EGL) title and menus; SteamWorld Dig (Westonpack 32-bit, Crusty on this SDL with a GLES 3 context) title and profile select",
-        "sdl_input_audio": "Apotris (armhf SDL) attract demo, title, pad input",
-        "known_open": "Super Meat Boy now passes MojoShader shader creation (29 shaders, no gl4es compile errors) but renders black on Wayland and KMSDRM; tracked in #8"
+        "gl4es_workarounds": "Super Meat Boy (box86 + gl4es as SDL_VIDEO_GL_DRIVER, stock catalog script) renders: intro, title, main menu, world map, cutscene, level 1-1 with pad input; log shows the workarounds on and the context reuse. With LEAF_PM_GL4ES_SDL_FIXES=0 it is black as before",
+        "blit_probe": "armhf SDL probe with gl4es: renderbuffer FBO blitted to the screen with glBlitFramebufferEXT shows green with the workarounds, the blue clear without",
+        "tier2_gles": "Shovel Knight (box86 + gl4es EGL, workarounds active) title and Options menu; SteamWorld Dig (Westonpack 32-bit, Crusty) title, workarounds not active",
+        "sdl_input_audio": "Apotris (armhf SDL) attract demo, workarounds not active"
       }
     }
   ]

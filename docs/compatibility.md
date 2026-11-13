@@ -44,8 +44,8 @@ armhf packages plus a pinned Rockchip Mali armhf userspace blob. The generated
 zip is a hash-locked release asset, not a git-vendored payload:
 
 ```text
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.zip
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.json
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gl4es-20261113.zip
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gl4es-20261113.json
 ```
 
 Clean Install PortMaster and Repair PortMaster flows read
