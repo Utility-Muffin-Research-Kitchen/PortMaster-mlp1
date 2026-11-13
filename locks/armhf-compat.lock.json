@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "status": "mali-g13p0-box86-builder",
+  "status": "mali-g13p0-box86-sdl2-gles-builder",
   "install_dir": "$USERDATA_PATH/portmaster/compat/armhf",
   "builder": {
     "script": "scripts/build-armhf-compat-pack.sh",
     "make_target": "build-armhf-compat",
     "base_image": "debian:bookworm-slim",
-    "version": "bookworm-mali-g13p0-box86-sdlfs-20260701"
+    "version": "bookworm-mali-g13p0-box86-sdl2gles-20261113"
   },
   "tiers": {
     "tier0": "static armhf helpers",
@@ -15,16 +15,16 @@
   },
   "artifacts": [
     {
-      "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.zip",
-      "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.2/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.zip",
+      "name": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.zip",
+      "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.2.1/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.zip",
       "manifest": {
-        "filename": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.json",
-        "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.1.2/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.json",
-        "size": 280639,
-        "sha256": "2771bc203d1fdf1fbabb357ad00e35c3eadbd880cccf4d3f2f05fb780fa295d1"
+        "filename": "portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.json",
+        "url": "https://github.com/Utility-Muffin-Research-Kitchen/PortMaster-mlp1/releases/download/v0.2.1/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.json",
+        "size": 282537,
+        "sha256": "030b2a2aebb46d9b995db9c9a13c53473d2c01c6447668f093a5fd5e99342353"
       },
-      "size": 61990341,
-      "sha256": "7774177443fe98ed519457b2e08e774fa4a6f543283d2dd4a19a280b5410b331",
+      "size": 62024239,
+      "sha256": "0f40b4635427ad94ce500196cf4bef23a65d0c53bc327c0415f7160ac6bc7d55",
       "package_count": 104,
       "package_architectures": {
         "all": 7,
@@ -37,11 +37,11 @@
         "architecture": "armhf",
         "driver_release": "g13p0-01eac0",
         "deb_url": "https://download.opensuse.org/repositories/home:/amazingfate:/libmali-rockchip/Debian_Testing/armhf/libmali-bifrost-g52-g13p0-wayland-gbm_1.9-1%2Bdebian1_armhf.deb",
-        "deb_size": 14615064,
-        "deb_sha256": "109f707eb40e64f374cddeccb3f53f1921799f5d6450ffc5f8a2e4580d77bfff",
+        "deb_size": 14614732,
+        "deb_sha256": "945584e25f676aaed0da93279dbdb0973161d386c5c0cf58b775056e607ccd68",
         "blob_size": 42534288,
         "blob_sha256": "3461a2aa9961df8cd5ad6804e8acb0bb805396790c15b7963e3e569c2d473375",
-        "hook_sha256": "1eed0607b024ce4a18db3bd88fe71b3c424aab66524de940cb446ef8e951d389",
+        "hook_sha256": "47c2723677f333092cb670ab40c3636957608cc762a68ee9d80b829b39b23f66",
         "license_path": "usr/share/doc/libmali-bifrost-g52-g13p0-wayland-gbm/copyright",
         "license_sha256": "a254205ab051a9a6cf952bf73d9f40715eb3bd2963d82ac462762e4dda1e8c77",
         "installed_license": "licenses/mali/libmali-rockchip-debian-copyright"
@@ -50,9 +50,20 @@
         "repo": "https://github.com/ptitSeb/box86",
         "commit": "0579f8b9c47d87d700724f4cce559b06cbd2b0f5",
         "binary_size": 7302296,
-        "binary_sha256": "922803a935c72a961231ff992fb6d2d7a227666ef68d32f2d2966499c152e0c8",
+        "binary_sha256": "5787a3085dc0ed1f8c95700ec11ca8a1bcea972010ceef9ab07312e949d23a53",
         "license": "MIT",
         "license_sha256": "56215a2e982c1fde0f63afcdeff6c0f44826711f17e9c87a4c1d2cfb1694a789"
+      },
+      "sdl2": {
+        "version": "2.26.5",
+        "source_url": "https://github.com/libsdl-org/SDL/releases/download/release-2.26.5/SDL2-2.26.5.tar.gz",
+        "source_sha256": "ad8fea3da1be64c83c45b1d363a6b4ba8fd60f5bde3b23ec73855709ec5eabf7",
+        "build": "GLES-only (SDL_OPENGL=OFF): default GL context is OpenGL ES 2.0",
+        "binary_path": "usr/lib/arm-linux-gnueabihf/libSDL2-2.0.so.0.2600.5",
+        "binary_size": 1256268,
+        "binary_sha256": "48b6c7da3efe53fd5bb125c1cf1807a2d2fbf0e9b44db97ed4f87b3628ebf818",
+        "license": "Zlib",
+        "license_sha256": "9928507f684c1965d07f2b6ef4b4723d5efc2f6b4ab731f743a413c51c319927"
       },
       "leaf_helpers": {
         "leaf_armhf_run": {
@@ -62,20 +73,18 @@
         },
         "sdl2_fullscreen_shim": {
           "path": "bin/leaf-sdl2-fullscreen.so",
-          "size": 7764,
-          "sha256": "da71102810f81a055a390c3ab59307ab07ce93db7fa07c85112e27ff66dcac5f"
+          "size": 12248,
+          "sha256": "eab7081ddf4306c342768b3c28c35a1c853e256703ba13f2258f7497ee1bd497"
         }
       },
       "device_smoke": {
-        "date": "2026-06-30",
+        "date": "2026-11-13",
         "device": "MLP1",
-        "dynamic_loader_smoke": "leaf-armhf-smoke ok",
-        "upstream_dynamic_helper": "xdelta3.armhf -V ok",
-        "sdl_helper_dependency_check": "gptokeyb.armhf and sdl_resolution.armhf resolve with ld-linux --list",
-        "tier2_gles": "Shovel Knight launched with managed box86, exported armhf LD_LIBRARY_PATH, and driver g13p0-01eac0; older port-bundled box86 still crashed in comparison",
-        "openal_pulse": "Lineoff/gmloader opened a PulseAudio sink input through armhf OpenAL Soft without manual audio environment overrides; Lineoff is not an audible-audio validation candidate",
-        "openal_smoke": "Dedicated armhf OpenAL smoke binary completed against OpenAL Soft through leaf-armhf-run",
-        "known_audio_port": "Apotris launched as a real PortMaster port and produced audible, correct audio on MLP1"
+        "install": "launch.sh --install-armhf-compat downloaded, verified and installed this artifact (served locally over adb reverse with LEAF_PM_ALLOW_HTTP_ARMHF_COMPAT=1)",
+        "sdl2_default_context": "armhf SDL GL probe on Wayland: default context is OpenGL ES 3.2 (was OpenGL ES-CM 1.1 with Debian's libsdl2), glCreateShader works, also with gl4es (LIBGL_FB=4) as SDL_VIDEO_GL_DRIVER; gl4es renders through SDL_GL_SwapWindow",
+        "tier2_gles": "Shovel Knight (box86 + gl4es EGL) title and menus; SteamWorld Dig (Westonpack 32-bit, Crusty on this SDL with a GLES 3 context) title and profile select",
+        "sdl_input_audio": "Apotris (armhf SDL) attract demo, title, pad input",
+        "known_open": "Super Meat Boy now passes MojoShader shader creation (29 shaders, no gl4es compile errors) but renders black on Wayland and KMSDRM; tracked in #8"
       }
     }
   ]
