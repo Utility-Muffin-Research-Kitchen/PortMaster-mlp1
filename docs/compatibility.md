@@ -542,6 +542,31 @@ Guacamelee, La-Mulana, Nox, SteamWorld Dig, SteamWorld Heist, Super Meat Boy,
 Waking Mars and Braid. Before this, their settings and saves were looked up in
 Leaf's PortMaster folder instead.
 
+### `~/.local/share` and `XDG_DATA_HOME` binds
+
+Leaf points `XDG_DATA_HOME` at its PortMaster folder (`HOME` is the same
+folder) so port preambles find `$XDG_DATA_HOME/PortMaster`. Where
+`XDG_DATA_HOME` is unset, as on most firmware, `~/.local/share/<name>` and
+`$XDG_DATA_HOME/<name>` are one folder, and ports bind whichever spelling they
+like to their own save folder. On Leaf they are two folders. A port that binds
+`~/.local/share/<name>` misses a game that follows `XDG_DATA_HOME` (SDL's pref
+path, FNA), and the reverse. The game then can't find files the port keeps in
+its own folder, or saves outside it. Perfect Dark (#13) found no ROM because
+`pd.arm64` reads `$XDG_DATA_HOME/perfectdark/data` while the port binds
+`~/.local/share/perfectdark` to `conf/`, and Celeste saved under
+`.userdata/mlp1/portmaster/Celeste`. About 70 catalog scripts bind under one of
+the two.
+
+The hook's `bind_directories` and `bind_files` therefore also bind the same
+source at the other spelling (`leaf_pm_bind_alias_target`). Dot folders under
+`HOME` such as `~/.config` are left alone, and an alias never lands on Leaf's
+own folders next to PortMaster (`PortMaster`, `compat`, `runtime`, `mono`,
+`logs`, `BIOS`, `saves`, `states`). Before mounting a directory alias, the hook
+moves what a game already saved there into the port's folder without replacing
+any file (`leaf_pm_bind_adopt`), so saves made before this keep working. A file
+the port already has stays where it was. `LEAF_PM_BIND_XDG_ALIAS=0` turns the
+alias off.
+
 ### gptokeyb input inside Leaf's per-game input view
 
 Leaf starts every game in a private mount namespace whose `/dev/input` holds

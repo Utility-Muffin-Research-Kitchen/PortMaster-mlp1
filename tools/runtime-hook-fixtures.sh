@@ -159,6 +159,50 @@ check "leaf-gptokeyb-run keeps the exit code" test "$rc" = 3
 pid_out="$(LEAF_PM_GPTOKEYB_EXPOSE_TICKS=1 "$CONTROL/leaf-gptokeyb-run" sh -c 'echo $$' & wait_pid=$!; wait "$wait_pid" >/dev/null; echo "$wait_pid")"
 check "leaf-gptokeyb-run execs in place" test "$(sed -n 1p <<<"$pid_out")" = "$(sed -n 2p <<<"$pid_out")"
 
+# bind_directories/bind_files also bind the other spelling of a target under
+# ~/.local/share or $XDG_DATA_HOME, which Leaf splits. Mounts need a device;
+# these check the mapping and the save adoption.
+alias_of() {
+  env -i PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" HOME="$DATA" XDG_DATA_HOME="$DATA" \
+    controlfolder="$CONTROL" SDCARD_PATH="$TMP_ROOT" ALIAS_ENV="${2:-}" \
+    sh -c '. "$controlfolder/leaf-armhf-env.sh" >/dev/null 2>&1; [ -n "$ALIAS_ENV" ] && eval "$ALIAS_ENV"; leaf_pm_bind_alias_target "$1" || echo "<none>"' alias "$1"
+}
+check "alias: ~/.local/share/<name> also binds \$XDG_DATA_HOME/<name>" \
+  test "$(alias_of "$DATA/.local/share/perfectdark")" = "$DATA/perfectdark"
+check "alias: nested path keeps its tail" \
+  test "$(alias_of "$DATA/.local/share/Owlboy/Saves")" = "$DATA/Owlboy/Saves"
+check "alias: \$XDG_DATA_HOME/<name> also binds ~/.local/share/<name>" \
+  test "$(alias_of "$DATA/Outrage")" = "$DATA/.local/share/Outrage"
+check "alias: ~/.config is left alone" test "$(alias_of "$DATA/.config/Owlboy")" = "<none>"
+check "alias: other dot folders are left alone" test "$(alias_of "$DATA/.openmohaa")" = "<none>"
+check "alias: never onto Leaf's PortMaster folder" test "$(alias_of "$DATA/.local/share/PortMaster")" = "<none>"
+check "alias: never onto Leaf's compat folder" test "$(alias_of "$DATA/.local/share/compat/x")" = "<none>"
+check "alias: paths outside both bases are left alone" test "$(alias_of "/mnt/other/game")" = "<none>"
+check "alias: none when the two bases match" \
+  test "$(alias_of "$DATA/.local/share/x" "XDG_DATA_HOME=\$HOME/.local/share")" = "<none>"
+check "alias: LEAF_PM_BIND_XDG_ALIAS=0 turns it off" \
+  test "$(alias_of "$DATA/.local/share/x" "LEAF_PM_BIND_XDG_ALIAS=0")" = "<none>"
+
+ADOPT="$TMP_ROOT/adopt"
+mkdir -p "$ADOPT/old/Saves/slot" "$ADOPT/port/Saves"
+printf old >"$ADOPT/old/settings.cfg"
+printf old >"$ADOPT/old/Saves/slot/1.sav"
+printf old >"$ADOPT/old/Saves/shared.sav"
+printf old >"$ADOPT/old/.hidden"
+printf port >"$ADOPT/port/Saves/shared.sav"
+env -i PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" HOME="$DATA" XDG_DATA_HOME="$DATA" \
+  controlfolder="$CONTROL" SDCARD_PATH="$TMP_ROOT" ADOPT="$ADOPT" \
+  sh -c '. "$controlfolder/leaf-armhf-env.sh" >/dev/null 2>&1; leaf_pm_bind_adopt "$ADOPT/old" "$ADOPT/port"'
+check "adopt: moves a file the port folder lacks" test "$(cat "$ADOPT/port/settings.cfg" 2>/dev/null)" = old
+check "adopt: moves dot files too" test -f "$ADOPT/port/.hidden"
+check "adopt: merges into an existing folder" test "$(cat "$ADOPT/port/Saves/slot/1.sav" 2>/dev/null)" = old
+check "adopt: never replaces the port's file" test "$(cat "$ADOPT/port/Saves/shared.sav")" = port
+check "adopt: leaves the conflicting file where it was" test "$(cat "$ADOPT/old/Saves/shared.sav")" = old
+check "adopt: moved files are gone from the old place" test ! -e "$ADOPT/old/settings.cfg"
+env -i PATH="$PATH" HOME="$DATA" XDG_DATA_HOME="$DATA" controlfolder="$CONTROL" SDCARD_PATH="$TMP_ROOT" ADOPT="$ADOPT" \
+  sh -c '. "$controlfolder/leaf-armhf-env.sh" >/dev/null 2>&1; leaf_pm_bind_adopt "$ADOPT/port" "$ADOPT/port"'
+check "adopt: a folder onto itself is a no-op" test "$(cat "$ADOPT/port/Saves/shared.sav")" = port
+
 # prepare-port-runtime.sh rewrites a hook from another writer, then leaves it.
 prepare() {
   SDCARD_PATH="$TMP_ROOT" USERDATA_PATH="$TMP_ROOT/userdata" \

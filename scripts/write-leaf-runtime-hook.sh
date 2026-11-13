@@ -123,6 +123,82 @@ leaf_pm_bind_target_parent() {
   mkdir -p "\$_leaf_pm_bind_parent" 2>/dev/null || true
 }
 
+# Elsewhere XDG_DATA_HOME is usually unset, so ~/.local/share/<name> and
+# \$XDG_DATA_HOME/<name> are the same folder and a port can bind either one.
+# Leaf points XDG_DATA_HOME at its PortMaster folder so port preambles find
+# \$XDG_DATA_HOME/PortMaster, which splits them: a port that binds
+# ~/.local/share/<name> misses a game that follows XDG_DATA_HOME (SDL's pref
+# path does), and the reverse. Prints the other spelling of a bind target.
+leaf_pm_bind_alias_target() {
+  [ "\${LEAF_PM_BIND_XDG_ALIAS:-1}" != "0" ] || return 1
+  _leaf_pm_alias_share="\${HOME:-}"
+  _leaf_pm_alias_share="\${_leaf_pm_alias_share%/}/.local/share"
+  _leaf_pm_alias_xdg="\${XDG_DATA_HOME:-}"
+  _leaf_pm_alias_xdg="\${_leaf_pm_alias_xdg%/}"
+  [ -n "\${HOME:-}" ] && [ -n "\$_leaf_pm_alias_xdg" ] || return 1
+  [ "\$_leaf_pm_alias_xdg" != "\$_leaf_pm_alias_share" ] || return 1
+  case "\$1" in
+    "\$_leaf_pm_alias_share"/?*)
+      _leaf_pm_alias_rel="\${1#"\$_leaf_pm_alias_share"/}"
+      # Never alias onto Leaf's own folders next to PortMaster.
+      case "\${_leaf_pm_alias_rel%%/*}" in
+        PortMaster|compat|runtime|mono|logs|BIOS|saves|states|.*) return 1 ;;
+      esac
+      printf '%s\n' "\$_leaf_pm_alias_xdg/\$_leaf_pm_alias_rel"
+      ;;
+    "\$_leaf_pm_alias_xdg"/.*)
+      # Dot folders under HOME (~/.config, ~/.local) are not XDG data.
+      return 1
+      ;;
+    "\$_leaf_pm_alias_xdg"/?*)
+      printf '%s\n' "\$_leaf_pm_alias_share/\${1#"\$_leaf_pm_alias_xdg"/}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Before Leaf bound both spellings, those games saved at the other one. Move
+# what is there into the port's own folder, never replacing a file, so binding
+# over it does not hide earlier saves.
+leaf_pm_bind_adopt() {
+  [ -d "\$1" ] && [ -d "\$2" ] || return 0
+  [ "\$1" -ef "\$2" ] && return 0
+  for _leaf_pm_adopt_entry in "\$1"/* "\$1"/.[!.]* "\$1"/..?*; do
+    [ -e "\$_leaf_pm_adopt_entry" ] || [ -L "\$_leaf_pm_adopt_entry" ] || continue
+    _leaf_pm_adopt_name="\${_leaf_pm_adopt_entry##*/}"
+    if [ -e "\$2/\$_leaf_pm_adopt_name" ]; then
+      if [ -d "\$_leaf_pm_adopt_entry" ] && [ -d "\$2/\$_leaf_pm_adopt_name" ]; then
+        ( leaf_pm_bind_adopt "\$_leaf_pm_adopt_entry" "\$2/\$_leaf_pm_adopt_name" )
+      fi
+      continue
+    fi
+    mv "\$_leaf_pm_adopt_entry" "\$2/" 2>/dev/null || true
+  done
+}
+
+leaf_pm_bind_directory_alias() {
+  _leaf_pm_bind_alias="\$(leaf_pm_bind_alias_target "\$1")" || return 0
+  [ -d "\$2" ] || return 0
+  leaf_pm_bind_target_parent "\$_leaf_pm_bind_alias"
+  [ -L "\$_leaf_pm_bind_alias" ] && rm -f "\$_leaf_pm_bind_alias"
+  mkdir -p "\$_leaf_pm_bind_alias" 2>/dev/null || return 0
+  \$ESUDO umount "\$_leaf_pm_bind_alias" 2>/dev/null
+  leaf_pm_bind_adopt "\$_leaf_pm_bind_alias" "\$2"
+  \$ESUDO mount --bind "\$2" "\$_leaf_pm_bind_alias" && echo "successful bind mount from \$2 to \$_leaf_pm_bind_alias"
+}
+
+leaf_pm_bind_file_alias() {
+  _leaf_pm_bind_alias="\$(leaf_pm_bind_alias_target "\$1")" || return 0
+  [ -f "\$2" ] || return 0
+  leaf_pm_bind_target_parent "\$_leaf_pm_bind_alias"
+  [ -L "\$_leaf_pm_bind_alias" ] && rm -f "\$_leaf_pm_bind_alias"
+  touch "\$_leaf_pm_bind_alias" 2>/dev/null || return 0
+  \$ESUDO umount "\$_leaf_pm_bind_alias" 2>/dev/null
+  \$ESUDO mount --bind "\$2" "\$_leaf_pm_bind_alias" && echo "successful bind mount from \$2 to \$_leaf_pm_bind_alias"
+}
+
 bind_directories() {
   [ "\$#" -ge 2 ] || return 2
   _leaf_pm_bind_target="\${1%/}"
@@ -134,6 +210,7 @@ bind_directories() {
       mkdir -p "\$_leaf_pm_bind_target"
       \$ESUDO umount "\$_leaf_pm_bind_target"
       \$ESUDO mount --bind "\$2" "\$_leaf_pm_bind_target" && echo "successful bind mount from \$2 to \$_leaf_pm_bind_target"
+      leaf_pm_bind_directory_alias "\$_leaf_pm_bind_target" "\$2"
     else
       echo "no directory found at \$2"
     fi
@@ -154,6 +231,7 @@ bind_files() {
       touch "\$_leaf_pm_bind_target"
       \$ESUDO umount "\$_leaf_pm_bind_target"
       \$ESUDO mount --bind "\$2" "\$_leaf_pm_bind_target" && echo "successful bind mount from \$2 to \$_leaf_pm_bind_target"
+      leaf_pm_bind_file_alias "\$_leaf_pm_bind_target" "\$2"
     else
       echo "no file found at \$2"
     fi
