@@ -437,8 +437,8 @@ make build-armhf-compat
 Output:
 
 ```text
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.zip
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.json
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gl4es-20261113.zip
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gl4es-20261113.json
 ```
 
 The zip installs under:
@@ -467,6 +467,31 @@ defaults to an OpenGL ES 2.0 context, as handheld firmware does. The build
 checks the generated `SDL_config.h` and records the source, CMake options and
 binary hash under `sdl2` in the pack manifest; the Zlib license is installed
 under `licenses/sdl2/`.
+
+The build also applies `compat/sdl2/patches/`, which works around three gl4es
+problems that appear when gl4es is SDL's GL library and SDL owns the EGL
+context (gl4es is written around its own GLX layer). Without them Super Meat
+Boy plays with sound but a black screen:
+
+- gl4es reads the screen size once, when it loads and before any context
+  exists, so it believes the window is 0x0, and `glBlitFramebuffer` onto the
+  screen draws nothing. SDL registers gl4es's `set_getmainfbsize` callback and
+  reports the current EGL surface size.
+- gl4es keeps one cached copy of GL state for the whole process. A game that
+  deletes its only context and creates a new one (Super Meat Boy does at
+  startup) gets a context that no longer matches that cache, and nothing
+  draws. SDL keeps that context alive and hands it back on the next create
+  when the new request matches it (same config or one that serves it, same
+  version, profile and flags, no sharing, no other live context); otherwise it
+  destroys it and creates a fresh context as before.
+- gl4es unbinds `GL_ARRAY_BUFFER` before its own blit draw only when an index
+  buffer is bound too, so the blit quad is read from the game's vertex buffer.
+  SDL's `glBlitFramebuffer`/`glBlitFramebufferEXT` from `SDL_GL_GetProcAddress`
+  unbind it around gl4es's blit and restore it.
+
+These apply only when the GL library exports `set_getmainfbsize` (gl4es), and
+the port log then shows `Leaf: gl4es workarounds on`. Set
+`LEAF_PM_GL4ES_SDL_FIXES=0` before launch to turn them off.
 
 The Mali stack is the armhf `libmali-bifrost-g52-g13p0-wayland-gbm` deb from
 the `home:amazingfate:libmali-rockchip` OBS repository, pinned by package
