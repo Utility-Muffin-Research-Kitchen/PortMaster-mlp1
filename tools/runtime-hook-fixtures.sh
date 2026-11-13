@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Host checks for the runtime hook's launch-time behavior: the files the writer
 # installs next to it, the first-source-only HOME/XDG_DATA_HOME rule, the
-# 32-bit Westonpack adjustments, mod_Leaf.txt, leaf-gptokeyb-run, and the
+# 32-bit Westonpack adjustments, mod_Leaf.txt, leaf-gptokeyb-run, the SDL3-on-SDL2
+# direct-DRM path, clean init-service restarts, and the
 # hook refresh in prepare-port-runtime.sh.
 set -euo pipefail
 
@@ -202,6 +203,116 @@ check "adopt: moved files are gone from the old place" test ! -e "$ADOPT/old/set
 env -i PATH="$PATH" HOME="$DATA" XDG_DATA_HOME="$DATA" controlfolder="$CONTROL" SDCARD_PATH="$TMP_ROOT" ADOPT="$ADOPT" \
   sh -c '. "$controlfolder/leaf-armhf-env.sh" >/dev/null 2>&1; leaf_pm_bind_adopt "$ADOPT/port" "$ADOPT/port"'
 check "adopt: a folder onto itself is a no-op" test "$(cat "$ADOPT/port/Saves/shared.sav")" = port
+
+# Init services (Weston, Leaf) stop and start with a boot-like environment,
+# never the port's LD_PRELOAD, LD_LIBRARY_PATH or rotate setting. The stubs log
+# what they were started with.
+INIT="$TMP_ROOT/init.d"
+INIT_LOG="$TMP_ROOT/init.log"
+UPSTREAM_LOG="$TMP_ROOT/upstream.log"
+mkdir -p "$INIT"
+for svc in S49weston S50leaf; do
+  cat >"$INIT/$svc" <<EOF
+#!/bin/sh
+printf '%s %s preload=[%s] libpath=[%s] rotate=[%s]\n' "$svc" "\$1" "\${LD_PRELOAD:-}" "\${LD_LIBRARY_PATH:-}" "\${LEAF_DRM_ROTATE:-}" >>"$INIT_LOG"
+EOF
+  chmod 755 "$INIT/$svc"
+done
+
+# A fake g29 Mali, rotate shim, an SDL3 with bmdhacks' sdl2 backend and one
+# without, and an HDMI connector.
+MALI64="$DATA/compat/mali/aarch64"
+ROTATE="$DATA/compat/drm/aarch64/leaf-drm-rotate.so"
+SDL3GAME="$TMP_ROOT/ports/sdl3game"
+PLAINGAME="$TMP_ROOT/ports/plainsdl3"
+DRM="$TMP_ROOT/drm"
+mkdir -p "$MALI64" "$(dirname "$ROTATE")" "$SDL3GAME/libs.aarch64" \
+  "$PLAINGAME/libs.aarch64" "$DRM/card0-HDMI-A-1"
+: >"$MALI64/libmali.so.1"
+: >"$ROTATE"
+printf 'ELF ... SDL3SHIM_SDL2_VIDEODRIVER ...' >"$SDL3GAME/libs.aarch64/libSDL3.so.0"
+printf 'ELF ... plain SDL3 ...' >"$PLAINGAME/libs.aarch64/libSDL3.so.0"
+echo disconnected >"$DRM/card0-HDMI-A-1/status"
+
+# Runs a port's launch: control.txt and mod_Leaf.txt, the port's own setup
+# ($2), pm_platform_helper on the game binary ($1; "sub:" runs it in a
+# subshell), then prints what the game would see. The EXIT trap still fires.
+launch_env() {
+  : >"$INIT_LOG"
+  : >"$UPSTREAM_LOG"
+  env -i PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" HOME=/root \
+    controlfolder="$CONTROL" SDCARD_PATH="$TMP_ROOT" UPSTREAM_LOG="$UPSTREAM_LOG" \
+    LEAF_PM_INIT_DIR="$INIT" LEAF_PM_DRM_SYSFS="$DRM" \
+    LEAF_PM_JAVA_WESTON_STOP_DELAY=0 LEAF_PM_JAVA_WESTON_START_DELAY=0 \
+    LEAF_PM_MALI_AARCH64_DIR="$MALI64" LEAF_PM_AARCH64_DRM_ROTATE_SHIM="$ROTATE" \
+    bash -c '
+      pidof() { return 0; }
+      pm_platform_helper() { echo "upstream $1" >>"$UPSTREAM_LOG"; }
+      . "$controlfolder/leaf-armhf-env.sh" >/dev/null 2>&1
+      . "$controlfolder/mod_Leaf.txt"
+      eval "$2"
+      case "$1" in
+        sub:*) ( pm_platform_helper "${1#sub:}" ) 2>/dev/null ;;
+        *) pm_platform_helper "$1" 2>/dev/null ;;
+      esac
+      printf "LIBPATH=%s\nPRELOAD=%s\nSHIMVIDEO=%s\nROTATE=%s\n" \
+        "${LD_LIBRARY_PATH:-}" "${LD_PRELOAD:-}" \
+        "${SDL3SHIM_SDL2_VIDEODRIVER:-<unset>}" "${LEAF_DRM_ROTATE:-<unset>}"
+    ' port "$1" "$2"
+}
+SDL3_SETUP="export LD_LIBRARY_PATH=$SDL3GAME/libs.aarch64:\${LD_LIBRARY_PATH:-} SDL_VIDEODRIVER=sdl2"
+CLEAN_ENV="preload=[] libpath=[] rotate=[]"
+
+out="$(launch_env "$SDL3GAME/game.aarch64" "$SDL3_SETUP")"
+expect "sdl3-on-sdl2: g29 Mali first on the library path" "$out" "LIBPATH=$MALI64:$SDL3GAME/libs.aarch64:"
+check "sdl3-on-sdl2: rotate shim preloaded first" grep -q "^PRELOAD=$ROTATE" <<<"$out"
+expect "sdl3-on-sdl2: SDL2 draws through kmsdrm" "$out" "SHIMVIDEO=kmsdrm"
+expect "sdl3-on-sdl2: panel rotated landscape" "$out" "ROTATE=270"
+check "sdl3-on-sdl2: Weston stopped with a clean environment" grep -qxF "S49weston stop $CLEAN_ENV" "$INIT_LOG"
+check "sdl3-on-sdl2: Weston restarted on exit with a clean environment" grep -qxF "S49weston start $CLEAN_ENV" "$INIT_LOG"
+check "sdl3-on-sdl2: PortMaster's own pm_platform_helper still runs" grep -qx "upstream $SDL3GAME/game.aarch64" "$UPSTREAM_LOG"
+
+out="$(launch_env "$SDL3GAME/game.aarch64" "$SDL3_SETUP LEAF_PM_SDL3_ON_SDL2_DIRECT_DRM=0")"
+expect "sdl3-on-sdl2: LEAF_PM_SDL3_ON_SDL2_DIRECT_DRM=0 turns it off" "$out" "SHIMVIDEO=<unset>"
+check "sdl3-on-sdl2: switched off leaves Weston running" test ! -s "$INIT_LOG"
+
+out="$(launch_env "$PLAINGAME/game.aarch64" "export LD_LIBRARY_PATH=$PLAINGAME/libs.aarch64 SDL_VIDEODRIVER=sdl2")"
+expect "sdl3-on-sdl2: an SDL3 without the sdl2 backend is left alone" "$out" "SHIMVIDEO=<unset>"
+
+out="$(launch_env "$SDL3GAME/game.aarch64" "export LD_LIBRARY_PATH=$SDL3GAME/libs.aarch64 SDL_VIDEODRIVER=wayland")"
+expect "sdl3-on-sdl2: a port that did not pick sdl2 is left alone" "$out" "SHIMVIDEO=<unset>"
+
+echo connected >"$DRM/card0-HDMI-A-1/status"
+out="$(launch_env "$SDL3GAME/game.aarch64" "$SDL3_SETUP")"
+expect "sdl3-on-sdl2: stays on Weston while HDMI is connected" "$out" "SHIMVIDEO=<unset>"
+check "sdl3-on-sdl2: HDMI leaves Weston running" test ! -s "$INIT_LOG"
+echo disconnected >"$DRM/card0-HDMI-A-1/status"
+
+out="$(launch_env "sub:$SDL3GAME/game.aarch64" "$SDL3_SETUP")"
+check "sdl3-on-sdl2: never from a subshell" test ! -s "$INIT_LOG"
+check "sdl3-on-sdl2: a subshell call still runs PortMaster's body" grep -qx "upstream $SDL3GAME/game.aarch64" "$UPSTREAM_LOG"
+
+wrap_out="$(env -i PATH="$PATH" controlfolder="$CONTROL" bash -c '
+  pm_platform_helper() { :; }
+  . "$controlfolder/mod_Leaf.txt"; . "$controlfolder/mod_Leaf.txt"
+  declare -f pm_platform_helper | grep -c leaf_pm_before_game_start
+  pm_platform_helper() { :; }
+  . "$controlfolder/mod_Leaf.txt"
+  declare -f pm_platform_helper | grep -c leaf_pm_platform_helper_upstream')"
+check "mod_Leaf.txt wraps pm_platform_helper once" test "$(sed -n 1p <<<"$wrap_out")" = 2
+check "mod_Leaf.txt rewraps a redefined pm_platform_helper" test "$(sed -n 2p <<<"$wrap_out")" = 1
+
+: >"$INIT_LOG"
+env -i PATH="$PATH" HOME=/root controlfolder="$CONTROL" SDCARD_PATH="$TMP_ROOT" LEAF_PM_INIT_DIR="$INIT" \
+  LD_PRELOAD="$ROTATE" LD_LIBRARY_PATH="$MALI64" LEAF_DRM_ROTATE=270 \
+  bash -c '. "$controlfolder/leaf-armhf-env.sh" >/dev/null 2>&1
+    sleep() { :; }
+    export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_STACK_STOPPED=1
+    export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_WESTON_WAS_RUNNING=1
+    export LEAF_PM_GOTHIC_MACHISMO_VULKAN_ROTATE_LEAF_WAS_RUNNING=1
+    leaf_pm_restore_gothic_machismo_vulkan_rotate'
+check "gothic restore starts Weston with a clean environment" grep -qxF "S49weston start $CLEAN_ENV" "$INIT_LOG"
+check "gothic restore starts Leaf with a clean environment" grep -qxF "S50leaf start $CLEAN_ENV" "$INIT_LOG"
 
 # prepare-port-runtime.sh rewrites a hook from another writer, then leaves it.
 prepare() {

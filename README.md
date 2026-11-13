@@ -729,6 +729,22 @@ Leaf display size, preloads the packaged DRM rotate shim through
 performed the direct-DRM handoff. Existing Java 8 launcher markers and
 `LEAF_PM_JAVA8_*` overrides remain supported.
 
+SDL3 games that draw through the firmware's SDL2 (aurora ports such as
+Dusklight and Super Smash Bros. Melee, which bundle bmdhacks' SDL3 with an
+`sdl2` video backend and set `SDL_VIDEODRIVER=sdl2`) render with GLES, and the
+MLP1's stock `g13p0` Mali faults on them, which shows as blocky, overlapping
+squares. `mod_Leaf.txt` wraps PortMaster's `pm_platform_helper`, which ports
+call right before starting the game, so the hook can run them on Leaf's g29
+Mali with Weston stopped: SDL2 draws through kmsdrm and the DRM rotate shim
+turns the panel landscape. Dusklight then renders without faults at its full
+30 fps. Weston comes back when the port exits. The hook skips this while HDMI
+is connected, and `LEAF_PM_SDL3_ON_SDL2_DIRECT_DRM=0` turns it off. See
+`docs/compatibility.md` for the measurements.
+
+Whenever the hook stops Weston or Leaf for a direct-DRM port, it restarts them
+with a boot-like environment rather than the port's, so a port's preloads and
+Mali driver never leak into the compositor or launcher.
+
 MLP1 stock ships a 64-bit `g13p0` Mali userspace blob that can fault under some
 Godot 4 content and is too old for the Gothic/Machismo Vulkan rotation path.
 `make package-mlp1` therefore builds a small aarch64 Mali compat bundle from the
