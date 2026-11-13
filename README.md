@@ -437,8 +437,8 @@ make build-armhf-compat
 Output:
 
 ```text
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.zip
-build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdlfs-20260701.json
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.zip
+build/armhf-compat/portmaster-mlp1-armhf-compat-bookworm-mali-g13p0-box86-sdl2gles-20261113.json
 ```
 
 The zip installs under:
@@ -455,6 +455,18 @@ prefer this managed copy when present.
 The generated Leaf hook and armhf executable wrappers default SDL's GLES loader
 to `SDL_VIDEO_GL_DRIVER=libGLESv2.so`. This lets gmloader ports locate the
 Rockchip Mali GLES library on MLP1 without per-port launch-script edits.
+
+The pack's `libSDL2-2.0.so.0` is not Debian's. The build compiles the same
+upstream release (2.26.5, source pinned by SHA-256) GLES-only, with Wayland,
+KMSDRM and X11 like Debian's, and replaces Debian's library with it. Debian
+builds SDL with desktop OpenGL, so a GL context created with SDL's defaults
+asks for desktop GL 2.1; the Mali stack has no desktop GL and returns an
+OpenGL ES 1.1 context, which has no shaders. gl4es ports (box86 games that load
+gl4es as SDL's GL library) then fail to create shaders. A GLES-only SDL
+defaults to an OpenGL ES 2.0 context, as handheld firmware does. The build
+checks the generated `SDL_config.h` and records the source, CMake options and
+binary hash under `sdl2` in the pack manifest; the Zlib license is installed
+under `licenses/sdl2/`.
 
 The Mali stack is the armhf `libmali-bifrost-g52-g13p0-wayland-gbm` deb from
 the `home:amazingfate:libmali-rockchip` OBS repository, pinned by package

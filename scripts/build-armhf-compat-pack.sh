@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${PM_ARMHF_BUILD_IMAGE:-debian:bookworm-slim}"
-VERSION="${PM_ARMHF_COMPAT_VERSION:-bookworm-mali-g13p0-box86-sdlfs-20260701}"
+VERSION="${PM_ARMHF_COMPAT_VERSION:-bookworm-mali-g13p0-box86-sdl2gles-20261113}"
 container=0
 
 MALI_REPO="https://github.com/tsukumijima/libmali-rockchip"
@@ -28,6 +28,12 @@ MALI_COPYRIGHT_PATH="usr/share/doc/$MALI_PACKAGE/copyright"
 MALI_COPYRIGHT_SHA256="a254205ab051a9a6cf952bf73d9f40715eb3bd2963d82ac462762e4dda1e8c77"
 # A verified deb is kept here by hash so later rebuilds survive OBS drift.
 MALI_DEB_CACHE="$ROOT/.cache/mali/$MALI_DEB_SHA256.deb"
+
+SDL2_VERSION="2.26.5"
+SDL2_SOVERSION_MINOR="2600.5"
+SDL2_URL="https://github.com/libsdl-org/SDL/releases/download/release-$SDL2_VERSION/SDL2-$SDL2_VERSION.tar.gz"
+SDL2_SHA256="ad8fea3da1be64c83c45b1d363a6b4ba8fd60f5bde3b23ec73855709ec5eabf7"
+SDL2_LICENSE_SHA256="9928507f684c1965d07f2b6ef4b4723d5efc2f6b4ab731f743a413c51c319927"
 
 BOX86_REPO="https://github.com/ptitSeb/box86"
 BOX86_COMMIT="${PM_ARMHF_BOX86_COMMIT:-0579f8b9c47d87d700724f4cce559b06cbd2b0f5}"
@@ -118,6 +124,7 @@ SOURCES_REPORT="$WORK_DIR/sources.json"
 FILE_REPORT="$WORK_DIR/files.json"
 MALI_REPORT="$WORK_DIR/mali.json"
 BOX86_REPORT="$WORK_DIR/box86.json"
+SDL2_REPORT="$WORK_DIR/sdl2.json"
 ARTIFACT="$OUT_DIR/portmaster-mlp1-armhf-compat-$VERSION.zip"
 MANIFEST="$OUT_DIR/portmaster-mlp1-armhf-compat-$VERSION.json"
 EMBEDDED_MANIFEST="$ROOTFS/.leaf-armhf-compat-manifest.json"
@@ -475,6 +482,147 @@ with open(report_path, "w", encoding="utf-8") as fp:
     fp.write("\n")
 PY
 
+echo "=== Building GLES-only SDL2 ==="
+# Debian's libsdl2 is built with desktop OpenGL, so a GL context created with
+# SDL's defaults asks for desktop GL 2.1. The Mali stack has no desktop GL;
+# SDL then keeps the ES API without a client version and Mali hands out
+# OpenGL ES 1.1, which has no shaders. gl4es ports (box86 games that load
+# gl4es as SDL's GL library) need GLES 2. Handheld firmware builds SDL2 GLES-only,
+# where the default context is ES 2.0, so build the same upstream release that
+# way and replace Debian's library with it. These build dependencies are
+# installed only now: installing them earlier would mark their runtime
+# libraries as installed and keep the download above from fetching them.
+SDL2_SRC_DIR="$WORK_DIR/sdl2-src"
+SDL2_BUILD_DIR="$WORK_DIR/sdl2-build"
+SDL2_TARBALL="$WORK_DIR/SDL2-$SDL2_VERSION.tar.gz"
+mkdir -p "$SDL2_SRC_DIR" "$ROOTFS/licenses/sdl2"
+apt-get install -y --no-install-recommends \
+  libwayland-bin \
+  wayland-protocols \
+  libwayland-dev:armhf \
+  libxkbcommon-dev:armhf \
+  libdecor-0-dev:armhf \
+  libdrm-dev:armhf \
+  libgbm-dev:armhf \
+  libegl-dev:armhf \
+  libgles-dev:armhf \
+  libasound2-dev:armhf \
+  libpulse-dev:armhf \
+  libudev-dev:armhf \
+  libdbus-1-dev:armhf \
+  libx11-dev:armhf \
+  libxext-dev:armhf \
+  libxrandr-dev:armhf \
+  libxcursor-dev:armhf \
+  libxi-dev:armhf \
+  libxfixes-dev:armhf \
+  libxss-dev:armhf \
+  libxinerama-dev:armhf
+curl -fL "$SDL2_URL" -o "$SDL2_TARBALL"
+sdl2_tarball_sha="$(sha256sum "$SDL2_TARBALL" | awk '{print $1}')"
+if [[ "$sdl2_tarball_sha" != "$SDL2_SHA256" ]]; then
+  echo "SDL2 source sha256 mismatch: $sdl2_tarball_sha != $SDL2_SHA256" >&2
+  exit 1
+fi
+tar -xzf "$SDL2_TARBALL" -C "$SDL2_SRC_DIR" --strip-components=1
+sdl2_license_sha="$(sha256sum "$SDL2_SRC_DIR/LICENSE.txt" | awk '{print $1}')"
+if [[ "$sdl2_license_sha" != "$SDL2_LICENSE_SHA256" ]]; then
+  echo "SDL2 license sha256 mismatch: $sdl2_license_sha != $SDL2_LICENSE_SHA256" >&2
+  exit 1
+fi
+cat >"$WORK_DIR/armhf-toolchain.cmake" <<'CMAKE'
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR arm)
+set(CMAKE_C_COMPILER arm-linux-gnueabihf-gcc)
+set(CMAKE_CXX_COMPILER arm-linux-gnueabihf-g++)
+set(CMAKE_FIND_ROOT_PATH /usr/arm-linux-gnueabihf /usr/lib/arm-linux-gnueabihf)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
+CMAKE
+SDL2_CMAKE_OPTIONS=(
+  -DCMAKE_BUILD_TYPE=Release
+  -DSDL_SHARED=ON
+  -DSDL_STATIC=OFF
+  -DSDL_TEST=OFF
+  -DSDL_RPATH=OFF
+  -DSDL_OPENGL=OFF
+  -DSDL_OPENGLES=ON
+  -DSDL_WAYLAND=ON
+  -DSDL_WAYLAND_SHARED=ON
+  -DSDL_WAYLAND_LIBDECOR=ON
+  -DSDL_WAYLAND_LIBDECOR_SHARED=ON
+  -DSDL_KMSDRM=ON
+  -DSDL_KMSDRM_SHARED=ON
+  -DSDL_X11=ON
+  -DSDL_X11_SHARED=ON
+  -DSDL_PULSEAUDIO=ON
+  -DSDL_PULSEAUDIO_SHARED=ON
+  -DSDL_ALSA=ON
+  -DSDL_ALSA_SHARED=ON
+  -DSDL_PIPEWIRE=OFF
+  -DSDL_JACK=OFF
+  -DSDL_SNDIO=OFF
+)
+PKG_CONFIG_LIBDIR=/usr/lib/arm-linux-gnueabihf/pkgconfig:/usr/share/pkgconfig \
+PKG_CONFIG_PATH= \
+  cmake -S "$SDL2_SRC_DIR" -B "$SDL2_BUILD_DIR" \
+    -DCMAKE_TOOLCHAIN_FILE="$WORK_DIR/armhf-toolchain.cmake" \
+    "${SDL2_CMAKE_OPTIONS[@]}"
+cmake --build "$SDL2_BUILD_DIR" --parallel "${BUILD_JOBS:-$(nproc)}"
+sdl2_built="$SDL2_BUILD_DIR/libSDL2-2.0.so.0.$SDL2_SOVERSION_MINOR"
+test -f "$sdl2_built" || { echo "SDL2 build did not produce $sdl2_built" >&2; exit 1; }
+sdl2_config_h="$(find "$SDL2_BUILD_DIR" -name SDL_config.h -path '*include*' | head -n 1)"
+test -n "$sdl2_config_h" || { echo "SDL2 build has no generated SDL_config.h" >&2; exit 1; }
+if grep -Eq '^#define SDL_VIDEO_OPENGL 1' "$sdl2_config_h" ||
+   ! grep -Eq '^#define SDL_VIDEO_OPENGL_ES2 1' "$sdl2_config_h" ||
+   ! grep -Eq '^#define SDL_VIDEO_DRIVER_WAYLAND 1' "$sdl2_config_h" ||
+   ! grep -Eq '^#define SDL_VIDEO_DRIVER_KMSDRM 1' "$sdl2_config_h"; then
+  echo "SDL2 build is not GLES-only with Wayland and KMSDRM: $sdl2_config_h" >&2
+  exit 1
+fi
+sdl2_target="$ROOTFS/usr/lib/arm-linux-gnueabihf/libSDL2-2.0.so.0.$SDL2_SOVERSION_MINOR"
+test -e "$sdl2_target" || { echo "Debian SDL2 not found at $sdl2_target" >&2; exit 1; }
+rm -f "$sdl2_target"
+arm-linux-gnueabihf-strip -o "$sdl2_target" "$sdl2_built"
+chmod 755 "$sdl2_target"
+cp -f "$SDL2_SRC_DIR/LICENSE.txt" "$ROOTFS/licenses/sdl2/LICENSE.txt"
+chmod 644 "$ROOTFS/licenses/sdl2/LICENSE.txt"
+sdl2_sha="$(sha256sum "$sdl2_target" | awk '{print $1}')"
+sdl2_size="$(wc -c <"$sdl2_target" | tr -d ' ')"
+python3 - "$SDL2_REPORT" "$SDL2_VERSION" "$SDL2_URL" "$SDL2_SHA256" \
+  "$sdl2_sha" "$sdl2_size" "$SDL2_LICENSE_SHA256" "$SDL2_SOVERSION_MINOR" \
+  "${SDL2_CMAKE_OPTIONS[@]}" <<'PY'
+import json
+import sys
+
+(report_path, version, url, source_sha, binary_sha, binary_size,
+ license_sha, so_minor) = sys.argv[1:9]
+options = sys.argv[9:]
+report = {
+    "version": version,
+    "source": {"url": url, "sha256": source_sha},
+    "architecture": "armhf",
+    "replaces": "libsdl2-2.0-0 from Debian",
+    "reason": "GLES-only build so SDL's default GL context is OpenGL ES 2.0",
+    "cmake_options": options,
+    "binary": {
+        "installed_path": f"usr/lib/arm-linux-gnueabihf/libSDL2-2.0.so.0.{so_minor}",
+        "size": int(binary_size),
+        "sha256": binary_sha,
+    },
+    "license": {
+        "kind": "Zlib",
+        "upstream_path": "LICENSE.txt",
+        "installed_path": "licenses/sdl2/LICENSE.txt",
+        "sha256": license_sha,
+    },
+}
+with open(report_path, "w", encoding="utf-8") as fp:
+    json.dump(report, fp, indent=2, sort_keys=True)
+    fp.write("\n")
+PY
+
 cat >"$WORK_DIR/leaf-armhf-smoke.c" <<'C'
 #include <stdio.h>
 #include <sys/utsname.h>
@@ -599,12 +747,12 @@ report.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="u
 PY
 
 echo "=== Writing embedded manifest ==="
-python3 - "$VERSION" "$SOURCES_REPORT" "$FILE_REPORT" "$MALI_REPORT" "$BOX86_REPORT" "$EMBEDDED_MANIFEST" <<'PY'
+python3 - "$VERSION" "$SOURCES_REPORT" "$FILE_REPORT" "$MALI_REPORT" "$BOX86_REPORT" "$SDL2_REPORT" "$EMBEDDED_MANIFEST" <<'PY'
 import datetime as dt
 import json
 import sys
 
-version, sources_path, files_path, mali_path, box86_path, manifest_path = sys.argv[1:7]
+version, sources_path, files_path, mali_path, box86_path, sdl2_path, manifest_path = sys.argv[1:8]
 with open(sources_path, "r", encoding="utf-8") as fp:
     sources = json.load(fp)
 with open(files_path, "r", encoding="utf-8") as fp:
@@ -613,6 +761,8 @@ with open(mali_path, "r", encoding="utf-8") as fp:
     mali = json.load(fp)
 with open(box86_path, "r", encoding="utf-8") as fp:
     box86 = json.load(fp)
+with open(sdl2_path, "r", encoding="utf-8") as fp:
+    sdl2 = json.load(fp)
 
 manifest = {
     "version": version,
@@ -621,6 +771,7 @@ manifest = {
     "sources": sources,
     "mali": mali,
     "box86": box86,
+    "sdl2": sdl2,
     "files": files,
     "sha256": {
         "artifact": None,
