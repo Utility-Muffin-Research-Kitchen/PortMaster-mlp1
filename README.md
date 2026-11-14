@@ -83,7 +83,8 @@ The on-device manager is state-driven:
   artwork sync, and launcher rescan.
 - `Repair PortMaster` is shown once PortMaster is installed. It is the recovery
   path for missing runtime, stale/missing manifest, missing Leaf patches, or
-  compatibility asset drift.
+  compatibility asset drift. It also scans the installed ports on every card
+  whose scan is stale, including scans made with an older scanner ruleset.
 - `Update PortMaster` appears only when the manager has found a newer compatible
   stable GUI release.
 - `Controller Layout` remains a normal user setting.
@@ -580,7 +581,11 @@ set `LEAF_PM_FULL_PORT_SCAN=1` when running
 of every file under `Roms/PORTS` without reading or writing the manifest. The
 wrapper also stores a cheap top-level `Roms/PORTS` stamp per source so repeated
 PortMaster open/close cycles skip port repair, artwork sync, and launcher rescan when no
-ports changed.
+ports changed. The stamp includes the scanner's `RULESET_VERSION`, so after a
+Pak update that bumps it, every source reads as stale once: the next PortMaster
+launch or Repair scans installed ports again with the new rules. Bump
+`RULESET_VERSION` whenever a scanner change should reach ports that are already
+installed.
 
 ## Native Compatibility Tools
 

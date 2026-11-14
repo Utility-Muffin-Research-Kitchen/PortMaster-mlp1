@@ -57,4 +57,30 @@ third="$(run_scan)"
 grep -F "refreshed: 0 source(s)" <<<"$third" >/dev/null
 [ ! -s "$scan_log" ]
 
+# A Pak update that changes the scanner without new rules leaves the scans
+# current.
+fake_scanner="$fake_pak/scripts/scan-and-fix-port-elfs.sh"
+printf '# same rules, new comment\n' >>"$fake_scanner"
+: >"$scan_log"
+edited="$(run_scan)"
+grep -F "refreshed: 0 source(s)" <<<"$edited" >/dev/null
+[ ! -s "$scan_log" ]
+
+# New rules (a RULESET_VERSION bump) make every card's scan stale once.
+sed 's/^RULESET_VERSION=1$/RULESET_VERSION=2/' "$fake_scanner" >"$fake_scanner.new"
+grep -Fx "RULESET_VERSION=2" "$fake_scanner.new" >/dev/null
+mv "$fake_scanner.new" "$fake_scanner"
+chmod +x "$fake_scanner"
+: >"$scan_log"
+bumped="$(run_scan)"
+grep -F "refreshed: 2 source(s)" <<<"$bumped" >/dev/null
+[ "$(wc -l <"$scan_log" | tr -d ' ')" = "2" ]
+grep -Fx "$primary/Roms/PORTS" "$scan_log" >/dev/null
+grep -Fx "$secondary/Roms/PORTS" "$scan_log" >/dev/null
+
+: >"$scan_log"
+after_bump="$(run_scan)"
+grep -F "refreshed: 0 source(s)" <<<"$after_bump" >/dev/null
+[ ! -s "$scan_log" ]
+
 echo "PortMaster per-source scan fixtures passed"

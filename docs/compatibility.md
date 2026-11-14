@@ -125,7 +125,9 @@ again after upstream PortMaster exits:
 
 The scanner has two layers of speed control. The Leaf wrapper first checks a
 cheap top-level `Roms/PORTS` stamp for each configured and available source,
-then scans only sources whose tree changed. When a scan is needed,
+then scans only sources whose tree changed. The stamp also covers the
+scanner's `RULESET_VERSION`, so a Pak update with new scan rules rescans every
+source once, at the next PortMaster launch or Repair. When a scan is needed,
 `scan-and-fix-port-elfs.sh` uses the source-specific
 `$USERDATA_PATH/portmaster/.leaf/armhf-scan.<source-id>.manifest` to skip
 unchanged files by size, mtime, and path. Keeping independent manifests prevents

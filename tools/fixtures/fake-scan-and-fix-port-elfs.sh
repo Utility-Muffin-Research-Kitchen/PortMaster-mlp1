@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+RULESET_VERSION=1
 ports_dir="$1"
 printf '%s\n' "$ports_dir" >>"$LEAF_PM_SCAN_FIXTURE_LOG"
 mkdir -p \
