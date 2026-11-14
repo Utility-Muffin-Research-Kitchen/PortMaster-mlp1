@@ -638,6 +638,20 @@ static int repair_core(pm_context *ctx,
     if (pm_repatch_portmaster_repair(ctx, err, err_size) != 0) {
         return -1;
     }
+
+    /* Ports installed before a Pak update keep the old scan rules until
+     * their card is scanned again. Setup is already repaired at this point,
+     * so a failed scan is logged and doesn't fail Repair. */
+    setup_progress_set(progress, 0.83f, "Scanning ports");
+    size_t scanned_sources = 0;
+    if (pm_refresh_stale_armhf_port_wrappers(ctx, ctx->effective_install_source,
+                                             false, &scanned_sources) != 0) {
+        fprintf(stderr, "PortMaster repair: port scan failed; "
+                        "installed ports keep their current patches\n");
+    } else if (scanned_sources > 0) {
+        fprintf(stderr, "PortMaster repair: scanned ports on %zu card(s)\n",
+                scanned_sources);
+    }
     if (artwork) {
         setup_progress_set(progress, 0.88f, "Refreshing artwork");
         memset(artwork, 0, sizeof(*artwork));
