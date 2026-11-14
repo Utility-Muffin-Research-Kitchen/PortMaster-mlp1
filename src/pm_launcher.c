@@ -218,6 +218,50 @@ static uint64_t pm_stat_mtime_nsec(const struct stat *st)
 #endif
 }
 
+/* RULESET_VERSION from the pak's port scanner, or 0 when the script or the
+ * line is missing. The scanner bumps it whenever its rules change. */
+static unsigned long pm_port_scan_ruleset(const pm_context *ctx)
+{
+    char script[PM_PATH_MAX];
+    if (!ctx ||
+        pm_join3(script, sizeof(script), ctx->pak_dir,
+                 "scripts", "scan-and-fix-port-elfs.sh") != 0) {
+        return 0;
+    }
+
+    FILE *fp = fopen(script, "r");
+    if (!fp) {
+        return 0;
+    }
+    static const char prefix[] = "RULESET_VERSION=";
+    const size_t prefix_len = sizeof(prefix) - 1;
+    unsigned long ruleset = 0;
+    char line[256];
+    bool line_start = true;
+    /* The assignment sits near the top; stop well before the end of a large
+     * script so a missing line costs little. */
+    for (int chunk = 0; chunk < 2048 && fgets(line, sizeof(line), fp); chunk++) {
+        bool starts_line = line_start;
+        line_start = strchr(line, '\n') != NULL;
+        if (!starts_line || strncmp(line, prefix, prefix_len) != 0) {
+            continue;
+        }
+        char *end = NULL;
+        unsigned long value = strtoul(line + prefix_len, &end, 10);
+        if (end != line + prefix_len &&
+            (*end == '\n' || *end == '\r' || *end == '\0')) {
+            ruleset = value;
+        }
+        break;
+    }
+    fclose(fp);
+    return ruleset;
+}
+
+/* The stamp covers the top-level entries of the ports folder and the
+ * scanner's RULESET_VERSION. A scan is only current for the rules that made
+ * it, so after a Pak update that changes them every source reads as stale
+ * once, and its installed ports are scanned again with the new rules. */
 static bool pm_ports_tree_stamp(pm_context *ctx, uint64_t *out)
 {
     if (!ctx || !out || !ctx->ports_dir[0]) {
@@ -261,6 +305,7 @@ static bool pm_ports_tree_stamp(pm_context *ctx, uint64_t *out)
     closedir(dir);
 
     acc = pm_hash_u64(acc, count);
+    acc = pm_hash_u64(acc, (uint64_t)pm_port_scan_ruleset(ctx));
     *out = acc;
     return true;
 }
