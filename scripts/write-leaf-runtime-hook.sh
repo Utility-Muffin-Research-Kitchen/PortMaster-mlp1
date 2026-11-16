@@ -891,11 +891,31 @@ leaf_pm_prepend_wrapped_preload() {
 # LD_PRELOAD, LD_LIBRARY_PATH or display settings: a Weston started with the
 # DRM rotate shim preloaded and a port's Mali driver on its library path fails
 # its page flips and cannot serve EGL, and the launcher then crash-loops.
+# The script also runs in a session of its own. S49weston start backgrounds
+# Weston in the caller's process group, and Leaf's ports launcher ends a port
+# by killing that whole group (TERM, then KILL a second later). Without its
+# own session, the Weston a port's exit trap restarts dies with the port.
+# setsid only forks when the caller leads its process group, which a command
+# run from a script never does, so stop and start stay synchronous.
 leaf_pm_init_service() {
   _leaf_pm_init_script="\${LEAF_PM_INIT_DIR:-/etc/init.d}/\${1:-}"
   [ -x "\$_leaf_pm_init_script" ] || return 0
-  env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \\
-    "\$_leaf_pm_init_script" "\${2:-}" < /dev/null > /dev/null 2>&1 || true
+  _leaf_pm_init_setsid="\${LEAF_PM_SETSID:-}"
+  if [ -z "\$_leaf_pm_init_setsid" ]; then
+    for _leaf_pm_init_dir in /usr/bin /bin /usr/sbin /sbin; do
+      if [ -x "\$_leaf_pm_init_dir/setsid" ]; then
+        _leaf_pm_init_setsid="\$_leaf_pm_init_dir/setsid"
+        break
+      fi
+    done
+  fi
+  if [ -n "\$_leaf_pm_init_setsid" ] && [ -x "\$_leaf_pm_init_setsid" ]; then
+    env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \\
+      "\$_leaf_pm_init_setsid" "\$_leaf_pm_init_script" "\${2:-}" < /dev/null > /dev/null 2>&1 || true
+  else
+    env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \\
+      "\$_leaf_pm_init_script" "\${2:-}" < /dev/null > /dev/null 2>&1 || true
+  fi
 }
 
 leaf_pm_restore_java8_weston_direct_drm() {

@@ -2,7 +2,7 @@
 # Host checks for the runtime hook's launch-time behavior: the files the writer
 # installs next to it, the first-source-only HOME/XDG_DATA_HOME rule, the
 # 32-bit Westonpack adjustments, mod_Leaf.txt, leaf-gptokeyb-run, the SDL3-on-SDL2
-# direct-DRM path, clean init-service restarts, and the
+# direct-DRM path, clean init-service restarts that outlive the port, and the
 # hook refresh in prepare-port-runtime.sh.
 set -euo pipefail
 
@@ -313,6 +313,58 @@ env -i PATH="$PATH" HOME=/root controlfolder="$CONTROL" SDCARD_PATH="$TMP_ROOT" 
     leaf_pm_restore_gothic_machismo_vulkan_rotate'
 check "gothic restore starts Weston with a clean environment" grep -qxF "S49weston start $CLEAN_ENV" "$INIT_LOG"
 check "gothic restore starts Leaf with a clean environment" grep -qxF "S50leaf start $CLEAN_ENV" "$INIT_LOG"
+
+# A Weston restarted by a port's exit trap outlives the port. Leaf's ports
+# launcher runs the port with setsid and ends it by sending TERM, then KILL a
+# second later, to the whole process group; S49weston start backgrounds Weston
+# in its caller's group. The stub setsid is a real one, since macOS has none.
+SETSID="$TMP_ROOT/bin/setsid"
+SURVIVOR="$TMP_ROOT/weston.pid"
+mkdir -p "$TMP_ROOT/bin"
+cat >"$SETSID" <<'EOF'
+#!/usr/bin/env python3
+import os, sys
+os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])
+EOF
+chmod 755 "$SETSID"
+cat >"$INIT/S49weston" <<EOF
+#!/bin/sh
+[ "\$1" = start ] || exit 0
+sleep 60 &
+echo \$! >"$SURVIVOR"
+EOF
+chmod 755 "$INIT/S49weston"
+weston_survives_group_kill() {
+  rm -f "$SURVIVOR"
+  env -i PATH="$PATH" HOME=/root controlfolder="$CONTROL" SDCARD_PATH="$TMP_ROOT" \
+    LEAF_PM_INIT_DIR="$INIT" LEAF_PM_SETSID="$1" LEAF_PM_JAVA_WESTON_START_DELAY=10 \
+    "$SETSID" bash -c '. "$controlfolder/leaf-armhf-env.sh" >/dev/null 2>&1
+      export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_STACK_STOPPED=1
+      export LEAF_PM_JAVA8_WESTON_DIRECT_DRM_WESTON_WAS_RUNNING=1
+      trap leaf_pm_restore_java8_weston_direct_drm EXIT HUP INT TERM
+      sleep 30' </dev/null >/dev/null 2>&1 &
+  local port=$! pid=""
+  sleep 0.5
+  kill -TERM "-$port" 2>/dev/null || true
+  for _ in $(seq 1 50); do
+    [ -s "$SURVIVOR" ] && break
+    sleep 0.1
+  done
+  kill -KILL "-$port" 2>/dev/null || true
+  wait "$port" 2>/dev/null || true
+  [ -s "$SURVIVOR" ] || return 1
+  pid="$(cat "$SURVIVOR")"
+  sleep 0.2
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+check "a restarted Weston survives the launcher killing the port's group" weston_survives_group_kill "$SETSID"
+weston_dies_without_setsid() { ! weston_survives_group_kill /nonexistent; }
+check "without setsid the group kill takes Weston too (the check can fail)" weston_dies_without_setsid
 
 # prepare-port-runtime.sh rewrites a hook from another writer, then leaves it.
 prepare() {
